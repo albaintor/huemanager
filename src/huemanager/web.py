@@ -206,7 +206,7 @@ def search_devices(bridge_name: str, kind: str) -> dict:
 @app.get("/api/backups")
 def list_backups() -> dict:
     items = []
-    for path in sorted(_backup_dir().glob("*.json"), reverse=True):
+    for path in _backup_dir().glob("*.json"):
         try:
             backup = load_bridge_backup(path)
             items.append(
@@ -220,8 +220,10 @@ def list_backups() -> dict:
                 {
                     "id": path.stem,
                     "invalid": True,
+                    "created_at": "",
                 }
             )
+    items.sort(key=lambda item: item.get("created_at") or "", reverse=True)
     return {"backups": items}
 
 
