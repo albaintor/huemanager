@@ -255,3 +255,27 @@ def test_device_identifiers_exposes_mac_and_uniqueid_but_not_fake_serial():
     assert identifiers["v1_uniqueids"] == ["00:17:88:01:02:03:04:05-0b"]
     assert identifiers["pairing_fields"] == []
     assert not identifiers["pairing_serial_available"]
+
+
+
+def test_rewrite_behavior_graph_does_not_broaden_empty_items_scope():
+    configuration = {
+        "where": [
+            {
+                "group": {"rtype": "room", "rid": "room-source"},
+                "items": [{"rtype": "light", "rid": "light-external"}],
+            }
+        ]
+    }
+    mapping = {"room-source": {"id": "room-dest", "type": "room"}}
+
+    rewritten, unresolved, pruned = rewrite_behavior_configuration(
+        configuration,
+        mapping,
+        {"room-source", "light-external"},
+        prune_external=True,
+    )
+
+    assert not unresolved
+    assert rewritten is None
+    assert any(item["rid"] == "light-external" for item in pruned)
