@@ -310,6 +310,13 @@ def create_selection_snapshot(client: HueBridgeClient, room_names: list[str]) ->
                     changed = True
 
     membership = _room_membership(resources, v1)
+    selected_rule_paths = {f"/rules/{rid}" for rid in rules}
+    resourcelinks = {
+        rid: copy.deepcopy(link)
+        for rid, link in v1.get("resourcelinks", {}).items()
+        if set(link.get("links", [])) & (selected_paths | selected_rule_paths)
+    }
+
     dependency_report: list[dict] = []
     for rid, rule in rules.items():
         refs = {ref for ref in _extract_refs(rule) if ref.startswith(MIGRATABLE_REF_PREFIXES)}
@@ -339,6 +346,7 @@ def create_selection_snapshot(client: HueBridgeClient, room_names: list[str]) ->
             "sensors": selected_v1["sensors"],
             "virtual_sensors": virtual_sensors,
             "rules": rules,
+            "resourcelinks": resourcelinks,
         },
         "dependencies": dependency_report,
     }
@@ -361,6 +369,7 @@ def _normalise_snapshot(payload: dict) -> dict:
         result["schema"] = 2
         result["rooms"] = [result.pop("room")]
         result.setdefault("v1", {}).setdefault("virtual_sensors", {})
+        result.setdefault("v1", {}).setdefault("resourcelinks", {})
         result.setdefault("dependencies", [])
         return result
     raise MigrationError(f"Unsupported snapshot schema: {payload.get('schema')!r}")
@@ -702,10 +711,11 @@ def _create_rules(
     path_map: dict[str, str],
     *,
     prune_external: bool,
-) -> tuple[int, list[dict], list[dict]]:
+) -> tuple[int, list[dict], list[dict], dict[str, str]]:
     created = 0
     skipped: list[dict] = []
     warnings: list[dict] = []
+    rule_map: dict[str, str] = {}
     existing_names = {rule.get("name") for rule in client.v1_all().get("rules", {}).values()}
 
     for rule_id, source_rule in snapshot.get("v1", {}).get("rules", {}).items():
@@ -757,12 +767,72 @@ def _create_rules(
             )
 
         result = client.v1_post("/rules", body)
+        created_id = _new_v1_id(result)
+        rule_map[f"/rules/{rule_id}"] = f"/rules/{created_id}"
         created += 1
         if source_rule.get("status") == "disabled":
-            created_id = _new_v1_id(result)
             client.v1_put(f"/rules/{created_id}", {"status": "disabled"})
 
-    return created, skipped, warnings
+    return created, skipped, warnings, rule_map
+
+
+def _create_resourcelinks(
+    client: HueBridgeClient,
+    snapshot: dict,
+    path_map: dict[str, str],
+) -> tuple[int, list[dict]]:
+    created = 0
+    warnings: list[dict] = []
+    existing_names = {
+        link.get("name")
+        for link in client.v1_all().get("resourcelinks", {}).values()
+    }
+    for source_id, source in snapshot.get("v1", {}).get("resourcelinks", {}).items():
+        if source.get("name") in existing_names:
+            warnings.append(
+                {
+                    "id": source_id,
+                    "name": source.get("name"),
+                    "reason": "resource link name already exists",
+                }
+            )
+            continue
+        links: list[str] = []
+        pruned: list[str] = []
+        for link in source.get("links", []):
+            mapped = path_map.get(link)
+            if mapped:
+                links.append(mapped)
+            else:
+                pruned.append(link)
+        if not links:
+            warnings.append(
+                {
+                    "id": source_id,
+                    "name": source.get("name"),
+                    "reason": "resource link has no mapped resources",
+                    "pruned": pruned,
+                }
+            )
+            continue
+        body = {
+            key: copy.deepcopy(source[key])
+            for key in ("name", "description", "type", "classid", "recycle")
+            if key in source
+        }
+        body["links"] = links
+        client.v1_post("/resourcelinks", body)
+        created += 1
+        if pruned:
+            warnings.append(
+                {
+                    "id": source_id,
+                    "name": source.get("name"),
+                    "reason": "out-of-scope metadata links pruned",
+                    "pruned": pruned,
+                }
+            )
+    return created, warnings
 
 
 def analyse(snapshot: dict, client: HueBridgeClient) -> dict:
@@ -777,6 +847,7 @@ def analyse(snapshot: dict, client: HueBridgeClient) -> dict:
         "devices": len(snapshot.get("devices", [])),
         "scenes": len(snapshot.get("scenes", [])),
         "rules": len(snapshot.get("v1", {}).get("rules", {})),
+        "resourcelinks": len(snapshot.get("v1", {}).get("resourcelinks", {})),
         "mapped": len(plan.v1_map),
         "missing": plan.missing,
         "external_dependencies": external,
@@ -801,11 +872,15 @@ def apply_snapshot(
     virtual_created = _ensure_virtual_sensors(client, snapshot, plan)
     destination_rooms = _merge_rooms(client, snapshot, plan)
     plan.v1_map.update(_create_scenes(client, snapshot, destination_rooms, plan))
-    rules_created, rules_skipped, warnings = _create_rules(
+    rules_created, rules_skipped, warnings, rule_map = _create_rules(
         client,
         snapshot,
         plan.v1_map,
         prune_external=prune_external,
+    )
+    plan.v1_map.update(rule_map)
+    resourcelinks_created, resourcelink_warnings = _create_resourcelinks(
+        client, snapshot, plan.v1_map
     )
     return {
         "destination_rooms": [
@@ -815,6 +890,8 @@ def apply_snapshot(
         "virtual_sensors_created": virtual_created,
         "rules_created": rules_created,
         "rules_skipped": rules_skipped,
+        "resourcelinks_created": resourcelinks_created,
+        "resourcelink_warnings": resourcelink_warnings,
         "warnings": warnings,
         "source_untouched": True,
     }
