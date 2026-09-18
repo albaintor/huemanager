@@ -602,13 +602,20 @@ def _ensure_virtual_sensors(client: HueBridgeClient, snapshot: dict, plan: Mappi
     created: list[dict] = []
     for source_id, source in snapshot.get("v1", {}).get("virtual_sensors", {}).items():
         source_path = f"/sensors/{source_id}"
+        source_uniqueid = source.get("uniqueid")
         match_id = next(
             (
                 sid
                 for sid, sensor in destination.items()
-                if source.get("uniqueid")
-                and sensor.get("uniqueid") == source.get("uniqueid")
-                and sensor.get("type") == source.get("type")
+                if sensor.get("type") == source.get("type")
+                and (
+                    (source_uniqueid and sensor.get("uniqueid") == source_uniqueid)
+                    or (
+                        not source_uniqueid
+                        and sensor.get("name") == source.get("name")
+                        and sensor.get("modelid") == source.get("modelid")
+                    )
+                )
             ),
             None,
         )
@@ -837,7 +844,12 @@ def _create_resourcelinks(
 
 def analyse(snapshot: dict, client: HueBridgeClient) -> dict:
     snapshot = _normalise_snapshot(snapshot)
-    plan = build_mapping_plan(snapshot, client.v1_all(), client.v2_resources())
+    dest_v1 = client.v1_all()
+    source_bridge_id = snapshot.get("source_bridge", {}).get("bridgeid")
+    destination_bridge_id = dest_v1.get("config", {}).get("bridgeid")
+    if source_bridge_id and source_bridge_id == destination_bridge_id:
+        raise MigrationError("Source and destination are the same Hue Bridge")
+    plan = build_mapping_plan(snapshot, dest_v1, client.v2_resources())
     external = [dep for dep in snapshot.get("dependencies", []) if dep.get("external")]
     return {
         "rooms": [room.get("metadata", {}).get("name") for room in snapshot.get("rooms", [])],
@@ -862,7 +874,12 @@ def apply_snapshot(
     prune_external: bool = True,
 ) -> dict:
     snapshot = _normalise_snapshot(snapshot)
-    plan = build_mapping_plan(snapshot, client.v1_all(), client.v2_resources())
+    dest_v1 = client.v1_all()
+    source_bridge_id = snapshot.get("source_bridge", {}).get("bridgeid")
+    destination_bridge_id = dest_v1.get("config", {}).get("bridgeid")
+    if source_bridge_id and source_bridge_id == destination_bridge_id:
+        raise MigrationError("Source and destination are the same Hue Bridge")
+    plan = build_mapping_plan(snapshot, dest_v1, client.v2_resources())
     if not plan.complete:
         raise MigrationError(
             "Destination bridge is missing migrated devices; pair them first. "
