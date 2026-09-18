@@ -540,7 +540,10 @@ def create_selection_snapshot(client: HueBridgeClient, room_names: list[str]) ->
             {
                 "rule_id": rid,
                 "name": rule.get("name", f"Rule {rid}"),
-                "internal": [_ref_info(ref, v1, membership) for ref in sorted(refs & selected_paths)],
+                "internal": [
+                    _ref_info(ref, v1, membership)
+                    for ref in sorted(refs & selected_paths)
+                ],
                 "external": [_ref_info(ref, v1, membership) for ref in sorted(external)],
             }
         )
@@ -557,7 +560,9 @@ def create_selection_snapshot(client: HueBridgeClient, room_names: list[str]) ->
             {
                 "behavior_id": instance.get("id"),
                 "name": instance.get("metadata", {}).get("name")
-                or behavior_scripts.get(instance.get("script_id"), {}).get("metadata", {}).get("name")
+                or behavior_scripts.get(instance.get("script_id"), {})
+                .get("metadata", {})
+                .get("name")
                 or instance.get("id"),
                 "script_id": instance.get("script_id"),
                 "internal": [
@@ -715,7 +720,11 @@ def build_mapping_plan(snapshot: dict, dest_v1: dict, dest_v2: list[dict]) -> Ma
         for service in device.get("services_expanded", []):
             if service.get("id") in v2_map:
                 continue
-            same_type = [candidate for candidate in candidates if candidate.get("type") == service.get("type")]
+            same_type = [
+                candidate
+                for candidate in candidates
+                if candidate.get("type") == service.get("type")
+            ]
             if len(same_type) == 1:
                 v2_map[service["id"]] = same_type[0]
 
@@ -741,7 +750,11 @@ def _unmapped_snapshot_devices(snapshot: dict, plan: MappingPlan) -> list[dict]:
     return missing
 
 
-def _destination_device_children(device_ids: set[str], snapshot: dict, plan: MappingPlan) -> list[dict]:
+def _destination_device_children(
+    device_ids: set[str],
+    snapshot: dict,
+    plan: MappingPlan,
+) -> list[dict]:
     children: list[dict] = []
     seen: set[str] = set()
     for device in snapshot.get("devices", []):
@@ -1314,7 +1327,11 @@ def _create_behavior_instances(
     return created, skipped, warnings
 
 
-def _ensure_virtual_sensors(client: HueBridgeClient, snapshot: dict, plan: MappingPlan) -> list[dict]:
+def _ensure_virtual_sensors(
+    client: HueBridgeClient,
+    snapshot: dict,
+    plan: MappingPlan,
+) -> list[dict]:
     destination = client.v1_all().get("sensors", {})
     created: list[dict] = []
     for source_id, source in snapshot.get("v1", {}).get("virtual_sensors", {}).items():
@@ -1444,7 +1461,13 @@ def _create_rules(
 
     for rule_id, source_rule in snapshot.get("v1", {}).get("rules", {}).items():
         if source_rule.get("name") in existing_names:
-            skipped.append({"id": rule_id, "name": source_rule.get("name"), "reason": "name exists"})
+            skipped.append(
+                {
+                    "id": rule_id,
+                    "name": source_rule.get("name"),
+                    "reason": "name exists",
+                }
+            )
             continue
 
         body, unresolved, pruned = rewrite_rule(
