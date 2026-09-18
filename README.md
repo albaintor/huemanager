@@ -126,6 +126,7 @@ Current v0.4 scope:
 - selected rooms and device membership;
 - Hue v2 scenes and scene actions;
 - Hue v2 `behavior_instance` graphs, including nested UUID references and UUID-keyed button configurations;
+- Hue v2 `entertainment_configuration` resources used by Hue Entertainment clients such as iLightShow/Hue Sync;
 - `behavior_script` matching by ID or script metadata/version when required;
 - physical light/sensor mapping by Zigbee `uniqueid`;
 - CLIP virtual sensors used by selected rule graphs;
@@ -249,6 +250,7 @@ The logical restore currently covers:
 - rooms and membership;
 - zones and their mapped children;
 - v2 scenes;
+- v2 Hue Entertainment configurations;
 - v2 `behavior_instance` automation graphs;
 - virtual CLIP sensors;
 - CLIP v1 rules;
@@ -279,3 +281,20 @@ HueManager displays the identifiers that the Bridge actually exposes for each de
 HueManager **does not derive a six-character Hue serial number from the Zigbee MAC or uniqueid**. The physical six-character serial and QR/setup code are not generally exposed by the Hue Bridge API, so presenting a derived value as a pairing code would be unsafe. The UI explicitly marks the serial/QR as unavailable when the Bridge did not return one.
 
 The destination search buttons can initiate discovery for lights and accessories. Devices that are still commissioned to another Zigbee network may still require the normal reset, physical pairing procedure, QR/serial entry in Hue, or another supported commissioning method.
+
+
+## iLightShow
+
+iLightShow uses the Hue Bridge and automatically manages Hue Entertainment groups from the
+lights selected in the app. HueManager now snapshots and recreates matching
+`entertainment_configuration` resources and remaps their entertainment services to the
+destination lights.
+
+This does **not** migrate iLightShow's own application credentials, presets or per-light
+settings stored by iLightShow itself. After a selective move to another Bridge, reconnect
+iLightShow to that Bridge with its Link button flow and verify/reselect its lights. iLightShow
+can then reuse or recreate its Entertainment configuration as needed.
+
+HueManager does not invoke Philips' proprietary Bridge-to-Bridge migration service. Physical
+Hue devices still have to join the destination Zigbee network before the logical restore can
+complete.
