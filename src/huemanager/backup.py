@@ -115,7 +115,7 @@ def create_bridge_backup(client: HueBridgeClient) -> dict:
     logical["scenes"] = [
         copy.deepcopy(resource)
         for resource in raw_v2
-        if resource.get("type") in {"scene", "smart_scene"}
+        if resource.get("type") == "scene"
     ]
     logical["zones"] = [
         copy.deepcopy(resource)
@@ -168,6 +168,7 @@ def create_bridge_backup(client: HueBridgeClient) -> dict:
             "zones": True,
             "device_names": True,
             "scenes": True,
+            "smart_scenes": False,
             "behavior_instances": True,
             "clip_virtual_sensors": True,
             "rules": True,
