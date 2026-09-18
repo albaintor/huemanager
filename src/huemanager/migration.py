@@ -977,7 +977,7 @@ def rewrite_behavior_configuration(
             output[new_key] = rewritten
 
         # If pruning emptied a semantically required collection, prune its parent branch.
-        for required in ("where", "what", "actions", "slots"):
+        for required in ("where", "what", "actions", "slots", "items"):
             if required in value and (
                 required not in output
                 or output.get(required) is _PRUNE_V2
