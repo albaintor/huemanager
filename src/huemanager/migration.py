@@ -1374,12 +1374,21 @@ def _create_resourcelinks(
     return created, warnings
 
 
-def analyse(snapshot: dict, client: HueBridgeClient) -> dict:
+def analyse(
+    snapshot: dict,
+    client: HueBridgeClient,
+    *,
+    allow_same_bridge: bool = False,
+) -> dict:
     snapshot = _normalise_snapshot(snapshot)
     dest_v1 = client.v1_all()
     source_bridge_id = snapshot.get("source_bridge", {}).get("bridgeid")
     destination_bridge_id = dest_v1.get("config", {}).get("bridgeid")
-    if source_bridge_id and source_bridge_id == destination_bridge_id:
+    if (
+        not allow_same_bridge
+        and source_bridge_id
+        and source_bridge_id == destination_bridge_id
+    ):
         raise MigrationError("Source and destination are the same Hue Bridge")
     plan = build_mapping_plan(snapshot, dest_v1, client.v2_resources())
     external = [dep for dep in snapshot.get("dependencies", []) if dep.get("external")]
@@ -1409,12 +1418,17 @@ def apply_snapshot(
     client: HueBridgeClient,
     *,
     prune_external: bool = True,
+    allow_same_bridge: bool = False,
 ) -> dict:
     snapshot = _normalise_snapshot(snapshot)
     dest_v1 = client.v1_all()
     source_bridge_id = snapshot.get("source_bridge", {}).get("bridgeid")
     destination_bridge_id = dest_v1.get("config", {}).get("bridgeid")
-    if source_bridge_id and source_bridge_id == destination_bridge_id:
+    if (
+        not allow_same_bridge
+        and source_bridge_id
+        and source_bridge_id == destination_bridge_id
+    ):
         raise MigrationError("Source and destination are the same Hue Bridge")
     plan = build_mapping_plan(snapshot, dest_v1, client.v2_resources())
     if not plan.complete:
