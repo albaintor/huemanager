@@ -108,13 +108,17 @@ def snapshot(
         raise typer.Exit(1) from exc
 
     external = sum(1 for item in payload.get("dependencies", []) if item.get("external"))
+    external_v2 = sum(
+        1 for item in payload.get("behavior_dependencies", []) if item.get("external")
+    )
     console.print(
         f"[green]Snapshot saved[/green] {output}: "
         f"{len(payload['rooms'])} rooms, "
         f"{len(payload['devices'])} devices, "
         f"{len(payload['scenes'])} scenes, "
         f"{len(payload['v1']['rules'])} rules, "
-        f"{external} rule(s) with external dependencies"
+        f"{len(payload.get('behavior_instances', []))} v2 automation(s), "
+        f"{external + external_v2} configuration(s) with external dependencies"
     )
 
 
