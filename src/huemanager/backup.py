@@ -94,6 +94,7 @@ def create_bridge_backup(client: HueBridgeClient) -> dict:
             "rooms": [],
             "devices": [],
             "scenes": [],
+            "entertainment_configurations": [],
             "behavior_instances": [],
             "behavior_scripts": {},
             "v2_references": {},
@@ -146,6 +147,11 @@ def create_bridge_backup(client: HueBridgeClient) -> dict:
         copy.deepcopy(resource)
         for resource in raw_v2
         if resource.get("type") == "zone"
+    ]
+    logical["entertainment_configurations"] = [
+        copy.deepcopy(resource)
+        for resource in raw_v2
+        if resource.get("type") == "entertainment_configuration"
     ]
     logical["behavior_instances"] = [
         copy.deepcopy(resource)
@@ -206,6 +212,7 @@ def create_bridge_backup(client: HueBridgeClient) -> dict:
             "device_names": True,
             "scenes": True,
             "smart_scenes": False,
+            "entertainment_configurations": True,
             "behavior_instances": True,
             "clip_virtual_sensors": True,
             "rules": True,
@@ -247,6 +254,9 @@ def backup_summary(backup: dict) -> dict:
         "scenes": len(logical.get("scenes", [])),
         "rules": len(raw_v1.get("rules", {})),
         "schedules": len(raw_v1.get("schedules", {})),
+        "entertainment_configurations": len(
+            logical.get("entertainment_configurations", [])
+        ),
         "behavior_instances": len(logical.get("behavior_instances", [])),
         "restore_scope": backup.get("restore_scope", {}),
     }
