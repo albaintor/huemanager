@@ -421,6 +421,7 @@ def create_selection_snapshot(client: HueBridgeClient, room_names: list[str]) ->
 
     resources = client.v2_resources()
     by_id = _resource_index(resources)
+    known_ids = set(by_id)
     matches = [
         r
         for r in resources
@@ -442,8 +443,42 @@ def create_selection_snapshot(client: HueBridgeClient, room_names: list[str]) ->
     scenes = [
         copy.deepcopy(r)
         for r in resources
-        if r.get("type") == "scene" and r.get("group", {}).get("rid") in room_ids
+        if r.get("type") in {"scene", "smart_scene"}
+        and r.get("group", {}).get("rid") in room_ids
     ]
+
+    selected_v2_ids = set(room_ids)
+    for device in devices:
+        selected_v2_ids.add(device.get("id"))
+        selected_v2_ids.update(
+            service.get("id") for service in device.get("services_expanded", [])
+        )
+    selected_v2_ids.update(scene.get("id") for scene in scenes)
+    selected_v2_ids.discard(None)
+
+    behavior_instances: list[dict] = []
+    behavior_ref_ids: set[str] = set()
+    for instance in resources:
+        if instance.get("type") != "behavior_instance":
+            continue
+        refs = _extract_v2_ref_ids(instance.get("configuration", {}), known_ids)
+        if refs & selected_v2_ids:
+            behavior_instances.append(copy.deepcopy(instance))
+            behavior_ref_ids.update(refs)
+
+    behavior_scripts: dict[str, dict] = {}
+    for instance in behavior_instances:
+        script_id = instance.get("script_id")
+        script = by_id.get(script_id)
+        if script and script.get("type") == "behavior_script":
+            behavior_scripts[script_id] = copy.deepcopy(script)
+            behavior_ref_ids.add(script_id)
+
+    v2_references = {
+        rid: copy.deepcopy(by_id[rid])
+        for rid in behavior_ref_ids
+        if rid in by_id
+    }
 
     v1 = client.v1_all()
     selected_paths = _selected_v1_paths(rooms, devices, scenes)
@@ -479,6 +514,7 @@ def create_selection_snapshot(client: HueBridgeClient, room_names: list[str]) ->
                     changed = True
 
     membership = _room_membership(resources, v1)
+    membership_v2 = _v2_membership(resources)
     selected_rule_paths = {f"/rules/{rid}" for rid in rules}
     resourcelinks = {
         rid: copy.deepcopy(link)
@@ -499,9 +535,35 @@ def create_selection_snapshot(client: HueBridgeClient, room_names: list[str]) ->
             }
         )
 
+    behavior_dependencies: list[dict] = []
+    for instance in behavior_instances:
+        refs = _extract_v2_ref_ids(instance.get("configuration", {}), known_ids)
+        external = {
+            rid
+            for rid in refs - selected_v2_ids
+            if by_id.get(rid, {}).get("type") in V2_PERIMETER_TYPES
+        }
+        behavior_dependencies.append(
+            {
+                "behavior_id": instance.get("id"),
+                "name": instance.get("metadata", {}).get("name")
+                or behavior_scripts.get(instance.get("script_id"), {}).get("metadata", {}).get("name")
+                or instance.get("id"),
+                "script_id": instance.get("script_id"),
+                "internal": [
+                    _v2_ref_info(rid, by_id, membership_v2)
+                    for rid in sorted(refs & selected_v2_ids)
+                ],
+                "external": [
+                    _v2_ref_info(rid, by_id, membership_v2)
+                    for rid in sorted(external)
+                ],
+            }
+        )
+
     config = v1.get("config", {})
     return {
-        "schema": 2,
+        "schema": 3,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "source_bridge": {
             key: config.get(key)
@@ -510,6 +572,9 @@ def create_selection_snapshot(client: HueBridgeClient, room_names: list[str]) ->
         "rooms": rooms,
         "devices": devices,
         "scenes": scenes,
+        "behavior_instances": behavior_instances,
+        "behavior_scripts": behavior_scripts,
+        "v2_references": v2_references,
         "v1": {
             "lights": selected_v1["lights"],
             "sensors": selected_v1["sensors"],
@@ -518,8 +583,8 @@ def create_selection_snapshot(client: HueBridgeClient, room_names: list[str]) ->
             "resourcelinks": resourcelinks,
         },
         "dependencies": dependency_report,
+        "behavior_dependencies": behavior_dependencies,
     }
-
 
 def create_snapshot(client: HueBridgeClient, room_name: str) -> dict:
     return create_selection_snapshot(client, [room_name])
