@@ -1,28 +1,16 @@
 # HueManager
 
-HueManager is a **non-destructive, selective Philips Hue migration CLI**. It is designed for the case where a Hue Bridge Pro is already populated and you want to move only selected rooms from another Hue Bridge without throwing away their configuration.
+HueManager is a local **selective Philips Hue migration tool** for moving chosen rooms from one Hue Bridge to another (including a Hue Bridge Pro) while preserving as much bridge-side configuration as possible.
 
-It combines the Hue local APIs:
+It combines:
 
-- **CLIP v2** for rooms, devices and scenes;
-- **CLIP v1** for stable Zigbee `uniqueid` matching and legacy rules (including many iConnectHue rules).
+- Hue **CLIP v2** for rooms, devices and scenes;
+- Hue **CLIP v1** for Zigbee `uniqueid` matching and bridge rules;
+- dependency analysis for advanced configurations created by apps such as iConnectHue.
 
-The source bridge is never modified by HueManager 0.1.0. Physical Zigbee migration/pairing stays explicit so a bad mapping cannot silently remove devices from the old bridge.
+The source bridge is never deleted or cleaned automatically.
 
-## What 0.1.0 migrates
-
-For one selected room, HueManager snapshots:
-
-- the room and its child devices;
-- all v1 light/sensor resources belonging to those devices;
-- all v2 scenes attached to the room, including actions and dynamic-scene palette data when exposed by the Bridge;
-- v1 rules that reference the selected room, lights, sensors or scenes.
-
-After the physical devices have been paired to the destination bridge, HueManager matches them by their Zigbee `uniqueid`, recreates or merges the room, recreates its scenes and remaps rule references.
-
-Rules with references to resources that cannot be mapped are **skipped rather than guessed** and reported at the end.
-
-## Install
+## Web interface
 
 Python 3.11+:
 
@@ -30,90 +18,126 @@ Python 3.11+:
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -e .
+huemanager web
 ```
 
-## Pair HueManager with both bridges
+Open:
 
-Press the physical link button on the bridge, then run:
+```text
+http://127.0.0.1:8787
+```
+
+The web UI can:
+
+- pair HueManager with a Bridge after you press its physical link button;
+- discover Bridges through the official Hue discovery service;
+- display a tree of **rooms → devices → scenes → linked rules**;
+- select one or several rooms;
+- show cross-room dependencies before migration;
+- create a durable pre-migration snapshot;
+- start light or accessory search on the destination Bridge;
+- verify that every physical resource has been found on the destination;
+- recreate rooms, scenes, virtual CLIP sensors, rules and relevant resource-link metadata.
+
+## iConnectHue / advanced switch configurations
+
+A button configuration is not assumed to belong only to the room where the switch is located. HueManager analyses every referenced Hue resource in the matching bridge rules.
+
+Example:
+
+```text
+Dimmer Bureau / button 1
+  ├─ condition: /sensors/4/state/buttonevent
+  ├─ action: Bureau /groups/3
+  └─ action: Salon  /groups/9
+```
+
+If **Bureau + Salon** are selected, both group references are mapped and the two actions are retained.
+
+If only **Bureau** is selected, HueManager raises an external-dependency warning and, by default, recreates the rule with only the Bureau action. The removed link is included in the final migration report.
+
+The same pruning policy applies to out-of-scope conditions, but those are explicitly reported as a **semantic change**, because removing a condition can broaden when a rule triggers. A rule is skipped if pruning leaves it without any useful action or without any remaining condition when the original rule had conditions.
+
+HueManager also follows and snapshots referenced **CLIP virtual sensors** (`CLIPGenericStatus`, `CLIPGenericFlag`, etc.), which advanced Hue configurations can use as bridge-local variables. They are recreated before dependent rules.
+
+Relevant CLIP v1 `resourcelinks` are recreated after the rules. Resource links are client-side grouping metadata rather than executable automation logic. Their links are remapped to the resources recreated by HueManager; out-of-scope metadata links are pruned and reported.
+
+## Safe workflow
+
+### 1. Pair the two Bridges
+
+From the web UI, press the physical Bridge button and use **Appairer**.
+
+CLI equivalent:
 
 ```bash
 huemanager pair old 192.168.1.20
 huemanager pair pro 192.168.1.21
 ```
 
-Credentials are stored in `~/.config/huemanager/config.json` with restricted file permissions when supported by the OS.
+### 2. Create a snapshot before moving devices
 
-By default TLS certificate verification is disabled because local Hue Bridge certificate validation depends on the local trust setup. Use `--verify-tls` if your environment is configured for it.
+Web: select one or more rooms and click **Créer le snapshot**.
 
-Check bridges and rooms:
-
-```bash
-huemanager bridges
-huemanager rooms old
-```
-
-## Safe migration workflow
-
-### 1. Snapshot the room while everything is still on the old bridge
+CLI:
 
 ```bash
-huemanager snapshot old --room "Jardin" --output jardin.json
+huemanager snapshot old -r "Bureau" -r "Salon" -o bureau-salon.json
 ```
 
-Keep this JSON until the migration is fully validated.
+The snapshot records selected devices, scenes, bridge rules, virtual CLIP dependencies, resource links and cross-room references.
 
-### 2. Move/pair the physical devices to the Bridge Pro
+### 3. Pair/reset physical devices onto the destination Bridge
 
-Use the Hue app, or start a light search with:
+The web UI can start Bridge searches for lamps and accessories. Physical reset/pairing is still required where Hue hardware requires it.
+
+CLI:
 
 ```bash
-huemanager scan pro
+huemanager scan pro --kind lights
+huemanager scan pro --kind sensors
 ```
 
-Accessories may require their normal reset/pairing procedure. HueManager deliberately does not delete anything from the old bridge.
-
-### 3. Check the mapping
+### 4. Verify mapping
 
 ```bash
-huemanager plan jardin.json pro
+huemanager plan bureau-salon.json pro
 ```
 
-`ready: true` means every snapshotted v1 light/sensor has been found on the destination by `uniqueid`. Exit code 2 means at least one physical resource is still missing.
+Physical lights/sensors are matched by their Zigbee `uniqueid`. `ready: true` means all physical resources needed by the selection are present on the destination.
 
-### 4. Dry-run
+### 5. Dry-run, then migrate
 
 ```bash
-huemanager apply jardin.json pro
+huemanager apply bureau-salon.json pro
+huemanager apply bureau-salon.json pro --execute
 ```
 
-No change is made without `--execute`.
-
-### 5. Apply
+By default, out-of-scope rule links are pruned and reported. To use strict behavior (skip a rule instead of pruning external references):
 
 ```bash
-huemanager apply jardin.json pro --execute
+huemanager apply bureau-salon.json pro --execute --keep-external-strict
 ```
 
-If a room with the same name already exists on the destination, HueManager merges the migrated devices into it. Existing scene names in that room are reused rather than overwritten.
+## What is preserved
 
-To use another destination room name:
+Current v0.2 scope:
 
-```bash
-huemanager apply jardin.json pro --execute --room-name "Extérieur"
-```
-
-## Safety model
-
-HueManager intentionally has no `delete-source` command in the first release. Validate the room, scenes, switches/motion sensors and rules on the Bridge Pro first, then clean up the old bridge using the Hue app.
-
-A rule is recreated only when every Hue resource reference used by that rule can be remapped. Cross-room dependencies are surfaced instead of silently creating a broken automation.
+- selected rooms and device membership;
+- Hue v2 scenes and scene actions;
+- physical light/sensor mapping by Zigbee `uniqueid`;
+- CLIP virtual sensors used by selected rule graphs;
+- CLIP v1 rules, including cross-room rules when all referenced rooms are selected;
+- relevant CLIP v1 resource links;
+- explicit warnings and pruning reports for references outside the selected perimeter.
 
 ## Current limitations
 
-- Hue app **v2 `behavior_instance` automations** are not recreated yet. They are different from CLIP v1 rules and need a separate dependency-aware migrator.
-- Entertainment areas, Matter bindings, HomeKit configuration and third-party cloud integrations are outside the scope of 0.1.0.
-- A physical Zigbee device still has to leave the source Zigbee network and join the destination network.
-- Rules created by third-party applications can depend on resources outside the selected room; HueManager skips them if those dependencies cannot be mapped.
+- Hue v2 `behavior_instance` automations are not recreated yet.
+- Entertainment areas, Matter/HomeKit bindings and third-party cloud account configuration are not migrated.
+- A Zigbee device still has to join the destination Bridge network; HueManager does not use an undocumented forced-transfer mechanism.
+- Schedules/timers referenced by unusually complex third-party rule graphs are detected as references but are not recreated in v0.2.
+- Recreating a third-party application's resource-link metadata does not guarantee that the third-party app will claim or display those resources as if it had created them itself.
 
 ## Development
 
