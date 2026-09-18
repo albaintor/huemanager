@@ -596,18 +596,24 @@ def save_snapshot(snapshot: dict, path: Path) -> None:
 
 
 def _normalise_snapshot(payload: dict) -> dict:
-    if payload.get("schema") == 2:
+    if payload.get("schema") == 3:
         return payload
-    if payload.get("schema") == 1 and payload.get("room"):
-        result = copy.deepcopy(payload)
-        result["schema"] = 2
-        result["rooms"] = [result.pop("room")]
-        result.setdefault("v1", {}).setdefault("virtual_sensors", {})
-        result.setdefault("v1", {}).setdefault("resourcelinks", {})
-        result.setdefault("dependencies", [])
-        return result
-    raise MigrationError(f"Unsupported snapshot schema: {payload.get('schema')!r}")
 
+    result = copy.deepcopy(payload)
+    if result.get("schema") == 1 and result.get("room"):
+        result["rooms"] = [result.pop("room")]
+    elif result.get("schema") != 2:
+        raise MigrationError(f"Unsupported snapshot schema: {result.get('schema')!r}")
+
+    result["schema"] = 3
+    result.setdefault("v1", {}).setdefault("virtual_sensors", {})
+    result.setdefault("v1", {}).setdefault("resourcelinks", {})
+    result.setdefault("dependencies", [])
+    result.setdefault("behavior_instances", [])
+    result.setdefault("behavior_scripts", {})
+    result.setdefault("v2_references", {})
+    result.setdefault("behavior_dependencies", [])
+    return result
 
 def load_snapshot(path: Path) -> dict:
     return _normalise_snapshot(json.loads(path.read_text(encoding="utf-8")))
@@ -631,6 +637,7 @@ def build_mapping_plan(snapshot: dict, dest_v1: dict, dest_v2: list[dict]) -> Ma
         **_uniqueid_index(dest_v1.get("sensors", {}), "sensors"),
     }
     dest_by_v1 = _id_v1_index(dest_v2)
+    dest_by_id = _resource_index(dest_v2)
 
     source_v1: dict[str, dict] = {}
     for section in ("lights", "sensors"):
@@ -658,19 +665,51 @@ def build_mapping_plan(snapshot: dict, dest_v1: dict, dest_v2: list[dict]) -> Ma
         source_v2[device["id"]] = device
         for service in device.get("services_expanded", []):
             source_v2[service["id"]] = service
-    for source_id, resource in source_v2.items():
-        id_v1 = resource.get("id_v1")
-        if id_v1 in v1_map and v1_map[id_v1] in dest_by_v1:
-            source_v2[source_id] = resource
 
     v2_map: dict[str, dict] = {}
+    for source_id, source in snapshot.get("v2_references", {}).items():
+        destination = dest_by_id.get(source_id)
+        if destination and destination.get("type") == source.get("type"):
+            v2_map[source_id] = destination
+
     for source_id, resource in source_v2.items():
         id_v1 = resource.get("id_v1")
         if id_v1 in v1_map and v1_map[id_v1] in dest_by_v1:
             v2_map[source_id] = dest_by_v1[v1_map[id_v1]]
 
-    return MappingPlan(v1_map=v1_map, v2_map=v2_map, missing=missing)
+    # A device UUID changes between bridges. Infer it from the owner of a mapped service.
+    for device in snapshot.get("devices", []):
+        owner_ids = {
+            mapped.get("owner", {}).get("rid")
+            for service in device.get("services_expanded", [])
+            if (mapped := v2_map.get(service.get("id")))
+            and mapped.get("owner", {}).get("rtype") == "device"
+            and mapped.get("owner", {}).get("rid")
+        }
+        if len(owner_ids) == 1:
+            owner_id = next(iter(owner_ids))
+            if owner_id in dest_by_id:
+                v2_map[device["id"]] = dest_by_id[owner_id]
 
+    # Map remaining services by device owner and unique service type when no v1 id exists.
+    for device in snapshot.get("devices", []):
+        mapped_device = v2_map.get(device.get("id"))
+        if not mapped_device:
+            continue
+        dest_device_id = mapped_device.get("id")
+        candidates = [
+            resource
+            for resource in dest_v2
+            if resource.get("owner", {}).get("rid") == dest_device_id
+        ]
+        for service in device.get("services_expanded", []):
+            if service.get("id") in v2_map:
+                continue
+            same_type = [candidate for candidate in candidates if candidate.get("type") == service.get("type")]
+            if len(same_type) == 1:
+                v2_map[service["id"]] = same_type[0]
+
+    return MappingPlan(v1_map=v1_map, v2_map=v2_map, missing=missing)
 
 def _destination_device_children(device_ids: set[str], snapshot: dict, plan: MappingPlan) -> list[dict]:
     children: list[dict] = []
