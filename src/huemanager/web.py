@@ -312,6 +312,9 @@ def create_web_snapshot(request: SnapshotRequest) -> dict:
             "rules": len(snapshot.get("v1", {}).get("rules", {})),
             "virtual_sensors": len(snapshot.get("v1", {}).get("virtual_sensors", {})),
             "resourcelinks": len(snapshot.get("v1", {}).get("resourcelinks", {})),
+            "entertainment_configurations": len(
+                snapshot.get("entertainment_configurations", [])
+            ),
             "behavior_instances": len(snapshot.get("behavior_instances", [])),
             "external_dependencies": external,
             "external_behavior_dependencies": external_v2,
