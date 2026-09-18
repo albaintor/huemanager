@@ -287,8 +287,14 @@ def inventory_tree(client: HueBridgeClient) -> dict:
     resources = client.v2_resources()
     v1 = client.v1_all()
     by_id = _resource_index(resources)
+    known_ids = set(by_id)
     membership = _room_membership(resources, v1)
+    membership_v2 = _v2_membership(resources)
     rules = v1.get("rules", {})
+    behavior_instances = [r for r in resources if r.get("type") == "behavior_instance"]
+    behavior_scripts = {
+        r["id"]: r for r in resources if r.get("type") == "behavior_script" and r.get("id")
+    }
 
     room_nodes: list[dict] = []
     for room in sorted(
@@ -297,15 +303,22 @@ def inventory_tree(client: HueBridgeClient) -> dict:
     ):
         name = room.get("metadata", {}).get("name", "?")
         devices = _room_devices(room, by_id)
-        paths = _selected_v1_paths(
-            [room],
-            devices,
-            [
-                s
-                for s in resources
-                if s.get("type") == "scene" and s.get("group", {}).get("rid") == room.get("id")
-            ],
-        )
+        room_scenes = [
+            s
+            for s in resources
+            if s.get("type") in {"scene", "smart_scene"}
+            and s.get("group", {}).get("rid") == room.get("id")
+        ]
+        paths = _selected_v1_paths([room], devices, room_scenes)
+        selected_v2_ids = {room.get("id")}
+        for device in devices:
+            selected_v2_ids.add(device.get("id"))
+            selected_v2_ids.update(
+                service.get("id") for service in device.get("services_expanded", [])
+            )
+        selected_v2_ids.update(scene.get("id") for scene in room_scenes)
+        selected_v2_ids.discard(None)
+
         scenes = [
             {
                 "id": scene.get("id"),
@@ -313,9 +326,9 @@ def inventory_tree(client: HueBridgeClient) -> dict:
                 "name": scene.get("metadata", {}).get("name", "?"),
                 "actions": len(scene.get("actions", [])),
             }
-            for scene in resources
-            if scene.get("type") == "scene" and scene.get("group", {}).get("rid") == room.get("id")
+            for scene in room_scenes
         ]
+
         rule_nodes = []
         for rid, rule in rules.items():
             refs = _extract_refs(rule)
@@ -331,6 +344,30 @@ def inventory_tree(client: HueBridgeClient) -> dict:
                     ],
                 }
             )
+
+        automation_nodes = []
+        for instance in behavior_instances:
+            refs = _extract_v2_ref_ids(instance.get("configuration", {}), known_ids)
+            if not (refs & selected_v2_ids):
+                continue
+            script = behavior_scripts.get(instance.get("script_id"), {})
+            automation_nodes.append(
+                {
+                    "id": instance.get("id"),
+                    "name": instance.get("metadata", {}).get("name")
+                    or script.get("metadata", {}).get("name")
+                    or instance.get("id"),
+                    "enabled": instance.get("enabled"),
+                    "status": instance.get("status"),
+                    "script_id": instance.get("script_id"),
+                    "script_name": script.get("metadata", {}).get("name"),
+                    "references": [
+                        _v2_ref_info(ref, by_id, membership_v2) for ref in sorted(refs)
+                    ],
+                    "configuration": copy.deepcopy(instance.get("configuration", {})),
+                }
+            )
+
         device_nodes = []
         for device in devices:
             services = []
@@ -352,8 +389,10 @@ def inventory_tree(client: HueBridgeClient) -> dict:
                     "model": product.get("model_id"),
                     "product": product.get("product_name"),
                     "services": services,
+                    "identifiers": _device_identifiers(device, v1),
                 }
             )
+
         room_nodes.append(
             {
                 "id": room.get("id"),
@@ -362,6 +401,7 @@ def inventory_tree(client: HueBridgeClient) -> dict:
                 "devices": device_nodes,
                 "scenes": scenes,
                 "rules": rule_nodes,
+                "automations_v2": automation_nodes,
             }
         )
 
@@ -373,7 +413,6 @@ def inventory_tree(client: HueBridgeClient) -> dict:
         },
         "rooms": room_nodes,
     }
-
 
 def create_selection_snapshot(client: HueBridgeClient, room_names: list[str]) -> dict:
     wanted = {name for name in room_names if name}
