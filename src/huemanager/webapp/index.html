@@ -371,7 +371,7 @@
       });
       state.snapshotId = result.id;
       state.planReady = false;
-      $("snapshotInfo").textContent = `${result.devices} appareils · ${result.scenes} scènes · ${result.rules} règles · ${result.virtual_sensors} variables CLIP`;
+      $("snapshotInfo").textContent = `${result.devices} appareils · ${result.scenes} scènes · ${result.rules} règles · ${result.virtual_sensors} variables CLIP · ${result.resourcelinks} liens de ressources`;
       renderDependencies(result.external_dependencies || []);
       $("scanLights").disabled = false;
       $("scanSensors").disabled = false;
