@@ -191,7 +191,10 @@ def create_bridge_backup(client: HueBridgeClient) -> dict:
             "clip_v2_resources": raw_v2,
             "auth_v1_redacted": {
                 "count": redacted_auth_v1_count,
-                "reason": "Authorized-client resources are credentials/identity metadata and are not backed up",
+                "reason": (
+                    "Authorized-client resources are credentials/identity metadata "
+                    "and are not backed up"
+                ),
             },
         },
         "logical_restore": logical,
