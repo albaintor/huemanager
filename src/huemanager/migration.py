@@ -873,6 +873,262 @@ def _create_scenes(
     return scene_map
 
 
+def _map_behavior_script(
+    source_script_id: str,
+    snapshot: dict,
+    destination_resources: list[dict],
+) -> str | None:
+    destination_scripts = [
+        resource
+        for resource in destination_resources
+        if resource.get("type") == "behavior_script"
+    ]
+    exact = next(
+        (resource for resource in destination_scripts if resource.get("id") == source_script_id),
+        None,
+    )
+    if exact:
+        return exact["id"]
+
+    source = snapshot.get("behavior_scripts", {}).get(source_script_id, {})
+    source_metadata = source.get("metadata", {})
+    source_name = source_metadata.get("name")
+    source_category = source_metadata.get("category")
+    source_version = source.get("version")
+    candidates = [
+        resource
+        for resource in destination_scripts
+        if resource.get("metadata", {}).get("name") == source_name
+        and (
+            not source_category
+            or resource.get("metadata", {}).get("category") == source_category
+        )
+        and (not source_version or resource.get("version") == source_version)
+    ]
+    return candidates[0].get("id") if len(candidates) == 1 else None
+
+
+_PRUNE_V2 = object()
+
+
+def rewrite_behavior_configuration(
+    configuration: dict,
+    v2_map: dict[str, dict],
+    known_source_ids: set[str],
+    *,
+    prune_external: bool,
+) -> tuple[dict | None, set[str], list[dict]]:
+    unresolved: set[str] = set()
+    pruned: list[dict] = []
+
+    def missing(source_id: str, path: tuple[str, ...]) -> object:
+        if prune_external:
+            pruned.append({"rid": source_id, "path": ".".join(path)})
+            return _PRUNE_V2
+        unresolved.add(source_id)
+        return source_id
+
+    def walk(value: Any, path: tuple[str, ...] = ()) -> Any:
+        if isinstance(value, str) and value in known_source_ids:
+            mapped = v2_map.get(value)
+            return mapped.get("id") if mapped else missing(value, path)
+
+        if isinstance(value, list):
+            output = []
+            for index, child in enumerate(value):
+                rewritten = walk(child, path + (str(index),))
+                if rewritten is not _PRUNE_V2:
+                    output.append(rewritten)
+            return output if output else _PRUNE_V2
+
+        if not isinstance(value, dict):
+            return copy.deepcopy(value)
+
+        rid = value.get("rid")
+        rtype = value.get("rtype")
+        if isinstance(rid, str) and rid in known_source_ids and isinstance(rtype, str):
+            mapped = v2_map.get(rid)
+            if not mapped:
+                return missing(rid, path)
+            output = copy.deepcopy(value)
+            output["rid"] = mapped.get("id", rid)
+            output["rtype"] = mapped.get("type", rtype)
+            return output
+
+        output: dict = {}
+        for key, child in value.items():
+            new_key = key
+            if isinstance(key, str) and key in known_source_ids:
+                mapped = v2_map.get(key)
+                if not mapped:
+                    if prune_external:
+                        pruned.append({"rid": key, "path": ".".join(path + (key,))})
+                        continue
+                    unresolved.add(key)
+                else:
+                    new_key = mapped.get("id", key)
+
+            rewritten = walk(child, path + (str(key),))
+            if rewritten is _PRUNE_V2:
+                # These nodes are resource selectors; losing them invalidates their branch.
+                if key in {"device", "group", "target", "recall"}:
+                    return _PRUNE_V2
+                continue
+            output[new_key] = rewritten
+
+        # If pruning emptied a semantically required collection, prune its parent branch.
+        for required in ("where", "what", "actions", "slots"):
+            if required in value and (
+                required not in output
+                or output.get(required) is _PRUNE_V2
+                or output.get(required) == []
+            ):
+                return _PRUNE_V2
+        if "buttons" in value and value.get("buttons") and not output.get("buttons"):
+            return _PRUNE_V2
+
+        return output if output else _PRUNE_V2
+
+    rewritten = walk(configuration)
+    if rewritten is _PRUNE_V2 or not isinstance(rewritten, dict):
+        return None, unresolved, pruned
+    return rewritten, unresolved, pruned
+
+
+def _create_behavior_instances(
+    client: HueBridgeClient,
+    snapshot: dict,
+    plan: MappingPlan,
+    *,
+    prune_external: bool,
+) -> tuple[int, list[dict], list[dict]]:
+    source_instances = snapshot.get("behavior_instances", [])
+    if not source_instances:
+        return 0, [], []
+
+    destination_resources = client.v2_resources()
+    destination_by_id = _resource_index(destination_resources)
+
+    # Built-in/global resources (recipes, scripts, etc.) often keep their UUID.
+    for source_id, source in snapshot.get("v2_references", {}).items():
+        destination = destination_by_id.get(source_id)
+        if destination and destination.get("type") == source.get("type"):
+            plan.v2_map.setdefault(source_id, destination)
+
+    known_source_ids = set(snapshot.get("v2_references", {}))
+    for room in snapshot.get("rooms", []):
+        if room.get("id"):
+            known_source_ids.add(room["id"])
+    for scene in snapshot.get("scenes", []):
+        if scene.get("id"):
+            known_source_ids.add(scene["id"])
+    for device in snapshot.get("devices", []):
+        if device.get("id"):
+            known_source_ids.add(device["id"])
+        for service in device.get("services_expanded", []):
+            if service.get("id"):
+                known_source_ids.add(service["id"])
+
+    existing = [
+        resource
+        for resource in destination_resources
+        if resource.get("type") == "behavior_instance"
+    ]
+    created = 0
+    skipped: list[dict] = []
+    warnings: list[dict] = []
+
+    for source in source_instances:
+        source_script_id = source.get("script_id")
+        script_id = _map_behavior_script(source_script_id, snapshot, destination_resources)
+        name = source.get("metadata", {}).get("name") or source.get("id")
+        if not script_id:
+            skipped.append(
+                {
+                    "id": source.get("id"),
+                    "name": name,
+                    "reason": "matching behavior_script not found on destination",
+                    "script_id": source_script_id,
+                }
+            )
+            continue
+
+        if any(
+            instance.get("script_id") == script_id
+            and instance.get("metadata", {}).get("name") == name
+            for instance in existing
+        ):
+            skipped.append(
+                {
+                    "id": source.get("id"),
+                    "name": name,
+                    "reason": "matching behavior instance already exists",
+                }
+            )
+            continue
+
+        configuration, unresolved, pruned = rewrite_behavior_configuration(
+            source.get("configuration", {}),
+            plan.v2_map,
+            known_source_ids,
+            prune_external=prune_external,
+        )
+        if unresolved:
+            skipped.append(
+                {
+                    "id": source.get("id"),
+                    "name": name,
+                    "reason": "unresolved v2 graph references",
+                    "references": sorted(unresolved),
+                }
+            )
+            continue
+        if configuration is None:
+            skipped.append(
+                {
+                    "id": source.get("id"),
+                    "name": name,
+                    "reason": "automation graph became empty after pruning",
+                    "pruned": pruned,
+                }
+            )
+            continue
+
+        body = {
+            "type": "behavior_instance",
+            "script_id": script_id,
+            "enabled": bool(source.get("enabled", True)),
+            "configuration": configuration,
+            "metadata": {"name": name},
+        }
+        try:
+            result = client.v2_post("behavior_instance", body)
+            created_id = _new_resource_id(result)
+            created += 1
+            if pruned:
+                warnings.append(
+                    {
+                        "id": source.get("id"),
+                        "destination_id": created_id,
+                        "name": name,
+                        "pruned": pruned,
+                        "semantic_change": True,
+                    }
+                )
+        except Exception as exc:
+            skipped.append(
+                {
+                    "id": source.get("id"),
+                    "name": name,
+                    "reason": "destination bridge rejected behavior_instance",
+                    "error": str(exc),
+                    "pruned": pruned,
+                }
+            )
+
+    return created, skipped, warnings
+
+
 def _ensure_virtual_sensors(client: HueBridgeClient, snapshot: dict, plan: MappingPlan) -> list[dict]:
     destination = client.v1_all().get("sensors", {})
     created: list[dict] = []
