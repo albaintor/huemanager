@@ -26,7 +26,8 @@
     label { display: block; font-weight: 600; margin: 10px 0 5px; }
     input, select, button { font: inherit; }
     input, select { width: 100%; min-height: 42px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); padding: 8px 10px; }
-    button { min-height: 40px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); padding: 8px 12px; cursor: pointer; }
+    button, .button-link { min-height: 40px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); padding: 8px 12px; cursor: pointer; }
+    .button-link { display: inline-flex; align-items: center; text-decoration: none; }
     button.primary { background: var(--accent); color: #081126; border-color: transparent; font-weight: 700; }
     button.danger { border-color: var(--bad); }
     button:disabled { opacity: .45; cursor: not-allowed; }
@@ -136,11 +137,36 @@
         </div>
       </div>
     </div>
+
+    <div class="card span-12">
+      <h2>Backup / restore du Bridge</h2>
+      <p class="muted">Le backup conserve un dump CLIP v1/v2 complet (clés API retirées) et une représentation restaurable. Le réseau Zigbee, sa clé et les appairages physiques ne sont pas exportables par l’API : les appareils doivent être réappairés avant le restore.</p>
+      <div class="row">
+        <button id="createBackup" class="primary">Backuper le Bridge source</button>
+        <button id="refreshBackups">Rafraîchir les backups</button>
+        <div class="grow">
+          <select id="backupSelect" aria-label="Backup à restaurer"></select>
+        </div>
+        <a id="downloadBackup" class="button-link" href="#" download>Télécharger</a>
+        <button id="planRestore">Analyser le restore</button>
+        <button id="restoreBackup" class="danger" disabled>Restaurer vers la destination</button>
+      </div>
+      <div id="backupInfo" class="muted" style="margin-top:10px"></div>
+      <pre id="restoreResult" class="hidden"></pre>
+    </div>
   </section>
 </main>
 <script>
 (() => {
-  const state = { bridges: [], tree: null, selected: new Set(), snapshotId: null, planReady: false };
+  const state = {
+    bridges: [],
+    tree: null,
+    selected: new Set(),
+    snapshotId: null,
+    planReady: false,
+    backupId: null,
+    restoreReady: false
+  };
   const $ = (id) => document.getElementById(id);
 
   function status(message, kind = "") {
@@ -201,6 +227,41 @@
     const n = state.selected.size;
     $("selectionCount").textContent = `${n} pièce${n > 1 ? "s" : ""}`;
     $("snapshotButton").disabled = n === 0;
+  }
+
+  async function loadBackups() {
+    const data = await api("/api/backups");
+    const select = $("backupSelect");
+    const current = state.backupId || select.value;
+    select.replaceChildren();
+    for (const backup of data.backups || []) {
+      const option = document.createElement("option");
+      option.value = backup.id;
+      if (backup.invalid) {
+        option.textContent = `${backup.id} — backup invalide`;
+      } else {
+        const source = backup.source_bridge?.name || backup.source_bridge?.bridgeid || "Hue";
+        option.textContent = `${backup.created_at || ""} — ${source} — ${backup.lights || 0} lampes`;
+      }
+      select.append(option);
+    }
+    if ([...select.options].some(option => option.value === current)) select.value = current;
+    state.backupId = select.value || null;
+    state.restoreReady = false;
+    $("restoreBackup").disabled = true;
+    $("planRestore").disabled = !state.backupId;
+    $("downloadBackup").style.pointerEvents = state.backupId ? "auto" : "none";
+    $("downloadBackup").style.opacity = state.backupId ? "1" : ".45";
+    $("downloadBackup").href = state.backupId ? `/api/backups/${state.backupId}/download` : "#";
+  }
+
+  function selectBackup() {
+    state.backupId = $("backupSelect").value || null;
+    state.restoreReady = false;
+    $("restoreBackup").disabled = true;
+    $("planRestore").disabled = !state.backupId;
+    $("downloadBackup").href = state.backupId ? `/api/backups/${state.backupId}/download` : "#";
+    $("restoreResult").classList.add("hidden");
   }
 
   function renderTree(tree) {
@@ -475,6 +536,77 @@
     } catch (e) { status(e.message, "bad"); }
   });
 
+  $("createBackup").addEventListener("click", async () => {
+    try {
+      status("Création du backup complet du Bridge…");
+      const result = await api("/api/backups", {
+        method: "POST",
+        body: JSON.stringify({ bridge: $("sourceBridge").value })
+      });
+      state.backupId = result.id;
+      $("backupInfo").textContent =
+        `Backup créé : ${result.rooms} pièces · ${result.zones} zones · ${result.lights} lampes · ${result.sensors} capteurs · ${result.scenes} scènes · ${result.behavior_instances} automatisations v2.`;
+      await loadBackups();
+      $("backupSelect").value = result.id;
+      selectBackup();
+      status("Backup complet enregistré dans le volume de configuration.", "good");
+    } catch (e) { status(e.message, "bad"); }
+  });
+
+  $("refreshBackups").addEventListener("click", async () => {
+    try {
+      await loadBackups();
+      status("Liste des backups actualisée.", "good");
+    } catch (e) { status(e.message, "bad"); }
+  });
+
+  $("backupSelect").addEventListener("change", selectBackup);
+
+  $("planRestore").addEventListener("click", async () => {
+    if (!state.backupId) return;
+    try {
+      status("Analyse du restore et des appareils réappairés…");
+      const result = await api(`/api/backups/${state.backupId}/plan`, {
+        method: "POST",
+        body: JSON.stringify({ destination: $("destinationBridge").value })
+      });
+      const pre = $("restoreResult");
+      pre.textContent = JSON.stringify(result, null, 2);
+      pre.classList.remove("hidden");
+      state.restoreReady = Boolean(result.ready);
+      $("restoreBackup").disabled = !state.restoreReady;
+      status(
+        result.ready
+          ? "Restore prêt : tous les appareils physiques requis sont présents sur le Bridge cible."
+          : `Restore bloqué : ${result.missing?.length || 0} ressource(s) physique(s) encore manquante(s).`,
+        result.ready ? "good" : "warn"
+      );
+    } catch (e) { status(e.message, "bad"); }
+  });
+
+  $("restoreBackup").addEventListener("click", async () => {
+    if (!state.backupId || !state.restoreReady) return;
+    const ok = window.confirm(
+      "Restaurer la configuration logique de ce backup vers le Bridge destination ? " +
+      "Les appairages Zigbee doivent déjà être présents. Les ressources existantes de même nom sont réutilisées autant que possible."
+    );
+    if (!ok) return;
+    try {
+      status("Restore du Bridge en cours…");
+      const result = await api(`/api/backups/${state.backupId}/restore`, {
+        method: "POST",
+        body: JSON.stringify({
+          destination: $("destinationBridge").value,
+          prune_external: false
+        })
+      });
+      const pre = $("restoreResult");
+      pre.textContent = JSON.stringify(result, null, 2);
+      pre.classList.remove("hidden");
+      status("Restore logique terminé. Vérifie le rapport avant toute suppression/reset.", "good");
+    } catch (e) { status(e.message, "bad"); }
+  });
+
   $("sourceBridge").addEventListener("change", () => {
     state.tree = null;
     state.selected.clear();
@@ -484,10 +616,12 @@
   });
   $("destinationBridge").addEventListener("change", () => {
     state.planReady = false;
+    state.restoreReady = false;
     $("applyButton").disabled = true;
+    $("restoreBackup").disabled = true;
   });
 
-  loadBridges().catch(e => status(e.message, "bad"));
+  Promise.all([loadBridges(), loadBackups()]).catch(e => status(e.message, "bad"));
 })();
 </script>
 </body>
