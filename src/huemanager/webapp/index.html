@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HueManager</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #0b0d12; --panel: #151923; --panel-2: #1d2230; --text: #f2f4f8;
+      --muted: #aeb6c5; --border: #30384a; --accent: #7aa2ff; --good: #69d297;
+      --warn: #f1bd63; --bad: #ff7d7d;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 15px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+    main { max-width: 1280px; margin: 0 auto; padding: 24px; }
+    h1 { margin: 0 0 4px; font-size: 28px; }
+    h2 { font-size: 18px; margin: 0 0 14px; }
+    h3 { font-size: 15px; margin: 0; }
+    p { margin: 6px 0; }
+    .muted { color: var(--muted); }
+    .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; margin-top: 18px; }
+    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+    .span-4 { grid-column: span 4; } .span-5 { grid-column: span 5; }
+    .span-7 { grid-column: span 7; } .span-8 { grid-column: span 8; } .span-12 { grid-column: span 12; }
+    label { display: block; font-weight: 600; margin: 10px 0 5px; }
+    input, select, button { font: inherit; }
+    input, select { width: 100%; min-height: 42px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); padding: 8px 10px; }
+    button { min-height: 40px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); padding: 8px 12px; cursor: pointer; }
+    button.primary { background: var(--accent); color: #081126; border-color: transparent; font-weight: 700; }
+    button.danger { border-color: var(--bad); }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .row > .grow { flex: 1 1 180px; min-width: 0; }
+    .status { margin-top: 14px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); }
+    .status.good { border-color: var(--good); } .status.warn { border-color: var(--warn); } .status.bad { border-color: var(--bad); }
+    .tree { display: grid; gap: 9px; }
+    .room { border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
+    .room-head { padding: 10px 12px; display: flex; gap: 10px; align-items: center; background: var(--panel-2); }
+    .room-head input { width: auto; min-height: auto; transform: scale(1.15); }
+    .room-head strong { flex: 1; }
+    details { border-top: 1px solid var(--border); }
+    summary { cursor: pointer; padding: 8px 12px; color: var(--muted); }
+    .details-body { padding: 0 12px 10px 28px; }
+    .item { margin: 5px 0; }
+    .pill { display: inline-block; padding: 2px 7px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+    .pill.warn { border-color: var(--warn); color: var(--warn); } .pill.good { border-color: var(--good); color: var(--good); }
+    .dependency { border-left: 3px solid var(--warn); padding: 9px 11px; background: var(--panel-2); margin: 8px 0; border-radius: 0 8px 8px 0; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+    pre { white-space: pre-wrap; word-break: break-word; background: #090b10; border: 1px solid var(--border); border-radius: 8px; padding: 10px; max-height: 320px; overflow: auto; }
+    .hidden { display: none !important; }
+    .steps { display: grid; gap: 10px; } .step { border: 1px solid var(--border); border-radius: 9px; padding: 11px; }
+    .step b { display: block; margin-bottom: 5px; }
+    @media (max-width: 850px) {
+      main { padding: 14px; }
+      .span-4, .span-5, .span-7, .span-8, .span-12 { grid-column: span 12; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>HueManager</h1>
+  <p class="muted">Migration sélective entre Bridges Hue avec analyse des dépendances iConnectHue.</p>
+  <div id="globalStatus" class="status">Chargement des Bridges…</div>
+
+  <section class="grid">
+    <div class="card span-4">
+      <h2>Bridges</h2>
+      <label for="sourceBridge">Bridge source</label>
+      <select id="sourceBridge"></select>
+      <label for="destinationBridge">Bridge Pro destination</label>
+      <select id="destinationBridge"></select>
+      <div class="row" style="margin-top:12px">
+        <button id="refreshTree" class="primary">Charger l’arborescence</button>
+        <button id="discover">Découvrir</button>
+      </div>
+      <div id="discovered" class="muted" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card span-8">
+      <h2>Appairer un Bridge à HueManager</h2>
+      <p class="muted">Appuie sur le bouton physique du Bridge, puis lance l’appairage ici. Cela crée uniquement une clé API locale HueManager.</p>
+      <div class="row">
+        <div class="grow">
+          <label for="pairName">Nom local</label>
+          <input id="pairName" placeholder="old ou pro">
+        </div>
+        <div class="grow">
+          <label for="pairHost">Adresse IP / nom</label>
+          <input id="pairHost" placeholder="192.168.1.50">
+        </div>
+        <div style="align-self:end"><button id="pairButton" class="primary">Appairer</button></div>
+      </div>
+      <div id="pairStatus" class="muted" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card span-7">
+      <div class="row" style="justify-content:space-between">
+        <h2>Pièces et dépendances</h2>
+        <span id="selectionCount" class="pill">0 pièce</span>
+      </div>
+      <div id="tree" class="tree"><p class="muted">Charge le Bridge source.</p></div>
+    </div>
+
+    <div class="card span-5">
+      <h2>Préparer la migration</h2>
+      <div class="steps">
+        <div class="step">
+          <b>1. Capturer la sélection</b>
+          <p class="muted">À faire avant de réinitialiser ou déplacer les appareils. Le snapshot contient pièces, scènes, règles et variables CLIP nécessaires.</p>
+          <button id="snapshotButton" class="primary" disabled>Créer le snapshot</button>
+          <div id="snapshotInfo" class="muted"></div>
+        </div>
+        <div class="step">
+          <b>2. Dépendances hors périmètre</b>
+          <div id="dependencies"><p class="muted">Aucune analyse effectuée.</p></div>
+        </div>
+        <div class="step">
+          <b>3. Appairer les appareils au Bridge Pro</b>
+          <div class="row">
+            <button id="scanLights" disabled>Rechercher les lampes</button>
+            <button id="scanSensors" disabled>Rechercher les accessoires</button>
+          </div>
+          <p class="muted">Les accessoires doivent toujours être mis en mode appairage/réinitialisés physiquement si Hue l’exige.</p>
+        </div>
+        <div class="step">
+          <b>4. Vérifier le remapping</b>
+          <button id="planButton" disabled>Vérifier la destination</button>
+          <pre id="planResult" class="hidden"></pre>
+        </div>
+        <div class="step">
+          <b>5. Migrer</b>
+          <p class="muted">Les actions/conditions vers des ressources non sélectionnées sont coupées et signalées. Si une règle ne contient plus aucune action ou condition utile, elle est ignorée.</p>
+          <button id="applyButton" class="danger" disabled>Migrer vers le Bridge Pro</button>
+          <pre id="applyResult" class="hidden"></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+<script>
+(() => {
+  const state = { bridges: [], tree: null, selected: new Set(), snapshotId: null, planReady: false };
+  const $ = (id) => document.getElementById(id);
+
+  function status(message, kind = "") {
+    const el = $("globalStatus");
+    el.textContent = message;
+    el.className = `status ${kind}`;
+  }
+
+  async function api(url, options = {}) {
+    const response = await fetch(url, {
+      ...options,
+      headers: { "Content-Type": "application/json", ...(options.headers || {}) }
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || `${response.status} ${response.statusText}`);
+    return data;
+  }
+
+  async function loadBridges() {
+    const data = await api("/api/bridges");
+    state.bridges = data.bridges || [];
+    for (const id of ["sourceBridge", "destinationBridge"]) {
+      const select = $(id);
+      const current = select.value;
+      select.replaceChildren();
+      for (const bridge of state.bridges) {
+        const option = document.createElement("option");
+        option.value = bridge.name;
+        option.textContent = `${bridge.name} — ${bridge.host}`;
+        select.append(option);
+      }
+      if ([...select.options].some(o => o.value === current)) select.value = current;
+    }
+    if (state.bridges.length > 1 && $("sourceBridge").value === $("destinationBridge").value) {
+      $("destinationBridge").selectedIndex = 1;
+    }
+    const ready = state.bridges.length > 0;
+    $("refreshTree").disabled = !ready;
+    $("scanLights").disabled = !ready || !state.snapshotId;
+    $("scanSensors").disabled = !ready || !state.snapshotId;
+    status(ready ? `${state.bridges.length} Bridge(s) configuré(s).` : "Aucun Bridge configuré.", ready ? "good" : "warn");
+  }
+
+  function clearSnapshot() {
+    state.snapshotId = null;
+    state.planReady = false;
+    $("snapshotInfo").textContent = "";
+    $("dependencies").innerHTML = '<p class="muted">La sélection a changé : recrée le snapshot.</p>';
+    $("scanLights").disabled = true;
+    $("scanSensors").disabled = true;
+    $("planButton").disabled = true;
+    $("applyButton").disabled = true;
+    $("planResult").classList.add("hidden");
+    $("applyResult").classList.add("hidden");
+  }
+
+  function updateSelectionCount() {
+    const n = state.selected.size;
+    $("selectionCount").textContent = `${n} pièce${n > 1 ? "s" : ""}`;
+    $("snapshotButton").disabled = n === 0;
+  }
+
+  function renderTree(tree) {
+    state.tree = tree;
+    state.selected.clear();
+    clearSnapshot();
+    updateSelectionCount();
+    const root = $("tree");
+    root.replaceChildren();
+    for (const room of tree.rooms || []) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "room";
+      const head = document.createElement("div");
+      head.className = "room-head";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.dataset.room = room.name;
+      checkbox.addEventListener("change", () => {
+        if (checkbox.checked) state.selected.add(room.name); else state.selected.delete(room.name);
+        clearSnapshot();
+        updateSelectionCount();
+      });
+      const title = document.createElement("strong");
+      title.textContent = room.name;
+      const count = document.createElement("span");
+      count.className = "pill";
+      count.textContent = `${room.devices.length} appareil(s) · ${room.scenes.length} scène(s) · ${room.rules.length} règle(s)`;
+      head.append(checkbox, title, count);
+      wrapper.append(head);
+
+      const deviceDetails = document.createElement("details");
+      deviceDetails.innerHTML = `<summary>Appareils (${room.devices.length})</summary>`;
+      const deviceBody = document.createElement("div");
+      deviceBody.className = "details-body";
+      for (const device of room.devices) {
+        const el = document.createElement("div");
+        el.className = "item";
+        el.textContent = `${device.name}${device.product ? " — " + device.product : ""}`;
+        deviceBody.append(el);
+      }
+      if (!room.devices.length) deviceBody.textContent = "Aucun appareil.";
+      deviceDetails.append(deviceBody);
+      wrapper.append(deviceDetails);
+
+      const sceneDetails = document.createElement("details");
+      sceneDetails.innerHTML = `<summary>Scènes (${room.scenes.length})</summary>`;
+      const sceneBody = document.createElement("div");
+      sceneBody.className = "details-body";
+      for (const scene of room.scenes) {
+        const el = document.createElement("div");
+        el.className = "item";
+        el.textContent = `${scene.name} (${scene.actions} action(s))`;
+        sceneBody.append(el);
+      }
+      if (!room.scenes.length) sceneBody.textContent = "Aucune scène.";
+      sceneDetails.append(sceneBody);
+      wrapper.append(sceneDetails);
+
+      const ruleDetails = document.createElement("details");
+      ruleDetails.innerHTML = `<summary>Règles liées (${room.rules.length})</summary>`;
+      const ruleBody = document.createElement("div");
+      ruleBody.className = "details-body";
+      for (const rule of room.rules) {
+        const el = document.createElement("div");
+        el.className = "item";
+        const refs = rule.references.map(ref => ref.rooms.length ? `${ref.label} → ${ref.rooms.join(", ")}` : ref.label).join(" ; ");
+        el.innerHTML = `<strong>${escapeHtml(rule.name)}</strong><br><span class="muted">${escapeHtml(refs)}</span>`;
+        ruleBody.append(el);
+      }
+      if (!room.rules.length) ruleBody.textContent = "Aucune règle liée.";
+      ruleDetails.append(ruleBody);
+      wrapper.append(ruleDetails);
+      root.append(wrapper);
+    }
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
+  }
+
+  function addRooms(roomNames) {
+    const available = new Set((state.tree?.rooms || []).map(r => r.name));
+    for (const name of roomNames) {
+      if (!available.has(name)) continue;
+      state.selected.add(name);
+      const box = document.querySelector(`input[data-room="${CSS.escape(name)}"]`);
+      if (box) box.checked = true;
+    }
+    clearSnapshot();
+    updateSelectionCount();
+  }
+
+  function renderDependencies(deps) {
+    const root = $("dependencies");
+    root.replaceChildren();
+    if (!deps.length) {
+      root.innerHTML = '<span class="pill good">Aucune dépendance externe</span><p class="muted">Les règles détectées restent entièrement dans les pièces sélectionnées.</p>';
+      return;
+    }
+    const selected = new Set(state.selected);
+    for (const dep of deps) {
+      const box = document.createElement("div");
+      box.className = "dependency";
+      const title = document.createElement("h3");
+      title.textContent = dep.name;
+      box.append(title);
+      const targetRooms = new Set();
+      for (const ref of dep.external || []) {
+        const line = document.createElement("div");
+        line.className = "item";
+        line.innerHTML = `<span class="pill warn">hors périmètre</span> ${escapeHtml(ref.label)} <code>${escapeHtml(ref.ref)}</code>${ref.rooms?.length ? " — " + escapeHtml(ref.rooms.join(", ")) : ""}`;
+        box.append(line);
+        for (const room of ref.rooms || []) if (!selected.has(room)) targetRooms.add(room);
+      }
+      if (targetRooms.size) {
+        const button = document.createElement("button");
+        button.textContent = `Ajouter ${[...targetRooms].join(", ")} à la sélection`;
+        button.addEventListener("click", () => addRooms([...targetRooms]));
+        box.append(button);
+      }
+      root.append(box);
+    }
+    const note = document.createElement("p");
+    note.className = "muted";
+    note.textContent = "Si tu conserves ce périmètre, HueManager supprimera les actions/conditions externes lors de la recréation et les signalera dans le rapport final.";
+    root.append(note);
+  }
+
+  $("refreshTree").addEventListener("click", async () => {
+    try {
+      status("Lecture du Bridge source…");
+      const bridge = $("sourceBridge").value;
+      renderTree(await api(`/api/bridges/${encodeURIComponent(bridge)}/tree`));
+      status(`Arborescence de ${bridge} chargée.`, "good");
+    } catch (e) { status(e.message, "bad"); }
+  });
+
+  $("discover").addEventListener("click", async () => {
+    try {
+      $("discovered").textContent = "Découverte…";
+      const data = await api("/api/discover");
+      $("discovered").textContent = data.bridges.length
+        ? data.bridges.map(b => `${b.id || "Hue"}: ${b.host}`).join(" · ")
+        : "Aucun Bridge découvert.";
+      if (data.bridges.length === 1) $("pairHost").value = data.bridges[0].host;
+    } catch (e) { $("discovered").textContent = e.message; }
+  });
+
+  $("pairButton").addEventListener("click", async () => {
+    const name = $("pairName").value.trim();
+    const host = $("pairHost").value.trim();
+    if (!name || !host) { $("pairStatus").textContent = "Nom et adresse requis."; return; }
+    try {
+      $("pairStatus").textContent = "Appairage…";
+      await api("/api/pair", { method: "POST", body: JSON.stringify({ name, host }) });
+      $("pairStatus").textContent = "Bridge appairé.";
+      await loadBridges();
+    } catch (e) { $("pairStatus").textContent = `${e.message} — vérifie que le bouton physique vient d’être pressé.`; }
+  });
+
+  $("snapshotButton").addEventListener("click", async () => {
+    try {
+      const rooms = [...state.selected];
+      status("Création du snapshot avant migration…");
+      const result = await api("/api/snapshots", {
+        method: "POST",
+        body: JSON.stringify({ source: $("sourceBridge").value, rooms })
+      });
+      state.snapshotId = result.id;
+      state.planReady = false;
+      $("snapshotInfo").textContent = `${result.devices} appareils · ${result.scenes} scènes · ${result.rules} règles · ${result.virtual_sensors} variables CLIP`;
+      renderDependencies(result.external_dependencies || []);
+      $("scanLights").disabled = false;
+      $("scanSensors").disabled = false;
+      $("planButton").disabled = false;
+      $("applyButton").disabled = true;
+      status("Snapshot enregistré. Tu peux maintenant déplacer les appareils vers le Bridge Pro.", "good");
+    } catch (e) { status(e.message, "bad"); }
+  });
+
+  async function scan(kind) {
+    if (!state.snapshotId) return;
+    try {
+      const dest = $("destinationBridge").value;
+      await api(`/api/bridges/${encodeURIComponent(dest)}/search/${kind}`, { method: "POST", body: "{}" });
+      status(kind === "lights" ? "Recherche de lampes lancée sur le Bridge Pro." : "Recherche d’accessoires lancée sur le Bridge Pro.", "good");
+    } catch (e) { status(e.message, "bad"); }
+  }
+  $("scanLights").addEventListener("click", () => scan("lights"));
+  $("scanSensors").addEventListener("click", () => scan("sensors"));
+
+  $("planButton").addEventListener("click", async () => {
+    try {
+      const result = await api(`/api/snapshots/${state.snapshotId}/plan`, {
+        method: "POST",
+        body: JSON.stringify({ destination: $("destinationBridge").value })
+      });
+      const pre = $("planResult");
+      pre.textContent = JSON.stringify(result, null, 2);
+      pre.classList.remove("hidden");
+      state.planReady = Boolean(result.ready);
+      $("applyButton").disabled = !state.planReady;
+      status(result.ready ? "Tous les appareils physiques du snapshot sont retrouvés sur la destination." : `${result.missing.length} ressource(s) physique(s) manquante(s).`, result.ready ? "good" : "warn");
+    } catch (e) { status(e.message, "bad"); }
+  });
+
+  $("applyButton").addEventListener("click", async () => {
+    if (!state.planReady) return;
+    const ok = window.confirm("Créer les pièces, scènes et règles sur le Bridge Pro ? Le Bridge source ne sera pas supprimé. Les liens hors périmètre seront coupés et listés dans le rapport.");
+    if (!ok) return;
+    try {
+      status("Migration en cours…");
+      const result = await api(`/api/snapshots/${state.snapshotId}/apply`, {
+        method: "POST",
+        body: JSON.stringify({ destination: $("destinationBridge").value, prune_external: true })
+      });
+      const pre = $("applyResult");
+      pre.textContent = JSON.stringify(result, null, 2);
+      pre.classList.remove("hidden");
+      status("Migration terminée. Vérifie les avertissements avant de nettoyer l’ancien Bridge.", result.warnings?.length ? "warn" : "good");
+    } catch (e) { status(e.message, "bad"); }
+  });
+
+  $("sourceBridge").addEventListener("change", () => {
+    state.tree = null;
+    state.selected.clear();
+    clearSnapshot();
+    updateSelectionCount();
+    $("tree").innerHTML = '<p class="muted">Charge le nouveau Bridge source.</p>';
+  });
+  $("destinationBridge").addEventListener("change", () => {
+    state.planReady = false;
+    $("applyButton").disabled = true;
+  });
+
+  loadBridges().catch(e => status(e.message, "bad"));
+})();
+</script>
+</body>
+</html>
