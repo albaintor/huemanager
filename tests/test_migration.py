@@ -322,7 +322,10 @@ def test_full_backup_redacts_bridge_api_users():
             }
 
         def v2_resources(self):
-            return []
+            return [
+                {"id": "auth-secret-id", "type": "auth_v1"},
+                {"id": "bridge-resource", "type": "bridge"},
+            ]
 
     backup = create_bridge_backup(FakeClient())
 
@@ -340,6 +343,11 @@ def test_full_backup_redacts_bridge_api_users():
         == "/api/__REDACTED__/lights/1/state"
     )
     assert backup_summary(backup)["lights"] == 1
+    assert backup["raw"]["auth_v1_redacted"]["count"] == 1
+    assert all(
+        resource.get("type") != "auth_v1"
+        for resource in backup["raw"]["clip_v2_resources"]
+    )
     assert backup["restore_scope"]["physical_pairing"] is False
 
 
