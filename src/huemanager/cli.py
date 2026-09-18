@@ -7,6 +7,13 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from .backup import (
+    analyse_bridge_restore,
+    create_bridge_backup,
+    load_bridge_backup,
+    restore_bridge_backup,
+    save_bridge_backup,
+)
 from .client import HueApiError, HueBridgeClient
 from .config import BridgeProfile, ConfigStore
 from .migration import (
@@ -134,6 +141,66 @@ def plan(snapshot_file: Path, destination: str) -> None:
     console.print(json.dumps(result, indent=2, ensure_ascii=False))
     if not result["ready"]:
         raise typer.Exit(2)
+
+
+@app.command("backup")
+def backup_cmd(
+    bridge: str,
+    output: Path = typer.Option(..., "--output", "-o", help="Backup JSON path"),
+) -> None:
+    """Create a full bridge archive plus a portable logical restore snapshot."""
+    try:
+        payload = create_bridge_backup(_client(bridge))
+        save_bridge_backup(payload, output)
+    except (MigrationError, HueApiError, OSError) as exc:
+        console.print(f"[red]Backup failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    raw_v1 = payload.get("raw", {}).get("clip_v1", {})
+    logical = payload.get("logical_restore", {})
+    console.print(
+        f"[green]Backup saved[/green] {output}: "
+        f"{len(raw_v1.get('lights', {}))} lights, "
+        f"{len(raw_v1.get('sensors', {}))} sensors, "
+        f"{len(logical.get('rooms', []))} rooms, "
+        f"{len(logical.get('zones', []))} zones, "
+        f"{len(logical.get('behavior_instances', []))} v2 automations"
+    )
+
+
+@app.command("restore")
+def restore_cmd(
+    backup_file: Path,
+    destination: str,
+    execute: bool = typer.Option(False, "--execute", help="Actually restore resources"),
+) -> None:
+    """Plan or restore a full bridge backup after physical devices are re-paired."""
+    try:
+        payload = load_bridge_backup(backup_file)
+        client = _client(destination)
+        report = analyse_bridge_restore(payload, client)
+        if not execute:
+            console.print(json.dumps(report, indent=2, ensure_ascii=False))
+            console.print(
+                "[yellow]Dry-run only.[/yellow] Re-run with --execute after every "
+                "physical light/accessory has been paired to the destination."
+            )
+            if not report["ready"]:
+                raise typer.Exit(2)
+            return
+        if not report["ready"]:
+            console.print(json.dumps(report, indent=2, ensure_ascii=False))
+            console.print("[red]Restore aborted:[/red] physical resources are missing.")
+            raise typer.Exit(2)
+        result = restore_bridge_backup(payload, client, prune_external=False)
+    except (MigrationError, HueApiError, OSError) as exc:
+        console.print(f"[red]Restore failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    console.print(json.dumps(result, indent=2, ensure_ascii=False))
+    console.print(
+        "[green]Logical restore completed.[/green] Zigbee pairing/network keys are not restored."
+    )
 
 
 @app.command()
