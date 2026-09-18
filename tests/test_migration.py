@@ -1,4 +1,8 @@
+from types import SimpleNamespace
+
+from huemanager.backup import backup_summary, create_bridge_backup
 from huemanager.migration import (
+    _create_schedules,
     _device_identifiers,
     build_mapping_plan,
     rewrite_behavior_configuration,
@@ -279,3 +283,82 @@ def test_rewrite_behavior_graph_does_not_broaden_empty_items_scope():
     assert not unresolved
     assert rewritten is None
     assert any(item["rid"] == "light-external" for item in pruned)
+
+
+
+def test_full_backup_redacts_bridge_api_users():
+    class FakeClient:
+        def v1_all(self):
+            return {
+                "config": {
+                    "name": "Old bridge",
+                    "bridgeid": "ABC123",
+                    "whitelist": {
+                        "secret-api-user": {"name": "some app"}
+                    },
+                },
+                "lights": {"1": {"name": "Lamp", "uniqueid": "aa-0b"}},
+                "sensors": {},
+                "rules": {},
+                "schedules": {},
+                "resourcelinks": {},
+            }
+
+        def v2_resources(self):
+            return []
+
+    backup = create_bridge_backup(FakeClient())
+
+    archived_config = backup["raw"]["clip_v1"]["config"]
+    assert "whitelist" not in archived_config
+    assert archived_config["whitelist_redacted"]["count"] == 1
+    assert backup_summary(backup)["lights"] == 1
+    assert backup["restore_scope"]["physical_pairing"] is False
+
+
+def test_schedule_restore_rewrites_api_user_and_resource_ids():
+    class FakeClient:
+        def __init__(self):
+            self.profile = SimpleNamespace(app_key="new-api-user")
+            self.created = None
+
+        def v1_all(self):
+            return {"schedules": {}}
+
+        def v1_post(self, path, body):
+            assert path == "/schedules"
+            self.created = body
+            return [{"success": {"id": "8"}}]
+
+    client = FakeClient()
+    snapshot = {
+        "v1": {
+            "schedules": {
+                "2": {
+                    "name": "Night",
+                    "localtime": "W127/T23:00:00",
+                    "status": "enabled",
+                    "command": {
+                        "address": "/api/old-api-user/groups/3/action",
+                        "method": "PUT",
+                        "body": {"scene": "old-scene"},
+                    },
+                }
+            }
+        }
+    }
+
+    created, warnings, mapping = _create_schedules(
+        client,
+        snapshot,
+        {
+            "/groups/3": "/groups/30",
+            "/scenes/old-scene": "/scenes/new-scene",
+        },
+    )
+
+    assert created == 1
+    assert not warnings
+    assert mapping == {"/schedules/2": "/schedules/8"}
+    assert client.created["command"]["address"] == "/api/new-api-user/groups/30/action"
+    assert client.created["command"]["body"]["scene"] == "new-scene"
