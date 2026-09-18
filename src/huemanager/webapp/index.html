@@ -238,7 +238,15 @@
       for (const device of room.devices) {
         const el = document.createElement("div");
         el.className = "item";
-        el.textContent = `${device.name}${device.product ? " — " + device.product : ""}`;
+        const ids = device.identifiers || {};
+        const identifierLines = [];
+        for (const mac of ids.zigbee_macs || []) identifierLines.push(`Zigbee MAC: ${mac}`);
+        for (const uid of ids.v1_uniqueids || []) identifierLines.push(`CLIP uniqueid: ${uid}`);
+        for (const field of ids.pairing_fields || []) identifierLines.push(`${field.field}: ${field.value}`);
+        el.innerHTML = `<strong>${escapeHtml(device.name)}</strong>${device.product ? " — " + escapeHtml(device.product) : ""}`
+          + (identifierLines.length
+            ? `<br><span class="muted"><code>${identifierLines.map(escapeHtml).join("</code><br><code>")}</code></span>`
+            : '<br><span class="muted">N° de série / QR d’appairage non exposé par le Bridge</span>');
         deviceBody.append(el);
       }
       if (!room.devices.length) deviceBody.textContent = "Aucun appareil.";
@@ -273,6 +281,32 @@
       if (!room.rules.length) ruleBody.textContent = "Aucune règle liée.";
       ruleDetails.append(ruleBody);
       wrapper.append(ruleDetails);
+
+      const automationDetails = document.createElement("details");
+      automationDetails.innerHTML = `<summary>Automatisations Hue v2 (${room.automations_v2?.length || 0})</summary>`;
+      const automationBody = document.createElement("div");
+      automationBody.className = "details-body";
+      for (const automation of room.automations_v2 || []) {
+        const el = document.createElement("div");
+        el.className = "item";
+        const refs = (automation.references || []).map(ref =>
+          `${ref.label} [${ref.rtype}]${ref.rooms?.length ? " → " + ref.rooms.join(", ") : ""}`
+        ).join(" ; ");
+        el.innerHTML = `<strong>${escapeHtml(automation.name)}</strong> `
+          + `<span class="pill">${automation.enabled ? "active" : "inactive"}</span>`
+          + `<br><span class="muted">${escapeHtml(automation.script_name || automation.script_id || "")}</span>`
+          + (refs ? `<br><span class="muted">${escapeHtml(refs)}</span>` : "");
+        const raw = document.createElement("details");
+        raw.innerHTML = "<summary>Configuration JSON</summary>";
+        const pre = document.createElement("pre");
+        pre.textContent = JSON.stringify(automation.configuration || {}, null, 2);
+        raw.append(pre);
+        el.append(raw);
+        automationBody.append(el);
+      }
+      if (!(room.automations_v2 || []).length) automationBody.textContent = "Aucune automatisation v2 liée.";
+      automationDetails.append(automationBody);
+      wrapper.append(automationDetails);
       root.append(wrapper);
     }
   }
@@ -311,7 +345,11 @@
       for (const ref of dep.external || []) {
         const line = document.createElement("div");
         line.className = "item";
-        line.innerHTML = `<span class="pill warn">hors périmètre</span> ${escapeHtml(ref.label)} <code>${escapeHtml(ref.ref)}</code>${ref.rooms?.length ? " — " + escapeHtml(ref.rooms.join(", ")) : ""}`;
+        const resourceId = ref.ref || ref.rid || "";
+        const resourceType = ref.type || ref.rtype || "";
+        line.innerHTML = `<span class="pill warn">hors périmètre</span> ${escapeHtml(ref.label)} `
+          + `<code>${escapeHtml(resourceType ? resourceType + ":" + resourceId : resourceId)}</code>`
+          + `${ref.rooms?.length ? " — " + escapeHtml(ref.rooms.join(", ")) : ""}`;
         box.append(line);
         for (const room of ref.rooms || []) if (!selected.has(room)) targetRooms.add(room);
       }
@@ -371,8 +409,11 @@
       });
       state.snapshotId = result.id;
       state.planReady = false;
-      $("snapshotInfo").textContent = `${result.devices} appareils · ${result.scenes} scènes · ${result.rules} règles · ${result.virtual_sensors} variables CLIP · ${result.resourcelinks} liens de ressources`;
-      renderDependencies(result.external_dependencies || []);
+      $("snapshotInfo").textContent = `${result.devices} appareils · ${result.scenes} scènes · ${result.rules} règles CLIP · ${result.behavior_instances} automatisations v2 · ${result.virtual_sensors} variables CLIP · ${result.resourcelinks} liens de ressources`;
+      renderDependencies([
+        ...(result.external_dependencies || []),
+        ...(result.external_behavior_dependencies || [])
+      ]);
       $("scanLights").disabled = false;
       $("scanSensors").disabled = false;
       $("planButton").disabled = false;
@@ -420,7 +461,13 @@
       const pre = $("applyResult");
       pre.textContent = JSON.stringify(result, null, 2);
       pre.classList.remove("hidden");
-      status("Migration terminée. Vérifie les avertissements avant de nettoyer l’ancien Bridge.", result.warnings?.length ? "warn" : "good");
+      const hasWarnings = Boolean(
+        result.warnings?.length
+        || result.behavior_warnings?.length
+        || result.behavior_instances_skipped?.length
+        || result.resourcelink_warnings?.length
+      );
+      status("Migration terminée. Vérifie les avertissements avant de nettoyer l’ancien Bridge.", hasWarnings ? "warn" : "good");
     } catch (e) { status(e.message, "bad"); }
   });
 
