@@ -33,6 +33,23 @@ def _redact_api_credentials(value: Any) -> Any:
     return value
 
 
+def _redact_v1_credentials(value: Any) -> Any:
+    if isinstance(value, str):
+        return API_PATH_RE.sub(r"\1__REDACTED__/", value)
+    if isinstance(value, list):
+        return [_redact_v1_credentials(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: (
+                "__REDACTED__"
+                if key == "owner" and isinstance(child, str)
+                else _redact_v1_credentials(child)
+            )
+            for key, child in value.items()
+        }
+    return value
+
+
 def create_bridge_backup(client: HueBridgeClient) -> dict:
     """Capture a raw bridge dump plus a portable logical restore snapshot."""
     source_v1 = client.v1_all()
@@ -40,7 +57,7 @@ def create_bridge_backup(client: HueBridgeClient) -> dict:
 
     # API usernames are authentication credentials. Keep them out of both the
     # raw archive and portable restore payload.
-    raw_v1 = _redact_api_credentials(copy.deepcopy(source_v1))
+    raw_v1 = _redact_v1_credentials(copy.deepcopy(source_v1))
     config_for_archive = raw_v1.get("config", {})
     whitelist = config_for_archive.pop("whitelist", None)
     if whitelist is not None:
@@ -148,6 +165,9 @@ def create_bridge_backup(client: HueBridgeClient) -> dict:
     )
     logical_v1["resourcelinks"] = copy.deepcopy(source_v1.get("resourcelinks", {}))
 
+    # V1 owner fields inside the logical payload are client credentials, while
+    # v2 owner objects are resource links. Redact only the v1 branch here.
+    logical["v1"] = _redact_v1_credentials(logical.get("v1", {}))
     logical = _redact_api_credentials(logical)
 
     config = source_v1.get("config", {})
