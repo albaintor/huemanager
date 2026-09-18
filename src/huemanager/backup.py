@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -16,16 +17,30 @@ from .migration import (
 )
 
 BACKUP_SCHEMA = 1
+API_PATH_RE = re.compile(r"(/api/)[^/]+/")
+
+
+def _redact_api_credentials(value: Any) -> Any:
+    if isinstance(value, str):
+        return API_PATH_RE.sub(r"\1__REDACTED__/", value)
+    if isinstance(value, list):
+        return [_redact_api_credentials(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _redact_api_credentials(child)
+            for key, child in value.items()
+        }
+    return value
 
 
 def create_bridge_backup(client: HueBridgeClient) -> dict:
     """Capture a raw bridge dump plus a portable logical restore snapshot."""
-    raw_v1 = client.v1_all()
+    source_v1 = client.v1_all()
     raw_v2 = client.v2_resources()
 
-    # API usernames in config.whitelist are authentication credentials and are
-    # intentionally not written to backup files.
-    raw_v1 = copy.deepcopy(raw_v1)
+    # API usernames are authentication credentials. Keep them out of both the
+    # raw archive and portable restore payload.
+    raw_v1 = _redact_api_credentials(copy.deepcopy(source_v1))
     config_for_archive = raw_v1.get("config", {})
     whitelist = config_for_archive.pop("whitelist", None)
     if whitelist is not None:
@@ -43,7 +58,7 @@ def create_bridge_backup(client: HueBridgeClient) -> dict:
     if room_names:
         logical = create_selection_snapshot(client, room_names)
     else:
-        config = raw_v1.get("config", {})
+        config = source_v1.get("config", {})
         logical = {
             "schema": 3,
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -90,10 +105,10 @@ def create_bridge_backup(client: HueBridgeClient) -> dict:
 
     physical_sensors: dict[str, dict] = {}
     virtual_sensors: dict[str, dict] = {}
-    for sensor_id, sensor in raw_v1.get("sensors", {}).items():
+    for sensor_id, sensor in source_v1.get("sensors", {}).items():
         if sensor.get("type") in CLIP_SENSOR_TYPES:
             virtual_sensors[sensor_id] = copy.deepcopy(sensor)
-        else:
+        elif sensor.get("uniqueid"):
             physical_sensors[sensor_id] = copy.deepcopy(sensor)
 
     logical["devices"] = devices
@@ -124,14 +139,16 @@ def create_bridge_backup(client: HueBridgeClient) -> dict:
     }
 
     logical_v1 = logical.setdefault("v1", {})
-    logical_v1["lights"] = copy.deepcopy(raw_v1.get("lights", {}))
+    logical_v1["lights"] = copy.deepcopy(source_v1.get("lights", {}))
     logical_v1["sensors"] = physical_sensors
     logical_v1["virtual_sensors"] = virtual_sensors
-    logical_v1["rules"] = copy.deepcopy(raw_v1.get("rules", {}))
-    logical_v1["schedules"] = copy.deepcopy(raw_v1.get("schedules", {}))
-    logical_v1["resourcelinks"] = copy.deepcopy(raw_v1.get("resourcelinks", {}))
+    logical_v1["rules"] = copy.deepcopy(source_v1.get("rules", {}))
+    logical_v1["schedules"] = _redact_api_credentials(
+        copy.deepcopy(source_v1.get("schedules", {}))
+    )
+    logical_v1["resourcelinks"] = copy.deepcopy(source_v1.get("resourcelinks", {}))
 
-    config = raw_v1.get("config", {})
+    config = source_v1.get("config", {})
     return {
         "backup_schema": BACKUP_SCHEMA,
         "created_at": datetime.now(timezone.utc).isoformat(),
