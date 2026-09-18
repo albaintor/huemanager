@@ -50,7 +50,11 @@ class HueBridgeClient:
     def _raise_v1_errors(payload: Any) -> None:
         if not isinstance(payload, list):
             return
-        errors = [entry["error"] for entry in payload if isinstance(entry, dict) and "error" in entry]
+        errors = [
+            entry["error"]
+            for entry in payload
+            if isinstance(entry, dict) and "error" in entry
+        ]
         if errors:
             descriptions = "; ".join(str(error.get("description", error)) for error in errors)
             raise HueApiError(descriptions)
