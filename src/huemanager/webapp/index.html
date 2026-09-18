@@ -148,6 +148,8 @@
           <select id="backupSelect" aria-label="Backup à restaurer"></select>
         </div>
         <a id="downloadBackup" class="button-link" href="#" download>Télécharger</a>
+        <input id="backupFile" type="file" accept="application/json,.json" style="max-width:280px">
+        <button id="importBackup">Importer</button>
         <button id="planRestore">Analyser le restore</button>
         <button id="restoreBackup" class="danger" disabled>Restaurer vers la destination</button>
       </div>
@@ -550,6 +552,29 @@
       $("backupSelect").value = result.id;
       selectBackup();
       status("Backup complet enregistré dans le volume de configuration.", "good");
+    } catch (e) { status(e.message, "bad"); }
+  });
+
+  $("importBackup").addEventListener("click", async () => {
+    const file = $("backupFile").files?.[0];
+    if (!file) {
+      status("Sélectionne d’abord un fichier de backup JSON.", "warn");
+      return;
+    }
+    try {
+      status("Import du backup…");
+      const backup = JSON.parse(await file.text());
+      const result = await api("/api/backups/import", {
+        method: "POST",
+        body: JSON.stringify({ backup })
+      });
+      state.backupId = result.id;
+      await loadBackups();
+      $("backupSelect").value = result.id;
+      selectBackup();
+      $("backupInfo").textContent =
+        `Backup importé : ${result.rooms} pièces · ${result.lights} lampes · ${result.behavior_instances} automatisations v2.`;
+      status("Backup importé dans le volume persistant.", "good");
     } catch (e) { status(e.message, "bad"); }
   });
 
