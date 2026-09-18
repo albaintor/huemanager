@@ -218,6 +218,10 @@ echo "$GHCR_TOKEN" | docker login ghcr.io -u albaintor --password-stdin
 
 The container includes an HTTP healthcheck on `/api/health`.
 
+The HueManager web UI currently has no application-level HTTP authentication. Keep port
+`8787` on the trusted LAN/VPN, or place it behind an authenticated reverse proxy. Do not
+publish it directly to the Internet.
+
 ## Full bridge backup / restore
 
 HueManager 0.4 adds a full backup workflow alongside selective room migration.
