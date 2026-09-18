@@ -31,13 +31,13 @@ The web UI can:
 
 - pair HueManager with a Bridge after you press its physical link button;
 - discover Bridges through the official Hue discovery service;
-- display a tree of **rooms → devices → scenes → linked rules**;
+- display a tree of **rooms → devices → scenes → CLIP rules → Hue v2 automations**;
 - select one or several rooms;
 - show cross-room dependencies before migration;
 - create a durable pre-migration snapshot;
 - start light or accessory search on the destination Bridge;
 - verify that every physical resource has been found on the destination;
-- recreate rooms, scenes, virtual CLIP sensors, rules and relevant resource-link metadata.
+- recreate rooms, scenes, Hue v2 `behavior_instance` graphs, virtual CLIP sensors, rules and relevant resource-link metadata.
 
 ## iConnectHue / advanced switch configurations
 
@@ -125,6 +125,8 @@ Current v0.3 scope:
 
 - selected rooms and device membership;
 - Hue v2 scenes and scene actions;
+- Hue v2 `behavior_instance` graphs, including nested UUID references and UUID-keyed button configurations;
+- `behavior_script` matching by ID or script metadata/version when required;
 - physical light/sensor mapping by Zigbee `uniqueid`;
 - CLIP virtual sensors used by selected rule graphs;
 - CLIP v1 rules, including cross-room rules when all referenced rooms are selected;
@@ -133,10 +135,11 @@ Current v0.3 scope:
 
 ## Current limitations
 
-- Hue v2 `behavior_instance` automations are not recreated yet.
+- A destination Bridge can reject a recreated `behavior_instance` if its installed behavior script/schema differs from the source. HueManager reports and skips that automation instead of aborting the whole migration.
+- Generic v2 graph pruning is conservative: if removing an external reference empties a required branch (`where`, `what`, `actions`, `slots`, `items`), the branch or automation is dropped rather than broadened.
 - Entertainment areas, Matter/HomeKit bindings and third-party cloud account configuration are not migrated.
 - A Zigbee device still has to join the destination Bridge network; HueManager does not use an undocumented forced-transfer mechanism.
-- Schedules/timers referenced by unusually complex third-party rule graphs are detected as references but are not recreated in v0.2.
+- CLIP v1 schedules/timers referenced by unusually complex third-party rule graphs are detected as references but are not recreated.
 - Recreating a third-party application's resource-link metadata does not guarantee that the third-party app will claim or display those resources as if it had created them itself.
 
 ## Development
