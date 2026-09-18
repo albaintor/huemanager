@@ -11,7 +11,7 @@ from typing import Any, Iterable
 from .client import HueBridgeClient
 
 REF_RE = re.compile(
-    r"/(lights|sensors|groups|scenes|rules|schedules|resourcelinks)/(\w+)"
+    r"/(lights|sensors|groups|scenes|rules|schedules|resourcelinks)/([^/]+)"
 )
 
 
@@ -36,7 +36,7 @@ def _uniqueid_index(section: dict[str, dict], prefix: str) -> dict[str, str]:
 
 
 def _parse_v1_path(path: str) -> tuple[str, str] | None:
-    match = re.fullmatch(r"/(lights|sensors|groups|scenes)/(\w+)", path)
+    match = re.fullmatch(r"/(lights|sensors|groups|scenes)/([^/]+)", path)
     return (match.group(1), match.group(2)) if match else None
 
 
