@@ -171,6 +171,7 @@ def create_web_snapshot(request: SnapshotRequest) -> dict:
             "scenes": len(snapshot.get("scenes", [])),
             "rules": len(snapshot.get("v1", {}).get("rules", {})),
             "virtual_sensors": len(snapshot.get("v1", {}).get("virtual_sensors", {})),
+            "resourcelinks": len(snapshot.get("v1", {}).get("resourcelinks", {})),
             "external_dependencies": external,
         }
     except Exception as exc:
