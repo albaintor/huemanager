@@ -299,8 +299,25 @@ def test_full_backup_redacts_bridge_api_users():
                 },
                 "lights": {"1": {"name": "Lamp", "uniqueid": "aa-0b"}},
                 "sensors": {},
-                "rules": {},
-                "schedules": {},
+                "rules": {
+                    "3": {
+                        "name": "Rule",
+                        "owner": "secret-api-user",
+                        "conditions": [],
+                        "actions": [],
+                    }
+                },
+                "schedules": {
+                    "2": {
+                        "name": "Timer",
+                        "owner": "secret-api-user",
+                        "command": {
+                            "address": "/api/secret-api-user/lights/1/state",
+                            "method": "PUT",
+                            "body": {"on": False},
+                        },
+                    }
+                },
                 "resourcelinks": {},
             }
 
@@ -312,6 +329,16 @@ def test_full_backup_redacts_bridge_api_users():
     archived_config = backup["raw"]["clip_v1"]["config"]
     assert "whitelist" not in archived_config
     assert archived_config["whitelist_redacted"]["count"] == 1
+    assert backup["raw"]["clip_v1"]["rules"]["3"]["owner"] == "__REDACTED__"
+    assert backup["raw"]["clip_v1"]["schedules"]["2"]["owner"] == "__REDACTED__"
+    assert (
+        backup["raw"]["clip_v1"]["schedules"]["2"]["command"]["address"]
+        == "/api/__REDACTED__/lights/1/state"
+    )
+    assert (
+        backup["logical_restore"]["v1"]["schedules"]["2"]["command"]["address"]
+        == "/api/__REDACTED__/lights/1/state"
+    )
     assert backup_summary(backup)["lights"] == 1
     assert backup["restore_scope"]["physical_pairing"] is False
 
