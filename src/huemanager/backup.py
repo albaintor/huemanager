@@ -53,7 +53,15 @@ def _redact_v1_credentials(value: Any) -> Any:
 def create_bridge_backup(client: HueBridgeClient) -> dict:
     """Capture a raw bridge dump plus a portable logical restore snapshot."""
     source_v1 = client.v1_all()
-    raw_v2 = client.v2_resources()
+    source_v2 = client.v2_resources()
+    raw_v2 = [
+        copy.deepcopy(resource)
+        for resource in source_v2
+        if resource.get("type") != "auth_v1"
+    ]
+    redacted_auth_v1_count = sum(
+        1 for resource in source_v2 if resource.get("type") == "auth_v1"
+    )
 
     # API usernames are authentication credentials. Keep them out of both the
     # raw archive and portable restore payload.
@@ -181,6 +189,10 @@ def create_bridge_backup(client: HueBridgeClient) -> dict:
         "raw": {
             "clip_v1": raw_v1,
             "clip_v2_resources": raw_v2,
+            "auth_v1_redacted": {
+                "count": redacted_auth_v1_count,
+                "reason": "Authorized-client resources are credentials/identity metadata and are not backed up",
+            },
         },
         "logical_restore": logical,
         "restore_scope": {
