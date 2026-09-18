@@ -511,7 +511,8 @@
       pre.classList.remove("hidden");
       state.planReady = Boolean(result.ready);
       $("applyButton").disabled = !state.planReady;
-      status(result.ready ? "Tous les appareils physiques du snapshot sont retrouvés sur la destination." : `${result.missing.length} ressource(s) physique(s) manquante(s).`, result.ready ? "good" : "warn");
+      const missingCount = (result.missing?.length || 0) + (result.unmapped_devices?.length || 0);
+      status(result.ready ? "Tous les appareils physiques du snapshot sont retrouvés sur la destination." : `${missingCount} ressource(s)/appareil(s) physique(s) non remappé(s).`, result.ready ? "good" : "warn");
     } catch (e) { status(e.message, "bad"); }
   });
 
@@ -603,7 +604,7 @@
       status(
         result.ready
           ? "Restore prêt : tous les appareils physiques requis sont présents sur le Bridge cible."
-          : `Restore bloqué : ${result.missing?.length || 0} ressource(s) physique(s) encore manquante(s).`,
+          : `Restore bloqué : ${(result.missing?.length || 0) + (result.unmapped_devices?.length || 0)} ressource(s)/appareil(s) physique(s) encore manquante(s).`,
         result.ready ? "good" : "warn"
       );
     } catch (e) { status(e.message, "bad"); }
