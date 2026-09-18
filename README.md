@@ -139,7 +139,8 @@ Current v0.4 scope:
 - Generic v2 graph pruning is conservative: if removing an external reference empties a required branch (`where`, `what`, `actions`, `slots`, `items`), the branch or automation is dropped rather than broadened.
 - Entertainment areas, Matter/HomeKit bindings and third-party cloud account configuration are not migrated.
 - A Zigbee device still has to join the destination Bridge network; HueManager does not use an undocumented forced-transfer mechanism.
-- CLIP v1 schedules/timers referenced by unusually complex third-party rule graphs are detected as references but are not recreated.
+- full-bridge restore recreates CLIP v1 schedules after rules; cyclic rule↔schedule dependencies or schedules referencing unsupported resources are skipped and reported rather than restored with stale IDs.
+- Hue v2 `smart_scene` resources are preserved in the raw backup archive but are not recreated automatically yet.
 - Recreating a third-party application's resource-link metadata does not guarantee that the third-party app will claim or display those resources as if it had created them itself.
 
 
@@ -160,7 +161,8 @@ Tags follow the same convention as the Pilot project:
 
 - `main` → `latest` and `sha-<commit>`;
 - Git tag `v0.4.0` → Docker tags `0.4.0`, `0.4`, `0`;
-- pull requests run validation only and do not publish images.
+- pull requests run validation only and do not publish images;
+- the workflow can also be launched manually from **Actions → CI → Run workflow**.
 
 For a Synology NAS:
 
@@ -225,7 +227,7 @@ A backup contains two layers:
 1. a **raw archive** of the CLIP v1 root and all CLIP v2 resources, with Hue API usernames redacted;
 2. a **portable logical snapshot** used by HueManager to reconstruct supported configuration on a destination Bridge.
 
-Web UI: use **Backup / restore du Bridge** at the bottom of the page.
+Web UI: use **Backup / restore du Bridge** at the bottom of the page. Backups can be downloaded as JSON and later re-imported from the same panel.
 
 CLI:
 
