@@ -721,6 +721,26 @@ def build_mapping_plan(snapshot: dict, dest_v1: dict, dest_v2: list[dict]) -> Ma
 
     return MappingPlan(v1_map=v1_map, v2_map=v2_map, missing=missing)
 
+def _unmapped_snapshot_devices(snapshot: dict, plan: MappingPlan) -> list[dict]:
+    missing: list[dict] = []
+    for device in snapshot.get("devices", []):
+        if device.get("id") in plan.v2_map:
+            continue
+        product = device.get("product_data", {})
+        missing.append(
+            {
+                "id": device.get("id"),
+                "name": device.get("metadata", {}).get("name")
+                or product.get("product_name")
+                or device.get("id"),
+                "product": product.get("product_name"),
+                "model": product.get("model_id"),
+                "reason": "device could not be mapped to a destination v2 device",
+            }
+        )
+    return missing
+
+
 def _destination_device_children(device_ids: set[str], snapshot: dict, plan: MappingPlan) -> list[dict]:
     children: list[dict] = []
     seen: set[str] = set()
@@ -1658,6 +1678,7 @@ def analyse(
     external_v2 = [
         dep for dep in snapshot.get("behavior_dependencies", []) if dep.get("external")
     ]
+    unmapped_devices = _unmapped_snapshot_devices(snapshot, plan)
     return {
         "rooms": [room.get("metadata", {}).get("name") for room in snapshot.get("rooms", [])],
         "lights": len(snapshot.get("v1", {}).get("lights", {})),
@@ -1672,9 +1693,10 @@ def analyse(
         "behavior_instances": len(snapshot.get("behavior_instances", [])),
         "mapped": len(plan.v1_map),
         "missing": plan.missing,
+        "unmapped_devices": unmapped_devices,
         "external_dependencies": external,
         "external_behavior_dependencies": external_v2,
-        "ready": plan.complete,
+        "ready": plan.complete and not unmapped_devices,
     }
 
 
@@ -1696,10 +1718,11 @@ def apply_snapshot(
     ):
         raise MigrationError("Source and destination are the same Hue Bridge")
     plan = build_mapping_plan(snapshot, dest_v1, client.v2_resources())
-    if not plan.complete:
+    unmapped_devices = _unmapped_snapshot_devices(snapshot, plan)
+    if not plan.complete or unmapped_devices:
         raise MigrationError(
             "Destination bridge is missing migrated devices; pair them first. "
-            f"Missing: {plan.missing}"
+            f"Missing v1 resources: {plan.missing}; unmapped v2 devices: {unmapped_devices}"
         )
 
     virtual_created = _ensure_virtual_sensors(client, snapshot, plan)
