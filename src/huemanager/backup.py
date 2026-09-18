@@ -23,6 +23,17 @@ def create_bridge_backup(client: HueBridgeClient) -> dict:
     raw_v1 = client.v1_all()
     raw_v2 = client.v2_resources()
 
+    # API usernames in config.whitelist are authentication credentials and are
+    # intentionally not written to backup files.
+    raw_v1 = copy.deepcopy(raw_v1)
+    config_for_archive = raw_v1.get("config", {})
+    whitelist = config_for_archive.pop("whitelist", None)
+    if whitelist is not None:
+        config_for_archive["whitelist_redacted"] = {
+            "count": len(whitelist),
+            "reason": "Hue API usernames are credentials and are not backed up",
+        }
+
     room_names = [
         resource.get("metadata", {}).get("name")
         for resource in raw_v2
