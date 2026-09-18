@@ -21,7 +21,18 @@ class HueBridgeClient:
         self.session = requests.Session()
 
     @staticmethod
-    def pair(host: str, device_type: str = "huemanager#cli", verify_tls: bool = False) -> dict:
+    def discover(timeout: float = 8.0) -> list[dict]:
+        response = requests.get("https://discovery.meethue.com/", timeout=timeout)
+        response.raise_for_status()
+        payload = response.json()
+        return [
+            {"id": item.get("id"), "host": item.get("internalipaddress")}
+            for item in payload
+            if item.get("internalipaddress")
+        ]
+
+    @staticmethod
+    def pair(host: str, device_type: str = "huemanager#web", verify_tls: bool = False) -> dict:
         response = requests.post(
             f"https://{host}/api",
             json={"devicetype": device_type, "generateclientkey": True},
