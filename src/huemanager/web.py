@@ -7,9 +7,17 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
+from .backup import (
+    analyse_bridge_restore,
+    backup_summary,
+    create_bridge_backup,
+    load_bridge_backup,
+    restore_bridge_backup,
+    save_bridge_backup,
+)
 from .client import HueBridgeClient
 from .config import BridgeProfile, ConfigStore
 from .migration import (
@@ -24,6 +32,7 @@ from .migration import (
 
 app = FastAPI(title="HueManager", version="0.3.0")
 SNAPSHOT_ID_RE = re.compile(r"^[a-f0-9]{32}$")
+BACKUP_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 
 
 class PairRequest(BaseModel):
@@ -37,12 +46,20 @@ class SnapshotRequest(BaseModel):
     rooms: list[str] = Field(min_length=1)
 
 
+class BackupRequest(BaseModel):
+    bridge: str
+
+
 class DestinationRequest(BaseModel):
     destination: str
 
 
 class ApplyRequest(DestinationRequest):
     prune_external: bool = True
+
+
+class RestoreRequest(DestinationRequest):
+    prune_external: bool = False
 
 
 def _store() -> ConfigStore:
@@ -75,6 +92,25 @@ def _load_snapshot(snapshot_id: str) -> dict:
     return load_snapshot(path)
 
 
+def _backup_dir() -> Path:
+    path = _store().path.parent / "backups"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _backup_path(backup_id: str) -> Path:
+    if not BACKUP_ID_RE.fullmatch(backup_id):
+        raise HTTPException(status_code=400, detail="Invalid backup id")
+    return _backup_dir() / f"{backup_id}.json"
+
+
+def _load_backup(backup_id: str) -> dict:
+    path = _backup_path(backup_id)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Backup not found")
+    return load_bridge_backup(path)
+
+
 def _api_error(exc: Exception) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
 
@@ -82,6 +118,11 @@ def _api_error(exc: Exception) -> HTTPException:
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
     return files("huemanager.webapp").joinpath("index.html").read_text(encoding="utf-8")
+
+
+@app.get("/api/health")
+def health() -> dict:
+    return {"status": "ok", "version": app.version}
 
 
 @app.get("/api/bridges")
@@ -153,6 +194,80 @@ def search_devices(bridge_name: str, kind: str) -> dict:
         return {"ok": True, "result": result}
     except HTTPException:
         raise
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@app.get("/api/backups")
+def list_backups() -> dict:
+    items = []
+    for path in sorted(_backup_dir().glob("*.json"), reverse=True):
+        try:
+            backup = load_bridge_backup(path)
+            items.append(
+                {
+                    "id": path.stem,
+                    **backup_summary(backup),
+                }
+            )
+        except Exception:
+            items.append(
+                {
+                    "id": path.stem,
+                    "invalid": True,
+                }
+            )
+    return {"backups": items}
+
+
+@app.post("/api/backups")
+def create_web_backup(request: BackupRequest) -> dict:
+    try:
+        backup = create_bridge_backup(_client(request.bridge))
+        backup_id = uuid.uuid4().hex
+        save_bridge_backup(backup, _backup_path(backup_id))
+        return {"id": backup_id, **backup_summary(backup)}
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@app.get("/api/backups/{backup_id}")
+def backup_details(backup_id: str) -> dict:
+    backup = _load_backup(backup_id)
+    return {"id": backup_id, **backup_summary(backup)}
+
+
+@app.get("/api/backups/{backup_id}/download")
+def download_backup(backup_id: str) -> FileResponse:
+    path = _backup_path(backup_id)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Backup not found")
+    return FileResponse(
+        path,
+        media_type="application/json",
+        filename=f"huemanager-backup-{backup_id}.json",
+    )
+
+
+@app.post("/api/backups/{backup_id}/plan")
+def plan_backup_restore(backup_id: str, request: DestinationRequest) -> dict:
+    try:
+        return analyse_bridge_restore(
+            _load_backup(backup_id),
+            _client(request.destination),
+        )
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@app.post("/api/backups/{backup_id}/restore")
+def restore_backup(backup_id: str, request: RestoreRequest) -> dict:
+    try:
+        return restore_bridge_backup(
+            _load_backup(backup_id),
+            _client(request.destination),
+            prune_external=request.prune_external,
+        )
     except Exception as exc:
         raise _api_error(exc) from exc
 
