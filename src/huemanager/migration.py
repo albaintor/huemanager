@@ -12,6 +12,29 @@ from .client import HueBridgeClient
 
 REF_RE = re.compile(r"/(lights|sensors|groups|scenes|rules|schedules|resourcelinks)/([^/]+)")
 MIGRATABLE_REF_PREFIXES = ("/lights/", "/sensors/", "/groups/", "/scenes/")
+V2_PERIMETER_TYPES = {
+    "room",
+    "zone",
+    "device",
+    "light",
+    "grouped_light",
+    "button",
+    "relative_rotary",
+    "motion",
+    "temperature",
+    "light_level",
+    "contact",
+    "scene",
+    "smart_scene",
+}
+PAIRING_FIELD_NAMES = {
+    "serial_number",
+    "serialnumber",
+    "setup_code",
+    "pairing_code",
+    "manual_code",
+    "install_code",
+}
 CLIP_SENSOR_TYPES = {
     "CLIPGenericFlag",
     "CLIPGenericStatus",
@@ -150,6 +173,113 @@ def _ref_info(ref: str, v1: dict, membership: dict[str, set[str]]) -> dict:
         "type": resource_type,
         "label": label,
         "rooms": sorted(membership.get(ref, set())),
+    }
+
+
+def _v2_membership(resources: list[dict]) -> dict[str, set[str]]:
+    by_id = _resource_index(resources)
+    membership: dict[str, set[str]] = {}
+    rooms_by_id = {
+        room["id"]: room.get("metadata", {}).get("name", "?")
+        for room in resources
+        if room.get("type") == "room" and room.get("id")
+    }
+    for room_id, room_name in rooms_by_id.items():
+        room = by_id[room_id]
+        membership.setdefault(room_id, set()).add(room_name)
+        for device in _room_devices(room, by_id):
+            membership.setdefault(device["id"], set()).add(room_name)
+            for service in device.get("services_expanded", []):
+                if service.get("id"):
+                    membership.setdefault(service["id"], set()).add(room_name)
+
+    for scene in resources:
+        if scene.get("type") not in {"scene", "smart_scene"}:
+            continue
+        room_name = rooms_by_id.get(scene.get("group", {}).get("rid"))
+        if room_name and scene.get("id"):
+            membership.setdefault(scene["id"], set()).add(room_name)
+    return membership
+
+
+def _extract_v2_ref_ids(value: Any, known_ids: set[str]) -> set[str]:
+    refs: set[str] = set()
+    if isinstance(value, str):
+        if value in known_ids:
+            refs.add(value)
+    elif isinstance(value, dict):
+        rid = value.get("rid")
+        if isinstance(rid, str) and rid in known_ids:
+            refs.add(rid)
+        for key, child in value.items():
+            if isinstance(key, str) and key in known_ids:
+                refs.add(key)
+            refs.update(_extract_v2_ref_ids(child, known_ids))
+    elif isinstance(value, list):
+        for child in value:
+            refs.update(_extract_v2_ref_ids(child, known_ids))
+    return refs
+
+
+def _v2_ref_info(rid: str, by_id: dict[str, dict], membership: dict[str, set[str]]) -> dict:
+    resource = by_id.get(rid, {})
+    product = resource.get("product_data", {})
+    metadata = resource.get("metadata", {})
+    return {
+        "rid": rid,
+        "rtype": resource.get("type", "unknown"),
+        "label": metadata.get("name")
+        or product.get("product_name")
+        or resource.get("type")
+        or rid,
+        "rooms": sorted(membership.get(rid, set())),
+    }
+
+
+def _find_pairing_fields(value: Any, path: str = "") -> list[dict]:
+    found: list[dict] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_path = f"{path}.{key}" if path else key
+            if key.lower() in PAIRING_FIELD_NAMES and child not in (None, ""):
+                found.append({"field": child_path, "value": str(child)})
+            found.extend(_find_pairing_fields(child, child_path))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            found.extend(_find_pairing_fields(child, f"{path}[{index}]"))
+    return found
+
+
+def _device_identifiers(device: dict, v1: dict) -> dict:
+    uniqueids: list[str] = []
+    zigbee_macs: list[str] = []
+    exposed_pairing_fields = _find_pairing_fields(device)
+    for service in device.get("services_expanded", []):
+        id_v1 = service.get("id_v1")
+        parsed = _parse_v1_path(id_v1) if isinstance(id_v1, str) else None
+        if parsed:
+            section, rid = parsed
+            uniqueid = v1.get(section, {}).get(rid, {}).get("uniqueid")
+            if uniqueid and uniqueid not in uniqueids:
+                uniqueids.append(uniqueid)
+        if service.get("type") == "zigbee_connectivity" and service.get("mac_address"):
+            mac = service["mac_address"]
+            if mac not in zigbee_macs:
+                zigbee_macs.append(mac)
+        exposed_pairing_fields.extend(_find_pairing_fields(service))
+
+    deduped_fields: list[dict] = []
+    seen_fields: set[tuple[str, str]] = set()
+    for item in exposed_pairing_fields:
+        key = (item["field"], item["value"])
+        if key not in seen_fields:
+            deduped_fields.append(item)
+            seen_fields.add(key)
+    return {
+        "zigbee_macs": zigbee_macs,
+        "v1_uniqueids": uniqueids,
+        "pairing_fields": deduped_fields,
+        "pairing_serial_available": bool(deduped_fields),
     }
 
 
