@@ -193,8 +193,14 @@ def test_rewrite_behavior_graph_prunes_only_external_scene_branch():
     configuration = {
         "where": [{"group": {"rtype": "room", "rid": "room-source"}}],
         "what": [
-            {"group": {"rtype": "room", "rid": "room-source"}, "recall": {"rtype": "scene", "rid": "scene-a"}},
-            {"group": {"rtype": "room", "rid": "room-external"}, "recall": {"rtype": "scene", "rid": "scene-b"}},
+            {
+                "group": {"rtype": "room", "rid": "room-source"},
+                "recall": {"rtype": "scene", "rid": "scene-a"},
+            },
+            {
+                "group": {"rtype": "room", "rid": "room-external"},
+                "recall": {"rtype": "scene", "rid": "scene-b"},
+            },
         ],
     }
     known = {"room-source", "room-external", "scene-a", "scene-b"}
