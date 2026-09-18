@@ -22,7 +22,7 @@ from .migration import (
     save_snapshot,
 )
 
-app = FastAPI(title="HueManager", version="0.2.0")
+app = FastAPI(title="HueManager", version="0.3.0")
 SNAPSHOT_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 
 
@@ -164,6 +164,9 @@ def create_web_snapshot(request: SnapshotRequest) -> dict:
         snapshot_id = uuid.uuid4().hex
         save_snapshot(snapshot, _snapshot_path(snapshot_id))
         external = [dep for dep in snapshot.get("dependencies", []) if dep.get("external")]
+        external_v2 = [
+            dep for dep in snapshot.get("behavior_dependencies", []) if dep.get("external")
+        ]
         return {
             "id": snapshot_id,
             "rooms": request.rooms,
@@ -172,7 +175,9 @@ def create_web_snapshot(request: SnapshotRequest) -> dict:
             "rules": len(snapshot.get("v1", {}).get("rules", {})),
             "virtual_sensors": len(snapshot.get("v1", {}).get("virtual_sensors", {})),
             "resourcelinks": len(snapshot.get("v1", {}).get("resourcelinks", {})),
+            "behavior_instances": len(snapshot.get("behavior_instances", [])),
             "external_dependencies": external,
+            "external_behavior_dependencies": external_v2,
         }
     except Exception as exc:
         raise _api_error(exc) from exc
@@ -186,6 +191,7 @@ def snapshot_details(snapshot_id: str) -> dict:
         "created_at": snapshot.get("created_at"),
         "rooms": [room.get("metadata", {}).get("name") for room in snapshot.get("rooms", [])],
         "dependencies": snapshot.get("dependencies", []),
+        "behavior_dependencies": snapshot.get("behavior_dependencies", []),
     }
 
 
