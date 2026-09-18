@@ -148,6 +148,8 @@ def create_bridge_backup(client: HueBridgeClient) -> dict:
     )
     logical_v1["resourcelinks"] = copy.deepcopy(source_v1.get("resourcelinks", {}))
 
+    logical = _redact_api_credentials(logical)
+
     config = source_v1.get("config", {})
     return {
         "backup_schema": BACKUP_SCHEMA,
