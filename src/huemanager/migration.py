@@ -33,6 +33,8 @@ V2_PERIMETER_TYPES = {
     "contact",
     "scene",
     "smart_scene",
+    "entertainment",
+    "entertainment_configuration",
 }
 PAIRING_FIELD_NAMES = {
     "serial_number",
@@ -466,6 +468,16 @@ def create_selection_snapshot(client: HueBridgeClient, room_names: list[str]) ->
     selected_v2_ids.update(scene.get("id") for scene in scenes)
     selected_v2_ids.discard(None)
 
+    entertainment_configurations: list[dict] = []
+    entertainment_ref_ids: set[str] = set()
+    for configuration in resources:
+        if configuration.get("type") != "entertainment_configuration":
+            continue
+        refs = _extract_v2_ref_ids(configuration, known_ids)
+        if refs & selected_v2_ids:
+            entertainment_configurations.append(copy.deepcopy(configuration))
+            entertainment_ref_ids.update(refs)
+
     behavior_instances: list[dict] = []
     behavior_ref_ids: set[str] = set()
     for instance in resources:
@@ -486,7 +498,7 @@ def create_selection_snapshot(client: HueBridgeClient, room_names: list[str]) ->
 
     v2_references = {
         rid: copy.deepcopy(by_id[rid])
-        for rid in behavior_ref_ids
+        for rid in (behavior_ref_ids | entertainment_ref_ids)
         if rid in by_id
     }
 
@@ -587,6 +599,7 @@ def create_selection_snapshot(client: HueBridgeClient, room_names: list[str]) ->
         "rooms": rooms,
         "devices": devices,
         "scenes": scenes,
+        "entertainment_configurations": entertainment_configurations,
         "behavior_instances": behavior_instances,
         "behavior_scripts": behavior_scripts,
         "v2_references": v2_references,
@@ -624,6 +637,7 @@ def _normalise_snapshot(payload: dict) -> dict:
     result.setdefault("v1", {}).setdefault("virtual_sensors", {})
     result.setdefault("v1", {}).setdefault("resourcelinks", {})
     result.setdefault("dependencies", [])
+    result.setdefault("entertainment_configurations", [])
     result.setdefault("behavior_instances", [])
     result.setdefault("behavior_scripts", {})
     result.setdefault("v2_references", {})
@@ -1069,6 +1083,105 @@ def _create_scenes(
         if source_scene.get("id_v1") and dest_scene.get("id_v1"):
             scene_map[source_scene["id_v1"]] = dest_scene["id_v1"]
     return scene_map
+
+
+def _rewrite_entertainment_locations(
+    locations: dict,
+    plan: MappingPlan,
+) -> tuple[dict | None, list[dict]]:
+    output = copy.deepcopy(locations)
+    missing: list[dict] = []
+    for service_location in output.get("service_locations", []):
+        service = service_location.get("service", {})
+        source_id = service.get("rid")
+        mapped = plan.v2_map.get(source_id)
+        if not mapped:
+            missing.append(copy.deepcopy(service))
+            continue
+        service["rid"] = mapped["id"]
+        service["rtype"] = mapped["type"]
+
+    if missing:
+        return None, missing
+    return output, []
+
+
+def _create_entertainment_configurations(
+    client: HueBridgeClient,
+    snapshot: dict,
+    plan: MappingPlan,
+) -> tuple[int, list[dict]]:
+    source_configurations = snapshot.get("entertainment_configurations", [])
+    if not source_configurations:
+        return 0, []
+
+    existing = client.v2_get("entertainment_configuration")
+    created = 0
+    warnings: list[dict] = []
+
+    for source in source_configurations:
+        name = source.get("metadata", {}).get("name") or source.get("id")
+        duplicate = next(
+            (
+                configuration
+                for configuration in existing
+                if configuration.get("metadata", {}).get("name") == name
+            ),
+            None,
+        )
+        if duplicate:
+            plan.v2_map[source["id"]] = duplicate
+            warnings.append(
+                {
+                    "id": source.get("id"),
+                    "name": name,
+                    "reason": "entertainment configuration name already exists",
+                }
+            )
+            continue
+
+        locations, missing = _rewrite_entertainment_locations(
+            source.get("locations", {}),
+            plan,
+        )
+        if locations is None:
+            warnings.append(
+                {
+                    "id": source.get("id"),
+                    "name": name,
+                    "reason": "unmapped entertainment services",
+                    "missing": missing,
+                }
+            )
+            continue
+
+        body = {
+            "type": "entertainment_configuration",
+            "metadata": {"name": name},
+            "configuration_type": source.get("configuration_type", "music"),
+            "locations": locations,
+        }
+        try:
+            result = client.v2_post("entertainment_configuration", body)
+            created_id = _new_resource_id(result)
+            destination = client.v2_get(
+                "entertainment_configuration",
+                created_id,
+            )[0]
+            existing.append(destination)
+            plan.v2_map[source["id"]] = destination
+            created += 1
+        except Exception as exc:
+            warnings.append(
+                {
+                    "id": source.get("id"),
+                    "name": name,
+                    "reason": "destination bridge rejected entertainment configuration",
+                    "error": str(exc),
+                }
+            )
+
+    return created, warnings
 
 
 def _map_behavior_script(
@@ -1713,6 +1826,9 @@ def analyse(
         "resourcelinks": len(snapshot.get("v1", {}).get("resourcelinks", {})),
         "schedules": len(snapshot.get("v1", {}).get("schedules", {})),
         "zones": len(snapshot.get("zones", [])),
+        "entertainment_configurations": len(
+            snapshot.get("entertainment_configurations", [])
+        ),
         "behavior_instances": len(snapshot.get("behavior_instances", [])),
         "mapped": len(plan.v1_map),
         "missing": plan.missing,
@@ -1755,6 +1871,9 @@ def apply_snapshot(
     destination_groups = {**destination_rooms, **destination_zones}
     _map_group_owned_v2_services(client, snapshot, plan, destination_groups)
     plan.v1_map.update(_create_scenes(client, snapshot, destination_groups, plan))
+    entertainment_created, entertainment_warnings = (
+        _create_entertainment_configurations(client, snapshot, plan)
+    )
     behavior_created, behavior_skipped, behavior_warnings = _create_behavior_instances(
         client,
         snapshot,
@@ -1786,6 +1905,8 @@ def apply_snapshot(
         "zone_warnings": zone_warnings,
         "name_warnings": name_warnings,
         "virtual_sensors_created": virtual_created,
+        "entertainment_configurations_created": entertainment_created,
+        "entertainment_warnings": entertainment_warnings,
         "behavior_instances_created": behavior_created,
         "behavior_instances_skipped": behavior_skipped,
         "behavior_warnings": behavior_warnings,
