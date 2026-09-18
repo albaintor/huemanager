@@ -443,7 +443,7 @@ def create_selection_snapshot(client: HueBridgeClient, room_names: list[str]) ->
     scenes = [
         copy.deepcopy(r)
         for r in resources
-        if r.get("type") in {"scene", "smart_scene"}
+        if r.get("type") == "scene"
         and r.get("group", {}).get("rid") in room_ids
     ]
 
