@@ -121,7 +121,7 @@ huemanager apply bureau-salon.json pro --execute --keep-external-strict
 
 ## What is preserved
 
-Current v0.2 scope:
+Current v0.3 scope:
 
 - selected rooms and device membership;
 - Hue v2 scenes and scene actions;
@@ -146,3 +146,16 @@ pip install -e '.[dev]'
 ruff check src tests
 pytest -q
 ```
+
+
+## Pairing identifiers
+
+HueManager displays the identifiers that the Bridge actually exposes for each device:
+
+- Zigbee MAC address from the v2 `zigbee_connectivity` resource;
+- CLIP v1 `uniqueid` values;
+- a serial/setup/pairing field if a future/particular resource really exposes one.
+
+HueManager **does not derive a six-character Hue serial number from the Zigbee MAC or uniqueid**. The physical six-character serial and QR/setup code are not generally exposed by the Hue Bridge API, so presenting a derived value as a pairing code would be unsafe. The UI explicitly marks the serial/QR as unavailable when the Bridge did not return one.
+
+The destination search buttons can initiate discovery for lights and accessories. Devices that are still commissioned to another Zigbee network may still require the normal reset, physical pairing procedure, QR/serial entry in Hue, or another supported commissioning method.
