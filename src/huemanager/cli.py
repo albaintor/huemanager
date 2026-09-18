@@ -238,14 +238,20 @@ def apply(
 
         if not execute:
             console.print(json.dumps(report, indent=2, ensure_ascii=False))
-            console.print("[yellow]Dry-run only.[/yellow] Re-run with --execute to create resources.")
+            console.print(
+                "[yellow]Dry-run only.[/yellow] "
+                "Re-run with --execute to create resources."
+            )
             if not report["ready"]:
                 raise typer.Exit(2)
             return
 
         if not report["ready"]:
             console.print(json.dumps(report, indent=2, ensure_ascii=False))
-            console.print("[red]Aborted:[/red] physical resources are still missing on destination.")
+            console.print(
+                "[red]Aborted:[/red] "
+                "physical resources are still missing on destination."
+            )
             raise typer.Exit(2)
 
         result = apply_snapshot(
