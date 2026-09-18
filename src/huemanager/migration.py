@@ -896,6 +896,62 @@ def _merge_zones(
     return result, warnings
 
 
+def _map_group_owned_v2_services(
+    client: HueBridgeClient,
+    snapshot: dict,
+    plan: MappingPlan,
+    destination_groups: dict[str, dict],
+) -> None:
+    source_resources = snapshot.get("v2_references", {})
+    destination_resources = client.v2_resources()
+
+    # bridge_home is a singleton-like group resource. Map it by type.
+    source_homes = [
+        resource
+        for resource in source_resources.values()
+        if resource.get("type") == "bridge_home"
+    ]
+    destination_homes = [
+        resource
+        for resource in destination_resources
+        if resource.get("type") == "bridge_home"
+    ]
+    if len(source_homes) == 1 and len(destination_homes) == 1:
+        plan.v2_map[source_homes[0]["id"]] = destination_homes[0]
+        destination_groups[source_homes[0]["id"]] = destination_homes[0]
+
+    for source_group_id, destination_group in destination_groups.items():
+        source_owned = [
+            resource
+            for resource in source_resources.values()
+            if resource.get("owner", {}).get("rid") == source_group_id
+        ]
+        destination_owned = [
+            resource
+            for resource in destination_resources
+            if resource.get("owner", {}).get("rid") == destination_group.get("id")
+        ]
+
+        for source in source_owned:
+            same_type = [
+                candidate
+                for candidate in destination_owned
+                if candidate.get("type") == source.get("type")
+            ]
+            source_service_id = source.get("service_id")
+            if source_service_id is not None:
+                same_service = [
+                    candidate
+                    for candidate in same_type
+                    if candidate.get("service_id") == source_service_id
+                ]
+                if len(same_service) == 1:
+                    plan.v2_map[source["id"]] = same_service[0]
+                    continue
+            if len(same_type) == 1:
+                plan.v2_map[source["id"]] = same_type[0]
+
+
 def _scene_body(scene: dict, destination_group: dict, plan: MappingPlan) -> dict:
     actions: list[dict] = []
     for action in scene.get("actions", []):
@@ -1639,6 +1695,7 @@ def apply_snapshot(
     destination_rooms = _merge_rooms(client, snapshot, plan)
     destination_zones, zone_warnings = _merge_zones(client, snapshot, plan)
     destination_groups = {**destination_rooms, **destination_zones}
+    _map_group_owned_v2_services(client, snapshot, plan, destination_groups)
     plan.v1_map.update(_create_scenes(client, snapshot, destination_groups, plan))
     behavior_created, behavior_skipped, behavior_warnings = _create_behavior_instances(
         client,
