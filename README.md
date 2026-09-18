@@ -121,7 +121,7 @@ huemanager apply bureau-salon.json pro --execute --keep-external-strict
 
 ## What is preserved
 
-Current v0.3 scope:
+Current v0.4 scope:
 
 - selected rooms and device membership;
 - Hue v2 scenes and scene actions;
@@ -141,6 +141,117 @@ Current v0.3 scope:
 - A Zigbee device still has to join the destination Bridge network; HueManager does not use an undocumented forced-transfer mechanism.
 - CLIP v1 schedules/timers referenced by unusually complex third-party rule graphs are detected as references but are not recreated.
 - Recreating a third-party application's resource-link metadata does not guarantee that the third-party app will claim or display those resources as if it had created them itself.
+
+
+## Docker / Synology NAS
+
+The GitHub Actions workflow validates Python/lint/tests, builds the Python wheel, then publishes a multi-architecture image to GitHub Container Registry on pushes to `main` and version tags:
+
+```text
+ghcr.io/albaintor/huemanager
+```
+
+Published platforms:
+
+- `linux/amd64`;
+- `linux/arm64`.
+
+Tags follow the same convention as the Pilot project:
+
+- `main` → `latest` and `sha-<commit>`;
+- Git tag `v0.4.0` → Docker tags `0.4.0`, `0.4`, `0`;
+- pull requests run validation only and do not publish images.
+
+For a Synology NAS:
+
+```bash
+mkdir -p huemanager/config
+cd huemanager
+# copy docker-compose.yml and optionally .env.example -> .env
+docker compose pull
+docker compose up -d
+```
+
+Default URL:
+
+```text
+http://<NAS>:8787
+```
+
+Optional `.env`:
+
+```ini
+HUEMANAGER_IMAGE_TAG=latest
+HUEMANAGER_PORT=8787
+```
+
+For a pinned release/rollback, set for example:
+
+```ini
+HUEMANAGER_IMAGE_TAG=0.4.0
+```
+
+The Compose mount is intentionally read/write:
+
+```text
+./config:/app/config
+```
+
+It persists:
+
+```text
+config/
+├── config.json       # local Bridge API profiles/keys
+├── snapshots/        # selective migration snapshots
+└── backups/          # full bridge archive + logical restore files
+```
+
+Do not publish or commit this directory. It contains Hue API credentials in `config.json`. Backup files themselves redact `config.whitelist` API usernames.
+
+If the GHCR package is private:
+
+```bash
+echo "$GHCR_TOKEN" | docker login ghcr.io -u albaintor --password-stdin
+```
+
+The container includes an HTTP healthcheck on `/api/health`.
+
+## Full bridge backup / restore
+
+HueManager 0.4 adds a full backup workflow alongside selective room migration.
+
+A backup contains two layers:
+
+1. a **raw archive** of the CLIP v1 root and all CLIP v2 resources, with Hue API usernames redacted;
+2. a **portable logical snapshot** used by HueManager to reconstruct supported configuration on a destination Bridge.
+
+Web UI: use **Backup / restore du Bridge** at the bottom of the page.
+
+CLI:
+
+```bash
+huemanager backup old -o old-bridge.json
+huemanager restore old-bridge.json pro
+huemanager restore old-bridge.json pro --execute
+```
+
+`restore` is a dry-run unless `--execute` is supplied.
+
+The logical restore currently covers:
+
+- light/accessory names after matching physical resources by `uniqueid`;
+- rooms and membership;
+- zones and their mapped children;
+- v2 scenes;
+- v2 `behavior_instance` automation graphs;
+- virtual CLIP sensors;
+- CLIP v1 rules;
+- CLIP v1 schedules;
+- resource links.
+
+A full Hue Bridge firmware/network image is **not** possible through the public local API. HueManager cannot restore the Zigbee network key or silently move paired devices. Lights and accessories must first be paired/reset onto the target Bridge. The restore plan stays blocked until the required physical resources can be matched.
+
+The raw archive is kept even for resource types HueManager does not currently recreate automatically, so a future HueManager version or manual recovery still has the source data.
 
 ## Development
 
