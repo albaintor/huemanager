@@ -796,6 +796,7 @@ def _merge_rooms(client: HueBridgeClient, snapshot: dict, plan: MappingPlan) -> 
             destination = client.v2_get("room", rid)[0]
             existing_by_name[name] = destination
         result[source_room["id"]] = destination
+        plan.v2_map[source_room["id"]] = destination
         if source_room.get("id_v1") and destination.get("id_v1"):
             plan.v1_map[source_room["id_v1"]] = destination["id_v1"]
     return result
@@ -865,6 +866,8 @@ def _create_scenes(
             )
             dest_scene = client.v2_get("scene", rid)[0]
             existing_scenes.append(dest_scene)
+        if source_scene.get("id"):
+            plan.v2_map[source_scene["id"]] = dest_scene
         if source_scene.get("id_v1") and dest_scene.get("id_v1"):
             scene_map[source_scene["id_v1"]] = dest_scene["id_v1"]
     return scene_map
