@@ -1,0 +1,18 @@
+services:
+  huemanager:
+    image: ghcr.io/albaintor/huemanager:${HUEMANAGER_IMAGE_TAG:-latest}
+    container_name: huemanager
+    restart: unless-stopped
+    environment:
+      HUEMANAGER_CONFIG: /app/config/config.json
+      TZ: Europe/Paris
+    ports:
+      - "${HUEMANAGER_PORT:-8787}:8787"
+    volumes:
+      - ./config:/app/config
+    networks:
+      - huemanager
+
+networks:
+  huemanager:
+    driver: bridge
