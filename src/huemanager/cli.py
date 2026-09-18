@@ -13,12 +13,12 @@ from .migration import (
     MigrationError,
     analyse,
     apply_snapshot,
-    create_snapshot,
+    create_selection_snapshot,
     load_snapshot,
     save_snapshot,
 )
 
-app = typer.Typer(help="Selective Philips Hue room migration between bridges.")
+app = typer.Typer(help="Selective Philips Hue migration between bridges.")
 console = Console()
 
 
@@ -64,15 +64,26 @@ def bridges_cmd() -> None:
 
 
 @app.command()
+def discover() -> None:
+    """Discover local Hue bridges through the official Hue discovery broker."""
+    try:
+        data = HueBridgeClient.discover()
+    except Exception as exc:
+        console.print(f"[red]Discovery failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    console.print_json(data=data)
+
+
+@app.command()
 def rooms(bridge: str) -> None:
     """List rooms exposed by a bridge."""
     client = _client(bridge)
     table = Table("Room", "v2 id", "v1 id", "devices")
-    rooms = sorted(
+    room_list = sorted(
         client.v2_get("room"),
         key=lambda x: x.get("metadata", {}).get("name", ""),
     )
-    for room in rooms:
+    for room in room_list:
         table.add_row(
             room.get("metadata", {}).get("name", "?"),
             room.get("id", "?"),
@@ -85,22 +96,25 @@ def rooms(bridge: str) -> None:
 @app.command()
 def snapshot(
     bridge: str,
-    room: str = typer.Option(..., "--room", "-r", help="Exact Hue room name"),
+    room: list[str] = typer.Option(..., "--room", "-r", help="Room to include; repeatable"),
     output: Path = typer.Option(..., "--output", "-o", help="Snapshot JSON path"),
 ) -> None:
-    """Export a non-destructive migration snapshot for one room."""
+    """Export a non-destructive migration snapshot for one or more rooms."""
     try:
-        payload = create_snapshot(_client(bridge), room)
+        payload = create_selection_snapshot(_client(bridge), room)
         save_snapshot(payload, output)
     except (MigrationError, HueApiError, OSError) as exc:
         console.print(f"[red]Snapshot failed:[/red] {exc}")
         raise typer.Exit(1) from exc
 
+    external = sum(1 for item in payload.get("dependencies", []) if item.get("external"))
     console.print(
         f"[green]Snapshot saved[/green] {output}: "
+        f"{len(payload['rooms'])} rooms, "
         f"{len(payload['devices'])} devices, "
         f"{len(payload['scenes'])} scenes, "
-        f"{len(payload['v1']['rules'])} dependent rules"
+        f"{len(payload['v1']['rules'])} rules, "
+        f"{external} rule(s) with external dependencies"
     )
 
 
@@ -119,31 +133,30 @@ def plan(snapshot_file: Path, destination: str) -> None:
 
 
 @app.command()
-def scan(destination: str) -> None:
-    """Start a destination-bridge search for new lights."""
+def scan(destination: str, kind: str = typer.Option("lights", help="lights or sensors")) -> None:
+    """Start a destination-bridge search for lights or accessories."""
     try:
-        result = _client(destination).v1_post("/lights", {})
+        if kind == "lights":
+            result = _client(destination).v1_post("/lights", {})
+        elif kind == "sensors":
+            result = _client(destination).v1_post("/sensors", {})
+        else:
+            raise typer.BadParameter("kind must be lights or sensors")
     except (HueApiError, OSError) as exc:
         console.print(f"[red]Scan failed:[/red] {exc}")
         raise typer.Exit(1) from exc
     console.print(result)
-    console.print(
-        "Light search started. Pair/reset accessories with the Hue app as required."
-    )
 
 
 @app.command()
 def apply(
     snapshot_file: Path,
     destination: str,
-    execute: bool = typer.Option(
+    execute: bool = typer.Option(False, "--execute", help="Actually create resources"),
+    keep_external_strict: bool = typer.Option(
         False,
-        "--execute",
-        help="Actually create room/scenes/rules",
-    ),
-    room_name: str | None = typer.Option(
-        None,
-        help="Override destination room name",
+        "--keep-external-strict",
+        help="Skip rules with out-of-scope references instead of pruning them",
     ),
 ) -> None:
     """Apply a snapshot. Without --execute this is a dry-run only."""
@@ -154,29 +167,39 @@ def apply(
 
         if not execute:
             console.print(json.dumps(report, indent=2, ensure_ascii=False))
-            console.print(
-                "[yellow]Dry-run only.[/yellow] "
-                "Re-run with --execute to create resources."
-            )
+            console.print("[yellow]Dry-run only.[/yellow] Re-run with --execute to create resources.")
             if not report["ready"]:
                 raise typer.Exit(2)
             return
 
         if not report["ready"]:
             console.print(json.dumps(report, indent=2, ensure_ascii=False))
-            console.print(
-                "[red]Aborted:[/red] not every physical resource is paired "
-                "to the destination."
-            )
+            console.print("[red]Aborted:[/red] physical resources are still missing on destination.")
             raise typer.Exit(2)
 
-        result = apply_snapshot(payload, client, room_name=room_name)
+        result = apply_snapshot(
+            payload,
+            client,
+            prune_external=not keep_external_strict,
+        )
     except (MigrationError, HueApiError, OSError) as exc:
         console.print(f"[red]Migration failed:[/red] {exc}")
         raise typer.Exit(1) from exc
 
     console.print(json.dumps(result, indent=2, ensure_ascii=False))
     console.print("[green]Done.[/green] The source bridge was not modified.")
+
+
+@app.command()
+def web(
+    host: str = typer.Option("127.0.0.1", help="Listen address"),
+    port: int = typer.Option(8787, help="Listen port"),
+) -> None:
+    """Start the local HueManager web interface."""
+    from .web import run
+
+    console.print(f"HueManager web: http://{host}:{port}")
+    run(host=host, port=port)
 
 
 if __name__ == "__main__":
