@@ -476,7 +476,7 @@
       });
       state.snapshotId = result.id;
       state.planReady = false;
-      $("snapshotInfo").textContent = `${result.devices} appareils · ${result.scenes} scènes · ${result.rules} règles CLIP · ${result.behavior_instances} automatisations v2 · ${result.virtual_sensors} variables CLIP · ${result.resourcelinks} liens de ressources`;
+      $("snapshotInfo").textContent = `${result.devices} appareils · ${result.scenes} scènes · ${result.entertainment_configurations || 0} espaces Entertainment · ${result.rules} règles CLIP · ${result.behavior_instances} automatisations v2 · ${result.virtual_sensors} variables CLIP · ${result.resourcelinks} liens de ressources`;
       renderDependencies([
         ...(result.external_dependencies || []),
         ...(result.external_behavior_dependencies || [])
@@ -548,7 +548,7 @@
       });
       state.backupId = result.id;
       $("backupInfo").textContent =
-        `Backup créé : ${result.rooms} pièces · ${result.zones} zones · ${result.lights} lampes · ${result.sensors} capteurs · ${result.scenes} scènes · ${result.behavior_instances} automatisations v2.`;
+        `Backup créé : ${result.rooms} pièces · ${result.zones} zones · ${result.lights} lampes · ${result.sensors} capteurs · ${result.scenes} scènes · ${result.entertainment_configurations || 0} espaces Entertainment · ${result.behavior_instances} automatisations v2.`;
       await loadBackups();
       $("backupSelect").value = result.id;
       selectBackup();
