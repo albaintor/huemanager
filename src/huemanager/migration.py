@@ -1485,6 +1485,13 @@ def _create_schedules(
             if key in source
         }
         body = _rewrite_value(body, path_map)
+        command = body.get("command")
+        if isinstance(command, dict) and isinstance(command.get("address"), str):
+            command["address"] = re.sub(
+                r"^/api/[^/]+/",
+                f"/api/{client.profile.app_key}/",
+                command["address"],
+            )
         try:
             result = client.v1_post("/schedules", body)
             destination_id = _new_v1_id(result)
