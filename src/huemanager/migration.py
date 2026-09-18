@@ -884,6 +884,8 @@ def _merge_zones(
 
         result[source_zone["id"]] = destination
         plan.v2_map[source_zone["id"]] = destination
+        if source_zone.get("id_v1") and destination.get("id_v1"):
+            plan.v1_map[source_zone["id_v1"]] = destination["id_v1"]
         if missing:
             warnings.append(
                 {
