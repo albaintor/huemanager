@@ -763,6 +763,32 @@ def _room_source_device_ids(room: dict) -> set[str]:
     }
 
 
+def _restore_v1_names(
+    client: HueBridgeClient,
+    snapshot: dict,
+    plan: MappingPlan,
+) -> list[dict]:
+    warnings: list[dict] = []
+    for section in ("lights", "sensors"):
+        for source_id, source in snapshot.get("v1", {}).get(section, {}).items():
+            name = source.get("name")
+            destination = plan.v1_map.get(f"/{section}/{source_id}")
+            if not name or not destination:
+                continue
+            try:
+                client.v1_put(destination, {"name": name})
+            except Exception as exc:
+                warnings.append(
+                    {
+                        "source": f"/{section}/{source_id}",
+                        "destination": destination,
+                        "name": name,
+                        "error": str(exc),
+                    }
+                )
+    return warnings
+
+
 def _merge_rooms(client: HueBridgeClient, snapshot: dict, plan: MappingPlan) -> dict[str, dict]:
     existing_by_name = {
         room.get("metadata", {}).get("name"): room
@@ -802,7 +828,75 @@ def _merge_rooms(client: HueBridgeClient, snapshot: dict, plan: MappingPlan) -> 
     return result
 
 
-def _scene_body(scene: dict, destination_room: dict, plan: MappingPlan) -> dict:
+def _merge_zones(
+    client: HueBridgeClient,
+    snapshot: dict,
+    plan: MappingPlan,
+) -> tuple[dict[str, dict], list[dict]]:
+    zones = snapshot.get("zones", [])
+    if not zones:
+        return {}, []
+
+    existing_by_name = {
+        zone.get("metadata", {}).get("name"): zone
+        for zone in client.v2_get("zone")
+    }
+    result: dict[str, dict] = {}
+    warnings: list[dict] = []
+
+    for source_zone in zones:
+        name = source_zone.get("metadata", {}).get("name", "Migrated zone")
+        children: list[dict] = []
+        missing: list[dict] = []
+        for child in source_zone.get("children", []):
+            mapped = plan.v2_map.get(child.get("rid"))
+            if mapped:
+                children.append(
+                    {
+                        "rid": mapped["id"],
+                        "rtype": mapped["type"],
+                    }
+                )
+            else:
+                missing.append(copy.deepcopy(child))
+
+        existing = existing_by_name.get(name)
+        if existing:
+            client.v2_put(
+                "zone",
+                existing["id"],
+                {"children": children, "metadata": copy.deepcopy(source_zone.get("metadata", {}))},
+            )
+            destination = client.v2_get("zone", existing["id"])[0]
+        else:
+            rid = _new_resource_id(
+                client.v2_post(
+                    "zone",
+                    {
+                        "type": "zone",
+                        "children": children,
+                        "metadata": copy.deepcopy(source_zone.get("metadata", {})),
+                    },
+                )
+            )
+            destination = client.v2_get("zone", rid)[0]
+            existing_by_name[name] = destination
+
+        result[source_zone["id"]] = destination
+        plan.v2_map[source_zone["id"]] = destination
+        if missing:
+            warnings.append(
+                {
+                    "zone": name,
+                    "reason": "zone children unavailable on destination",
+                    "pruned": missing,
+                }
+            )
+
+    return result, warnings
+
+
+def _scene_body(scene: dict, destination_group: dict, plan: MappingPlan) -> dict:
     actions: list[dict] = []
     for action in scene.get("actions", []):
         target = action.get("target", {})
@@ -826,7 +920,10 @@ def _scene_body(scene: dict, destination_room: dict, plan: MappingPlan) -> dict:
     body = {
         "type": "scene",
         "metadata": metadata,
-        "group": {"rid": destination_room["id"], "rtype": "room"},
+        "group": {
+            "rid": destination_group["id"],
+            "rtype": destination_group.get("type", "room"),
+        },
         "actions": actions,
     }
     for key in ("palette", "speed", "auto_dynamic"):
@@ -838,22 +935,22 @@ def _scene_body(scene: dict, destination_room: dict, plan: MappingPlan) -> dict:
 def _create_scenes(
     client: HueBridgeClient,
     snapshot: dict,
-    destination_rooms: dict[str, dict],
+    destination_groups: dict[str, dict],
     plan: MappingPlan,
 ) -> dict[str, str]:
     existing_scenes = client.v2_get("scene")
     scene_map: dict[str, str] = {}
     for source_scene in snapshot.get("scenes", []):
         source_room_id = source_scene.get("group", {}).get("rid")
-        destination_room = destination_rooms.get(source_room_id)
-        if not destination_room:
+        destination_group = destination_groups.get(source_room_id)
+        if not destination_group:
             continue
         name = source_scene.get("metadata", {}).get("name")
         existing = next(
             (
                 scene
                 for scene in existing_scenes
-                if scene.get("group", {}).get("rid") == destination_room["id"]
+                if scene.get("group", {}).get("rid") == destination_group["id"]
                 and scene.get("metadata", {}).get("name") == name
             ),
             None,
@@ -862,7 +959,7 @@ def _create_scenes(
             dest_scene = existing
         else:
             rid = _new_resource_id(
-                client.v2_post("scene", _scene_body(source_scene, destination_room, plan))
+                client.v2_post("scene", _scene_body(source_scene, destination_group, plan))
             )
             dest_scene = client.v2_get("scene", rid)[0]
             existing_scenes.append(dest_scene)
@@ -1315,6 +1412,97 @@ def _create_rules(
     return created, skipped, warnings, rule_map
 
 
+def _create_schedules(
+    client: HueBridgeClient,
+    snapshot: dict,
+    path_map: dict[str, str],
+) -> tuple[int, list[dict], dict[str, str]]:
+    schedules = snapshot.get("v1", {}).get("schedules", {})
+    if not schedules:
+        return 0, [], {}
+
+    existing = client.v1_all().get("schedules", {})
+    existing_by_name = {
+        schedule.get("name"): sid
+        for sid, schedule in existing.items()
+        if schedule.get("name")
+    }
+    created = 0
+    warnings: list[dict] = []
+    schedule_map: dict[str, str] = {}
+
+    for source_id, source in schedules.items():
+        name = source.get("name", f"Schedule {source_id}")
+        existing_id = existing_by_name.get(name)
+        if existing_id:
+            schedule_map[f"/schedules/{source_id}"] = f"/schedules/{existing_id}"
+            warnings.append(
+                {
+                    "id": source_id,
+                    "name": name,
+                    "reason": "schedule name already exists",
+                }
+            )
+            continue
+
+        refs = {
+            ref
+            for ref in _extract_refs(source)
+            if ref.startswith(
+                (
+                    "/lights/",
+                    "/sensors/",
+                    "/groups/",
+                    "/scenes/",
+                    "/rules/",
+                    "/schedules/",
+                )
+            )
+        }
+        unresolved = sorted(ref for ref in refs if ref not in path_map)
+        if unresolved:
+            warnings.append(
+                {
+                    "id": source_id,
+                    "name": name,
+                    "reason": "unresolved schedule references",
+                    "references": unresolved,
+                }
+            )
+            continue
+
+        body = {
+            key: copy.deepcopy(source[key])
+            for key in (
+                "name",
+                "description",
+                "command",
+                "localtime",
+                "status",
+                "autodelete",
+                "recycle",
+            )
+            if key in source
+        }
+        body = _rewrite_value(body, path_map)
+        try:
+            result = client.v1_post("/schedules", body)
+            destination_id = _new_v1_id(result)
+            schedule_map[f"/schedules/{source_id}"] = f"/schedules/{destination_id}"
+            created += 1
+        except Exception as exc:
+            warnings.append(
+                {
+                    "id": source_id,
+                    "name": name,
+                    "reason": "destination bridge rejected schedule",
+                    "error": str(exc),
+                }
+            )
+
+    return created, warnings, schedule_map
+
+
 def _create_resourcelinks(
     client: HueBridgeClient,
     snapshot: dict,
@@ -1404,6 +1592,8 @@ def analyse(
         "scenes": len(snapshot.get("scenes", [])),
         "rules": len(snapshot.get("v1", {}).get("rules", {})),
         "resourcelinks": len(snapshot.get("v1", {}).get("resourcelinks", {})),
+        "schedules": len(snapshot.get("v1", {}).get("schedules", {})),
+        "zones": len(snapshot.get("zones", [])),
         "behavior_instances": len(snapshot.get("behavior_instances", [])),
         "mapped": len(plan.v1_map),
         "missing": plan.missing,
@@ -1438,8 +1628,11 @@ def apply_snapshot(
         )
 
     virtual_created = _ensure_virtual_sensors(client, snapshot, plan)
+    name_warnings = _restore_v1_names(client, snapshot, plan)
     destination_rooms = _merge_rooms(client, snapshot, plan)
-    plan.v1_map.update(_create_scenes(client, snapshot, destination_rooms, plan))
+    destination_zones, zone_warnings = _merge_zones(client, snapshot, plan)
+    destination_groups = {**destination_rooms, **destination_zones}
+    plan.v1_map.update(_create_scenes(client, snapshot, destination_groups, plan))
     behavior_created, behavior_skipped, behavior_warnings = _create_behavior_instances(
         client,
         snapshot,
@@ -1453,6 +1646,10 @@ def apply_snapshot(
         prune_external=prune_external,
     )
     plan.v1_map.update(rule_map)
+    schedules_created, schedule_warnings, schedule_map = _create_schedules(
+        client, snapshot, plan.v1_map
+    )
+    plan.v1_map.update(schedule_map)
     resourcelinks_created, resourcelink_warnings = _create_resourcelinks(
         client, snapshot, plan.v1_map
     )
@@ -1461,12 +1658,19 @@ def apply_snapshot(
             room.get("metadata", {}).get("name") for room in destination_rooms.values()
         ],
         "scenes_total": len(snapshot.get("scenes", [])),
+        "zones_restored": [
+            zone.get("metadata", {}).get("name") for zone in destination_zones.values()
+        ],
+        "zone_warnings": zone_warnings,
+        "name_warnings": name_warnings,
         "virtual_sensors_created": virtual_created,
         "behavior_instances_created": behavior_created,
         "behavior_instances_skipped": behavior_skipped,
         "behavior_warnings": behavior_warnings,
         "rules_created": rules_created,
         "rules_skipped": rules_skipped,
+        "schedules_created": schedules_created,
+        "schedule_warnings": schedule_warnings,
         "resourcelinks_created": resourcelinks_created,
         "resourcelink_warnings": resourcelink_warnings,
         "warnings": warnings,
