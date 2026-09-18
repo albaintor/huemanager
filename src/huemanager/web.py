@@ -4,6 +4,7 @@ import re
 import uuid
 from importlib.resources import files
 from pathlib import Path
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -48,6 +49,10 @@ class SnapshotRequest(BaseModel):
 
 class BackupRequest(BaseModel):
     bridge: str
+
+
+class ImportBackupRequest(BaseModel):
+    backup: dict[str, Any]
 
 
 class DestinationRequest(BaseModel):
@@ -226,6 +231,21 @@ def create_web_backup(request: BackupRequest) -> dict:
         backup = create_bridge_backup(_client(request.bridge))
         backup_id = uuid.uuid4().hex
         save_bridge_backup(backup, _backup_path(backup_id))
+        return {"id": backup_id, **backup_summary(backup)}
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@app.post("/api/backups/import")
+def import_backup(request: ImportBackupRequest) -> dict:
+    try:
+        payload = request.backup
+        if payload.get("backup_schema") != 1:
+            raise MigrationError("Unsupported or invalid HueManager backup")
+        backup_id = uuid.uuid4().hex
+        save_bridge_backup(payload, _backup_path(backup_id))
+        # Re-read through the normal validator before exposing it.
+        backup = load_bridge_backup(_backup_path(backup_id))
         return {"id": backup_id, **backup_summary(backup)}
     except Exception as exc:
         raise _api_error(exc) from exc
