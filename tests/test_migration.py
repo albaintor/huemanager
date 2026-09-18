@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from huemanager.backup import backup_summary, create_bridge_backup
 from huemanager.migration import (
+    _create_entertainment_configurations,
     _create_schedules,
     _device_identifiers,
     build_mapping_plan,
@@ -403,3 +404,73 @@ def test_schedule_restore_rewrites_api_user_and_resource_ids():
     assert mapping == {"/schedules/2": "/schedules/8"}
     assert client.created["command"]["address"] == "/api/new-api-user/groups/30/action"
     assert client.created["command"]["body"]["scene"] == "new-scene"
+
+
+
+def test_entertainment_configuration_restore_remaps_services():
+    class FakeClient:
+        def __init__(self):
+            self.created = None
+
+        def v2_get(self, resource_type, resource_id=None):
+            if resource_type != "entertainment_configuration":
+                return []
+            if resource_id:
+                return [
+                    {
+                        "id": resource_id,
+                        "type": "entertainment_configuration",
+                        "metadata": {"name": "iLightShow"},
+                    }
+                ]
+            return []
+
+        def v2_post(self, resource_type, body):
+            assert resource_type == "entertainment_configuration"
+            self.created = body
+            return [{"rid": "ent-dest", "rtype": "entertainment_configuration"}]
+
+    client = FakeClient()
+    snapshot = {
+        "entertainment_configurations": [
+            {
+                "id": "ent-source",
+                "type": "entertainment_configuration",
+                "metadata": {"name": "iLightShow"},
+                "configuration_type": "music",
+                "locations": {
+                    "service_locations": [
+                        {
+                            "service": {
+                                "rid": "service-source",
+                                "rtype": "entertainment",
+                            },
+                            "positions": [{"x": 0.0, "y": 0.0, "z": 0.0}],
+                        }
+                    ]
+                },
+            }
+        ]
+    }
+    plan = SimpleNamespace(
+        v2_map={
+            "service-source": {
+                "id": "service-dest",
+                "type": "entertainment",
+            }
+        }
+    )
+
+    created, warnings = _create_entertainment_configurations(
+        client,
+        snapshot,
+        plan,
+    )
+
+    assert created == 1
+    assert not warnings
+    assert (
+        client.created["locations"]["service_locations"][0]["service"]["rid"]
+        == "service-dest"
+    )
+    assert plan.v2_map["ent-source"]["id"] == "ent-dest"
