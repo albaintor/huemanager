@@ -243,10 +243,14 @@
         for (const mac of ids.zigbee_macs || []) identifierLines.push(`Zigbee MAC: ${mac}`);
         for (const uid of ids.v1_uniqueids || []) identifierLines.push(`CLIP uniqueid: ${uid}`);
         for (const field of ids.pairing_fields || []) identifierLines.push(`${field.field}: ${field.value}`);
+        const pairingNote = ids.pairing_fields?.length
+          ? ""
+          : '<br><span class="muted">N° série 6 caractères / QR d’appairage : non exposé par l’API du Bridge</span>';
         el.innerHTML = `<strong>${escapeHtml(device.name)}</strong>${device.product ? " — " + escapeHtml(device.product) : ""}`
           + (identifierLines.length
             ? `<br><span class="muted"><code>${identifierLines.map(escapeHtml).join("</code><br><code>")}</code></span>`
-            : '<br><span class="muted">N° de série / QR d’appairage non exposé par le Bridge</span>');
+            : "")
+          + pairingNote;
         deviceBody.append(el);
       }
       if (!room.devices.length) deviceBody.textContent = "Aucun appareil.";
