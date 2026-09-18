@@ -1383,6 +1383,9 @@ def analyse(snapshot: dict, client: HueBridgeClient) -> dict:
         raise MigrationError("Source and destination are the same Hue Bridge")
     plan = build_mapping_plan(snapshot, dest_v1, client.v2_resources())
     external = [dep for dep in snapshot.get("dependencies", []) if dep.get("external")]
+    external_v2 = [
+        dep for dep in snapshot.get("behavior_dependencies", []) if dep.get("external")
+    ]
     return {
         "rooms": [room.get("metadata", {}).get("name") for room in snapshot.get("rooms", [])],
         "lights": len(snapshot.get("v1", {}).get("lights", {})),
@@ -1392,9 +1395,11 @@ def analyse(snapshot: dict, client: HueBridgeClient) -> dict:
         "scenes": len(snapshot.get("scenes", [])),
         "rules": len(snapshot.get("v1", {}).get("rules", {})),
         "resourcelinks": len(snapshot.get("v1", {}).get("resourcelinks", {})),
+        "behavior_instances": len(snapshot.get("behavior_instances", [])),
         "mapped": len(plan.v1_map),
         "missing": plan.missing,
         "external_dependencies": external,
+        "external_behavior_dependencies": external_v2,
         "ready": plan.complete,
     }
 
@@ -1421,6 +1426,12 @@ def apply_snapshot(
     virtual_created = _ensure_virtual_sensors(client, snapshot, plan)
     destination_rooms = _merge_rooms(client, snapshot, plan)
     plan.v1_map.update(_create_scenes(client, snapshot, destination_rooms, plan))
+    behavior_created, behavior_skipped, behavior_warnings = _create_behavior_instances(
+        client,
+        snapshot,
+        plan,
+        prune_external=prune_external,
+    )
     rules_created, rules_skipped, warnings, rule_map = _create_rules(
         client,
         snapshot,
@@ -1437,6 +1448,9 @@ def apply_snapshot(
         ],
         "scenes_total": len(snapshot.get("scenes", [])),
         "virtual_sensors_created": virtual_created,
+        "behavior_instances_created": behavior_created,
+        "behavior_instances_skipped": behavior_skipped,
+        "behavior_warnings": behavior_warnings,
         "rules_created": rules_created,
         "rules_skipped": rules_skipped,
         "resourcelinks_created": resourcelinks_created,
