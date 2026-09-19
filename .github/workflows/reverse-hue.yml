@@ -38,7 +38,6 @@ jobs:
             unzip -q "work/Hue-$version.zip" -d "$bundle"
             arm64_split="$(find "$bundle" -type f \( -name 'config.arm64_v8a.apk' -o -name 'config.arm64_v8a' \) -print -quit)"
             test -n "$arm64_split"
-            echo "arm64 split: $arm64_split"
             unzip -q "$arm64_split" \
               "lib/arm64-v8a/libapp.so" \
               "lib/arm64-v8a/libflutter.so" \
@@ -84,11 +83,33 @@ jobs:
             mkdir -p "reverse-output/reconstructed/$(dirname "$rel")"
             cp "$file" "reverse-output/reconstructed/$rel"
           done < <(
-            find work/blutter-5.57.0/asm -type f | grep -E               '(hue/accounts/v1/bridge\.(pb|pbenum|pbgrpc)\.dart|remote_bridge_client\.dart|grpc_request_utils\.dart|move_data_to_target_bridge\.dart|bridge_backup_and_restore/.*/(actions|middleware).*\.dart)'
+            find work/blutter-5.57.0/asm -type f | grep -E \
+              '(hue/accounts/v1/bridge\.(pb|pbenum|pbgrpc)\.dart|remote_bridge_client\.dart|grpc_request_utils\.dart|grpc_request_metadata_provider\.dart|authorization_token_resolver\.dart|move_data_to_target_bridge\.dart|bridge_backup_and_restore/.*/(actions|middleware).*\.dart)'
           )
-          grep -n -B 8 -A 12 -E             'Obj!(MergeStage|MigrationStage|BackupStage|DeviceMigrationStatus)|MERGE_STAGE_|MIGRATION_STAGE_|BACKUP_STAGE_|DEVICE_MIGRATION_STATUS_'             work/blutter-5.57.0/pp.txt             > reverse-output/orchestration/migration-enum-objects.txt || true
-          grep -R -n -C 35 -E             'eligibleDevices|determineDevicesEligibleForDeviceMigration|StartDeviceMigrationActionParams|StartBridgeMergeDeviceMigrationActionParams'             work/blutter-5.57.0/asm/bridge_backup_and_restore             > reverse-output/orchestration/eligible-devices.txt || true
-          grep -R -n -C 30 -E             'authorization|Bearer|CallOptions|metadata|ClientChannel|api.account.meethue.com'             work/blutter-5.57.0/asm/account_management             > reverse-output/orchestration/grpc-auth.txt || true
+
+          grep -n -B 8 -A 12 -E \
+            'Obj!(MergeStage|MigrationStage|BackupStage|DeviceMigrationStatus)|MERGE_STAGE_|MIGRATION_STAGE_|BACKUP_STAGE_|DEVICE_MIGRATION_STATUS_' \
+            work/blutter-5.57.0/pp.txt \
+            > reverse-output/orchestration/migration-enum-objects.txt || true
+
+          grep -n -B 4 -A 10 -E \
+            '28a2151|28a2131|28a2111|28a2071|Obj!(MergeStage|DeviceMigrationStatus)' \
+            work/blutter-5.57.0/objs.txt \
+            > reverse-output/orchestration/missing-enum-objects.txt || true
+
+          strings work/5.57.0/lib/arm64-v8a/libapp.so | grep -E \
+            'MERGE_STAGE_|DEVICE_MIGRATION_STATUS_' \
+            > reverse-output/orchestration/migration-enum-strings.txt || true
+
+          grep -R -n -C 35 -E \
+            'eligibleDevices|determineDevicesEligibleForDeviceMigration|StartDeviceMigrationActionParams|StartBridgeMergeDeviceMigrationActionParams' \
+            work/blutter-5.57.0/asm/bridge_backup_and_restore \
+            > reverse-output/orchestration/eligible-devices.txt || true
+
+          grep -R -n -C 30 -E \
+            'authorization|Bearer|CallOptions|metadata|ClientChannel|api.account.meethue.com' \
+            work/blutter-5.57.0/asm/account_management \
+            > reverse-output/orchestration/grpc-auth.txt || true
 
       - name: Upload textual RE results
         uses: actions/upload-artifact@v4
