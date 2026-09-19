@@ -84,6 +84,8 @@ class HueBridgeClient:
             verify=self.profile.verify_tls,
         )
         response.raise_for_status()
+        if not response.content:
+            return []
         payload = response.json()
         errors = payload.get("errors") or []
         if errors:
