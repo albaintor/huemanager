@@ -1,8 +1,8 @@
 # Descriptor-backed bindings reconstructed from Hue Android 5.57.0.
 from google.protobuf import descriptor_pb2 as _descriptor_pb2
 from google.protobuf import descriptor_pool as _descriptor_pool
-from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2
-from google.protobuf import timestamp_pb2 as google_dot_protobuf_dot_timestamp__pb2
+from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2  # noqa: F401
+from google.protobuf import timestamp_pb2 as google_dot_protobuf_dot_timestamp__pb2  # noqa: F401
 from google.protobuf.internal import builder as _builder
 
 _fd = _descriptor_pb2.FileDescriptorProto(
