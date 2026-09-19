@@ -1495,7 +1495,7 @@ def _ensure_virtual_sensors(
                 try:
                     client.v1_put(f"/sensors/{match_id}/state", state)
                 except BRIDGE_ERRORS:
-                    pass  # noqa: S110 - restoring CLIP state is best-effort
+                    pass
             created.append({"source": source_path, "destination": f"/sensors/{match_id}"})
         plan.v1_map[source_path] = f"/sensors/{match_id}"
     return created
