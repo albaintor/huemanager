@@ -1,7 +1,10 @@
+import pytest
+
 from types import SimpleNamespace
 
 from huemanager.backup import backup_summary, create_bridge_backup
 from huemanager.migration import (
+    MigrationError,
     _create_entertainment_configurations,
     _create_schedules,
     _device_identifiers,
@@ -538,12 +541,8 @@ def test_empty_room_deletion_reports_dependencies_and_requires_confirmation():
     assert len(impact["dependencies"]["rules"]) == 1
     assert len(impact["dependencies"]["automations_v2"]) == 1
 
-    try:
+    with pytest.raises(MigrationError, match="still referenced"):
         delete_empty_room(client, "room-empty")
-    except Exception as exc:
-        assert "still referenced" in str(exc)
-    else:
-        raise AssertionError("dependency confirmation should be required")
 
     result = delete_empty_room(
         client,
