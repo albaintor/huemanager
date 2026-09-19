@@ -28,6 +28,15 @@
     .audit-issue.warning { border-left: 4px solid var(--warn); }
     .audit-issue.cleanup { border-left: 4px solid var(--good); }
     .audit-issue h3 { margin-bottom: 5px; }
+    .audit-head { display: flex; gap: 10px; align-items: flex-start; }
+    .audit-head input { width: auto; min-height: auto; margin-top: 4px; transform: scale(1.15); }
+    .audit-head .audit-title { flex: 1; min-width: 0; }
+    .audit-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+      margin: 12px 0; padding: 10px; border: 1px solid var(--border);
+      border-radius: 9px; background: var(--panel-2); }
+    .risk-note { margin: 9px 0; padding: 9px 11px; border-left: 3px solid var(--warn);
+      border-radius: 0 8px 8px 0; background: rgba(241, 189, 99, .08); }
+    .risk-note strong { display: block; margin-bottom: 3px; }
     h2 { font-size: 18px; margin: 0 0 14px; }
     h3 { font-size: 15px; margin: 0; }
     p { margin: 6px 0; }
@@ -204,7 +213,16 @@
         <p class="muted">
           Les éléments verts sont des candidats de nettoyage à faible risque.
           Les éléments orange/rouge nécessitent une vérification explicite.
+          HueManager indique la raison exacte avant toute suppression risquée.
         </p>
+        <div class="audit-toolbar">
+          <button id="selectAllAudit" type="button" disabled>Tout sélectionner</button>
+          <button id="deselectAllAudit" type="button" disabled>Tout désélectionner</button>
+          <span id="auditSelectedCount" class="pill">0 sélectionné</span>
+          <button id="cleanupSelectedAudit" class="danger" type="button" disabled>
+            Supprimer la sélection
+          </button>
+        </div>
         <div id="auditIssues">
           <p class="muted">Lance une analyse du Bridge.</p>
         </div>
@@ -221,7 +239,9 @@
     snapshotId: null,
     planReady: false,
     backupId: null,
-    restoreReady: false
+    restoreReady: false,
+    audit: null,
+    auditSelected: new Set()
   };
   const $ = (id) => document.getElementById(id);
 
@@ -274,7 +294,24 @@
     $("managementTab").classList.toggle("active", !migration);
   }
 
+  function auditCleanupIssues() {
+    return (state.audit?.issues || []).filter(issue => issue.cleanup);
+  }
+
+  function updateAuditSelectionControls() {
+    const cleanupIssues = auditCleanupIssues();
+    const selected = state.auditSelected.size;
+    $("selectAllAudit").disabled = cleanupIssues.length === 0;
+    $("deselectAllAudit").disabled = selected === 0;
+    $("cleanupSelectedAudit").disabled = selected === 0;
+    $("auditSelectedCount").textContent =
+      `${selected} sélectionné${selected > 1 ? "s" : ""}`;
+  }
+
   function renderAudit(data) {
+    state.audit = data;
+    state.auditSelected.clear();
+
     const summary = data.summary || {};
     const summaryRoot = $("auditSummary");
     summaryRoot.replaceChildren();
@@ -296,21 +333,67 @@
     root.replaceChildren();
     if (!(data.issues || []).length) {
       root.innerHTML = '<p><span class="pill good">Aucune incohérence détectée</span></p>';
+      updateAuditSelectionControls();
       return;
     }
 
     for (const issue of data.issues || []) {
       const box = document.createElement("div");
       box.className = `audit-issue ${issue.severity || ""}`;
+
+      const head = document.createElement("div");
+      head.className = "audit-head";
+      if (issue.cleanup) {
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.setAttribute("aria-label", `Sélectionner ${issue.title}`);
+        checkbox.addEventListener("change", () => {
+          if (checkbox.checked) {
+            state.auditSelected.add(issue.id);
+          } else {
+            state.auditSelected.delete(issue.id);
+          }
+          updateAuditSelectionControls();
+        });
+        head.append(checkbox);
+      }
+
+      const titleWrap = document.createElement("div");
+      titleWrap.className = "audit-title";
       const title = document.createElement("h3");
       title.textContent = issue.title;
+      titleWrap.append(title);
+      if (issue.cleanup) {
+        const level = document.createElement("span");
+        level.className = `pill ${issue.cleanup.safe ? "good" : "warn"}`;
+        level.textContent = issue.cleanup.safe
+          ? "faible risque"
+          : "confirmation requise";
+        titleWrap.append(level);
+      }
+      head.append(titleWrap);
+      box.append(head);
+
       const message = document.createElement("p");
       message.textContent = issue.message;
-      box.append(title, message);
+      box.append(message);
+
+      if (issue.risk_reason) {
+        const risk = document.createElement("div");
+        risk.className = "risk-note";
+        const riskTitle = document.createElement("strong");
+        riskTitle.textContent = issue.cleanup
+          ? "Pourquoi ce nettoyage n’est pas considéré sûr"
+          : "Pourquoi HueManager ne supprime pas automatiquement cet élément";
+        const riskText = document.createElement("span");
+        riskText.textContent = issue.risk_reason;
+        risk.append(riskTitle, riskText);
+        box.append(risk);
+      }
 
       if (issue.details && Object.keys(issue.details).length) {
         const details = document.createElement("details");
-        details.innerHTML = "<summary>Détails</summary>";
+        details.innerHTML = "<summary>Détails techniques</summary>";
         const pre = document.createElement("pre");
         pre.textContent = JSON.stringify(issue.details, null, 2);
         details.append(pre);
@@ -321,14 +404,16 @@
         const button = document.createElement("button");
         button.className = issue.cleanup.safe ? "" : "danger";
         button.textContent = issue.cleanup.safe
-          ? "Nettoyer"
+          ? "Nettoyer cet élément"
           : "Supprimer malgré l'avertissement";
         button.addEventListener("click", async () => {
           const bridge = $("managementBridge").value;
           const risky = !issue.cleanup.safe;
-          const question = risky
-            ? `Supprimer « ${issue.title} » malgré les dépendances/incohérences signalées ?`
-            : `Supprimer « ${issue.title} » ?`;
+          let question = `Supprimer « ${issue.title} » ?`;
+          if (risky) {
+            question += "\n\nPourquoi cette suppression est risquée :\n"
+              + (issue.risk_reason || "Des dépendances ou références restent possibles.");
+          }
           if (!window.confirm(question)) return;
           try {
             button.disabled = true;
@@ -348,6 +433,71 @@
       }
       root.append(box);
     }
+    updateAuditSelectionControls();
+  }
+
+  function setAllAuditSelection(selected) {
+    state.auditSelected.clear();
+    for (const issue of auditCleanupIssues()) {
+      if (selected) state.auditSelected.add(issue.id);
+    }
+    const selectedIds = state.auditSelected;
+    for (const checkbox of $("auditIssues").querySelectorAll('input[type="checkbox"]')) {
+      const box = checkbox.closest(".audit-issue");
+      const issue = (state.audit?.issues || []).find(candidate =>
+        box?.querySelector("h3")?.textContent === candidate.title
+      );
+      checkbox.checked = Boolean(issue && selectedIds.has(issue.id));
+    }
+    updateAuditSelectionControls();
+  }
+
+  async function cleanupSelectedAudit() {
+    const bridge = $("managementBridge").value;
+    const selectedIssues = (state.audit?.issues || []).filter(issue =>
+      state.auditSelected.has(issue.id)
+    );
+    if (!bridge || !selectedIssues.length) return;
+
+    const risky = selectedIssues.filter(issue => issue.cleanup && !issue.cleanup.safe);
+    let question = `Supprimer ${selectedIssues.length} élément(s) sélectionné(s) ?`;
+    if (risky.length) {
+      question += `\n\n${risky.length} suppression(s) nécessitent une confirmation explicite.\n`;
+      question += risky.map(issue =>
+        `• ${issue.title}: ${issue.risk_reason || "dépendances possibles"}`
+      ).join("\n");
+    } else {
+      question += "\n\nTous les éléments sélectionnés sont classés à faible risque.";
+    }
+    question += "\n\nChaque élément sera réanalysé juste avant sa suppression.";
+    if (!window.confirm(question)) return;
+
+    try {
+      $("cleanupSelectedAudit").disabled = true;
+      status(`Nettoyage de ${selectedIssues.length} élément(s)…`);
+      const result = await api(
+        `/api/bridges/${encodeURIComponent(bridge)}/audit/cleanup`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            issue_ids: selectedIssues.map(issue => issue.id),
+            force_risky: risky.length > 0,
+          }),
+        },
+      );
+      await runAudit();
+      const deleted = result.deleted?.length || 0;
+      const skipped = result.skipped?.length || 0;
+      status(
+        `${deleted} élément(s) supprimé(s)`
+          + (skipped ? ` · ${skipped} ignoré(s) après réévaluation` : ""),
+        skipped ? "warn" : "good",
+      );
+    } catch (e) {
+      status(e.message, "bad");
+    } finally {
+      updateAuditSelectionControls();
+    }
   }
 
   async function runAudit() {
@@ -364,6 +514,11 @@
   $("managementTab").addEventListener("click", () => showView("management"));
   $("auditBridge").addEventListener("click", () => {
     runAudit().catch(e => status(e.message, "bad"));
+  });
+  $("selectAllAudit").addEventListener("click", () => setAllAuditSelection(true));
+  $("deselectAllAudit").addEventListener("click", () => setAllAuditSelection(false));
+  $("cleanupSelectedAudit").addEventListener("click", () => {
+    cleanupSelectedAudit().catch(e => status(e.message, "bad"));
   });
 
   function clearSnapshot() {
