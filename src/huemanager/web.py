@@ -19,7 +19,7 @@ from .backup import (
     restore_bridge_backup,
     save_bridge_backup,
 )
-from .client import HueBridgeClient
+from .client import HueApiError, HueBridgeClient
 from .config import BridgeProfile, ConfigStore
 from .migration import (
     MigrationError,
@@ -192,7 +192,7 @@ def bridge_tree(bridge_name: str) -> dict:
 def room_delete_impact(bridge_name: str, room_id: str) -> dict:
     try:
         return room_deletion_impact(_client(bridge_name), room_id)
-    except Exception as exc:
+    except (MigrationError, HueApiError, OSError, ValueError, KeyError, IndexError) as exc:
         raise _api_error(exc) from exc
 
 
@@ -208,7 +208,7 @@ def delete_room(
             room_id,
             confirm_dependencies=confirm_dependencies,
         )
-    except Exception as exc:
+    except (MigrationError, HueApiError, OSError, ValueError, KeyError, IndexError) as exc:
         raise _api_error(exc) from exc
 
 
