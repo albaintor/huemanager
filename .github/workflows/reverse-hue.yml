@@ -69,9 +69,28 @@ jobs:
             --old work/blutter-5.57.0 \
             --new work/blutter-5.57.0 \
             --output reverse-output/blutter
-          cat reverse-output/blutter/summary.md
-          echo "===== Blutter target neighborhoods ====="
-          sed -n '1,2400p' reverse-output/blutter/5.57.0-neighborhoods.txt
+          python tools/reverse_hue/recover_bridge_schema.py \
+            work/blutter-5.57.0 \
+            reverse-output/bridge
+          cat reverse-output/bridge/bridge-migration-evidence.json
+          cat reverse-output/bridge/bridge-enum-evidence.txt
+
+      - name: Recover migration orchestration evidence
+        run: |
+          mkdir -p reverse-output/orchestration
+          rg -n -C 35 \
+            'StartDeviceMigration|CreateMigrateBridgeJob|CreateBridgeMergeJob|deviceIds|StartDeviceMigrationRequest' \
+            work/blutter-5.57.0/asm \
+            > reverse-output/orchestration/migration-call-sites.txt || true
+          rg -n -C 20 \
+            'BuilderInfo::(pPS|pPM|pc)|r[0-9]+ = "deviceIds"' \
+            work/blutter-5.57.0/asm/account_api_client_dart \
+            > reverse-output/orchestration/deviceids-protobuf.txt || true
+          rg -n -C 20 \
+            'deviceIds' \
+            work/blutter-5.57.0/asm \
+            > reverse-output/orchestration/deviceids-all.txt || true
+          wc -l reverse-output/orchestration/*.txt
 
       - name: Upload textual RE results
         uses: actions/upload-artifact@v4
