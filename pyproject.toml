@@ -17,7 +17,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+private = [
+  "grpcio>=1.65,<2",
+  "protobuf>=5,<7",
+]
 dev = [
+  "grpcio>=1.65,<2",
+  "protobuf>=5,<7",
   "pytest>=8.3,<9",
   "ruff>=0.9,<1",
 ]

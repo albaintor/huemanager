@@ -1,0 +1,144 @@
+syntax = "proto3";
+
+package hue.accounts.v1;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+enum DeviceMigrationStatus {
+  DEVICE_MIGRATION_STATUS_UNSPECIFIED = 0;
+  DEVICE_MIGRATION_STATUS_IN_PROCESS = 1;
+  DEVICE_MIGRATION_STATUS_COMPLETED = 2;
+  DEVICE_MIGRATION_STATUS_STOPPED = 3;
+  DEVICE_MIGRATION_STATUS_FAILED = 4;
+}
+
+enum BackupStage {
+  BACKUP_STAGE_UNSPECIFIED = 0;
+  BACKUP_STAGE_STARTING_BACKUP_ON_BRIDGE = 1;
+  BACKUP_STAGE_CREATING_BACKUP_FILE = 2;
+  BACKUP_STAGE_STORING_BACKUP_FILE = 3;
+}
+
+enum MigrationStage {
+  MIGRATION_STAGE_UNSPECIFIED = 0;
+  MIGRATION_STAGE_UPLOADING_BACKUP_FILE_TO_BRIDGE = 1;
+  MIGRATION_STAGE_STARTING_MIGRATION_ON_BRIDGE = 2;
+  MIGRATION_STAGE_MIGRATING_BRIDGE = 3;
+}
+
+enum MergeStage {
+  MERGE_STAGE_UNSPECIFIED = 0;
+  MERGE_STAGE_UPLOADING_BACKUP_FILE_TO_BRIDGE = 1;
+  MERGE_STAGE_STARTING_DEVICE_IMPORT_ON_BRIDGE = 2;
+  MERGE_STAGE_IMPORTING_DEVICES_ON_BRIDGE = 3;
+}
+
+message CreateBridgeBackupJobRequest {
+  string bridge_id = 1;
+  string bridge_resource_uuid = 2;
+}
+
+message GetBridgeBackupJobRequest {
+  string bridge_id = 1;
+  string job_id = 2;
+}
+
+message BridgeBackupJob {
+  message Pending { BackupStage stage = 1; }
+  message Success { google.protobuf.Timestamp backup_time = 1; }
+  message Error { string error_message = 1; }
+
+  string job_id = 1;
+  string bridge_id = 2;
+  google.protobuf.Timestamp create_time = 3;
+  oneof state {
+    Pending pending = 4;
+    Success success = 5;
+    Error error = 6;
+  }
+}
+
+message CreateMigrateBridgeJobRequest {
+  string bridge_id = 1;
+  string backup_job_id = 2;
+}
+
+message GetMigrateBridgeJobRequest {
+  string bridge_id = 1;
+  string job_id = 2;
+}
+
+message MigrateBridgeJob {
+  message Pending { MigrationStage stage = 1; }
+  message Success { google.protobuf.Timestamp migrate_time = 1; }
+  message Error { string error_message = 1; }
+
+  string job_id = 1;
+  string bridge_id = 2;
+  google.protobuf.Timestamp create_time = 3;
+  oneof state {
+    Pending pending = 4;
+    Success success = 5;
+    Error error = 6;
+  }
+  string bridge_resource_uuid = 7;
+}
+
+message StartDeviceMigrationRequest {
+  string bridge_id = 1;
+  string migrate_job_id = 2;
+  string merge_job_id = 3;
+}
+
+message GetDeviceMigrationStatusRequest { string bridge_id = 1; }
+message GetDeviceMigrationStatusResponse { DeviceMigrationStatus status = 1; }
+message StopDeviceMigrationRequest { string bridge_id = 1; }
+
+message GetMigrationSoftwareVersionsRequest {
+  string source_bridge_id = 1;
+  string destination_bridge_id = 2;
+}
+
+message GetMigrationSoftwareVersionsResponse {
+  string source_bridge_software_version = 1;
+  string destination_bridge_software_version = 2;
+}
+
+message CreateBridgeMergeJobRequest {
+  string bridge_id = 1;
+  string backup_job_id = 2;
+}
+
+message GetBridgeMergeJobRequest {
+  string bridge_id = 1;
+  string job_id = 2;
+}
+
+message BridgeMergeJob {
+  message Pending { MergeStage stage = 1; }
+  message Success { google.protobuf.Timestamp merge_time = 1; }
+  message Error { string error_message = 1; }
+
+  string job_id = 1;
+  string bridge_id = 2;
+  google.protobuf.Timestamp create_time = 3;
+  oneof state {
+    Pending pending = 4;
+    Success success = 5;
+    Error error = 6;
+  }
+}
+
+service BridgeService {
+  rpc CreateBridgeBackupJob(CreateBridgeBackupJobRequest) returns (BridgeBackupJob);
+  rpc GetBridgeBackupJob(GetBridgeBackupJobRequest) returns (BridgeBackupJob);
+  rpc CreateMigrateBridgeJob(CreateMigrateBridgeJobRequest) returns (MigrateBridgeJob);
+  rpc GetMigrateBridgeJob(GetMigrateBridgeJobRequest) returns (MigrateBridgeJob);
+  rpc StartDeviceMigration(StartDeviceMigrationRequest) returns (google.protobuf.Empty);
+  rpc GetDeviceMigrationStatus(GetDeviceMigrationStatusRequest) returns (GetDeviceMigrationStatusResponse);
+  rpc StopDeviceMigration(StopDeviceMigrationRequest) returns (google.protobuf.Empty);
+  rpc GetMigrationSoftwareVersions(GetMigrationSoftwareVersionsRequest) returns (GetMigrationSoftwareVersionsResponse);
+  rpc CreateBridgeMergeJob(CreateBridgeMergeJobRequest) returns (BridgeMergeJob);
+  rpc GetBridgeMergeJob(GetBridgeMergeJobRequest) returns (BridgeMergeJob);
+}
