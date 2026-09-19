@@ -215,7 +215,7 @@ def list_backups() -> dict:
                     **backup_summary(backup),
                 }
             )
-        except Exception:
+        except (MigrationError, OSError, ValueError):
             items.append(
                 {
                     "id": path.stem,
