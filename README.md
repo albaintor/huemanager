@@ -298,3 +298,12 @@ can then reuse or recreate its Entertainment configuration as needed.
 HueManager does not invoke Philips' proprietary Bridge-to-Bridge migration service. Physical
 Hue devices still have to join the destination Zigbee network before the logical restore can
 complete.
+
+## Gestion et audit du Bridge
+
+L'onglet **Gestion** analyse un Bridge sans le modifier et détecte notamment les pièces vides,
+les règles sans action, les références v1/v2 cassées, les scènes vides/orphelines, les schedules
+et resource links incohérents ainsi que les automations v2 qui ciblent des ressources absentes.
+Les suppressions sont individuelles. Les candidats à faible risque sont distingués des suppressions
+qui nécessitent une confirmation explicite.
+

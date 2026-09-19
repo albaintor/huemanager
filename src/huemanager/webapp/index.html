@@ -4,6 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>HueManager</title>
+  <link rel="icon" type="image/svg+xml"
+    href="https://www.philips-hue.com/content/dam/hue/masters/navigation/footer-Hue-logo.svg">
   <style>
     :root {
       color-scheme: light dark;
@@ -14,7 +16,18 @@
     * { box-sizing: border-box; }
     body { margin: 0; font: 15px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
     main { max-width: 1280px; margin: 0 auto; padding: 24px; }
-    h1 { margin: 0 0 4px; font-size: 28px; }
+    h1 { margin: 0; font-size: 28px; }
+    .brand { display: flex; align-items: center; gap: 14px; margin-bottom: 4px; }
+    .brand img { width: 86px; max-height: 42px; object-fit: contain; }
+    .tabs { display: flex; gap: 8px; margin-top: 16px; }
+    .tabs button.active { border-color: var(--accent); box-shadow: inset 0 -2px var(--accent); }
+    .audit-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .audit-issue { border: 1px solid var(--border); border-radius: 9px; padding: 12px;
+      margin: 9px 0; background: var(--panel-2); }
+    .audit-issue.error { border-left: 4px solid var(--bad); }
+    .audit-issue.warning { border-left: 4px solid var(--warn); }
+    .audit-issue.cleanup { border-left: 4px solid var(--good); }
+    .audit-issue h3 { margin-bottom: 5px; }
     h2 { font-size: 18px; margin: 0 0 14px; }
     h3 { font-size: 15px; margin: 0; }
     p { margin: 6px 0; }
@@ -60,10 +73,22 @@
 </head>
 <body>
 <main>
-  <h1>HueManager</h1>
-  <p class="muted">Migration sélective entre Bridges Hue avec analyse des dépendances iConnectHue.</p>
+  <div class="brand">
+    <img
+      src="https://www.philips-hue.com/content/dam/hue/masters/navigation/footer-Hue-logo.svg"
+      alt="Philips Hue">
+    <div>
+      <h1>HueManager</h1>
+      <p class="muted">Migration, audit et nettoyage de Bridges Hue.</p>
+    </div>
+  </div>
   <div id="globalStatus" class="status">Chargement des Bridges…</div>
+  <div class="tabs" role="tablist">
+    <button id="migrationTab" class="active" type="button">Migration</button>
+    <button id="managementTab" type="button">Gestion</button>
+  </div>
 
+  <div id="migrationView">
   <section class="grid">
     <div class="card span-4">
       <h2>Bridges</h2>
@@ -157,6 +182,35 @@
       <pre id="restoreResult" class="hidden"></pre>
     </div>
   </section>
+  </div>
+
+  <div id="managementView" class="hidden">
+    <section class="grid">
+      <div class="card span-4">
+        <h2>Gestion du Bridge</h2>
+        <p class="muted">
+          Analyse la configuration sans modification, puis propose uniquement
+          des nettoyages ciblés.
+        </p>
+        <label for="managementBridge">Bridge à analyser</label>
+        <select id="managementBridge"></select>
+        <div class="row" style="margin-top:12px">
+          <button id="auditBridge" class="primary">Analyser</button>
+        </div>
+        <div id="auditSummary" class="audit-summary"></div>
+      </div>
+      <div class="card span-8">
+        <h2>Incohérences et nettoyage</h2>
+        <p class="muted">
+          Les éléments verts sont des candidats de nettoyage à faible risque.
+          Les éléments orange/rouge nécessitent une vérification explicite.
+        </p>
+        <div id="auditIssues">
+          <p class="muted">Lance une analyse du Bridge.</p>
+        </div>
+      </div>
+    </section>
+  </div>
 </main>
 <script>
 (() => {
@@ -190,7 +244,7 @@
   async function loadBridges() {
     const data = await api("/api/bridges");
     state.bridges = data.bridges || [];
-    for (const id of ["sourceBridge", "destinationBridge"]) {
+    for (const id of ["sourceBridge", "destinationBridge", "managementBridge"]) {
       const select = $(id);
       const current = select.value;
       select.replaceChildren();
@@ -211,6 +265,106 @@
     $("scanSensors").disabled = !ready || !state.snapshotId;
     status(ready ? `${state.bridges.length} Bridge(s) configuré(s).` : "Aucun Bridge configuré.", ready ? "good" : "warn");
   }
+
+  function showView(name) {
+    const migration = name === "migration";
+    $("migrationView").classList.toggle("hidden", !migration);
+    $("managementView").classList.toggle("hidden", migration);
+    $("migrationTab").classList.toggle("active", migration);
+    $("managementTab").classList.toggle("active", !migration);
+  }
+
+  function renderAudit(data) {
+    const summary = data.summary || {};
+    const summaryRoot = $("auditSummary");
+    summaryRoot.replaceChildren();
+    const chips = [
+      [`${summary.issues || 0} problème(s)`, ""],
+      [`${summary.safe_cleanup || 0} nettoyage(s) sûr(s)`, "good"],
+      [`${summary.errors || 0} erreur(s)`, summary.errors ? "warn" : ""],
+      [`${summary.empty_rooms || 0} pièce(s) vide(s)`, ""],
+      [`${summary.rule_issues || 0} problème(s) de règle`, ""],
+    ];
+    for (const [label, cls] of chips) {
+      const chip = document.createElement("span");
+      chip.className = `pill ${cls}`.trim();
+      chip.textContent = label;
+      summaryRoot.append(chip);
+    }
+
+    const root = $("auditIssues");
+    root.replaceChildren();
+    if (!(data.issues || []).length) {
+      root.innerHTML = '<p><span class="pill good">Aucune incohérence détectée</span></p>';
+      return;
+    }
+
+    for (const issue of data.issues || []) {
+      const box = document.createElement("div");
+      box.className = `audit-issue ${issue.severity || ""}`;
+      const title = document.createElement("h3");
+      title.textContent = issue.title;
+      const message = document.createElement("p");
+      message.textContent = issue.message;
+      box.append(title, message);
+
+      if (issue.details && Object.keys(issue.details).length) {
+        const details = document.createElement("details");
+        details.innerHTML = "<summary>Détails</summary>";
+        const pre = document.createElement("pre");
+        pre.textContent = JSON.stringify(issue.details, null, 2);
+        details.append(pre);
+        box.append(details);
+      }
+
+      if (issue.cleanup) {
+        const button = document.createElement("button");
+        button.className = issue.cleanup.safe ? "" : "danger";
+        button.textContent = issue.cleanup.safe
+          ? "Nettoyer"
+          : "Supprimer malgré l'avertissement";
+        button.addEventListener("click", async () => {
+          const bridge = $("managementBridge").value;
+          const risky = !issue.cleanup.safe;
+          const question = risky
+            ? `Supprimer « ${issue.title} » malgré les dépendances/incohérences signalées ?`
+            : `Supprimer « ${issue.title} » ?`;
+          if (!window.confirm(question)) return;
+          try {
+            button.disabled = true;
+            status(`Nettoyage de « ${issue.title} »…`);
+            const url = `/api/bridges/${encodeURIComponent(bridge)}/audit/`
+              + `${encodeURIComponent(issue.id)}?force=${risky ? "true" : "false"}`;
+            await api(url, { method: "DELETE" });
+            await runAudit();
+            status(`« ${issue.title} » supprimé.`, "good");
+          } catch (e) {
+            status(e.message, "bad");
+          } finally {
+            button.disabled = false;
+          }
+        });
+        box.append(button);
+      }
+      root.append(box);
+    }
+  }
+
+  async function runAudit() {
+    const bridge = $("managementBridge").value;
+    if (!bridge) return;
+    status(`Analyse de ${bridge}…`);
+    $("auditIssues").innerHTML = '<p class="muted">Analyse en cours…</p>';
+    const data = await api(`/api/bridges/${encodeURIComponent(bridge)}/audit`);
+    renderAudit(data);
+    status(`Analyse de ${bridge} terminée.`, "good");
+  }
+
+  $("migrationTab").addEventListener("click", () => showView("migration"));
+  $("managementTab").addEventListener("click", () => showView("management"));
+  $("auditBridge").addEventListener("click", () => {
+    runAudit().catch(e => status(e.message, "bad"));
+  });
 
   function clearSnapshot() {
     state.snapshotId = null;

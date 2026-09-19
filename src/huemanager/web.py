@@ -25,7 +25,9 @@ from .migration import (
     MigrationError,
     analyse,
     apply_snapshot,
+    audit_bridge,
     create_selection_snapshot,
+    delete_audit_issue,
     delete_empty_room,
     inventory_tree,
     load_snapshot,
@@ -33,7 +35,7 @@ from .migration import (
     save_snapshot,
 )
 
-app = FastAPI(title="HueManager", version="0.4.1")
+app = FastAPI(title="HueManager", version="0.5.0")
 SNAPSHOT_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 BACKUP_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 
@@ -185,6 +187,45 @@ def bridge_tree(bridge_name: str) -> dict:
     try:
         return inventory_tree(_client(bridge_name))
     except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+
+@app.get("/api/bridges/{bridge_name}/audit")
+def bridge_audit(bridge_name: str) -> dict:
+    try:
+        return audit_bridge(_client(bridge_name))
+    except (
+        MigrationError,
+        HueApiError,
+        OSError,
+        ValueError,
+        KeyError,
+        IndexError,
+    ) as exc:
+        raise _api_error(exc) from exc
+
+
+@app.delete("/api/bridges/{bridge_name}/audit/{issue_id}")
+def cleanup_bridge_issue(
+    bridge_name: str,
+    issue_id: str,
+    force: bool = False,
+) -> dict:
+    try:
+        return delete_audit_issue(
+            _client(bridge_name),
+            issue_id,
+            force=force,
+        )
+    except (
+        MigrationError,
+        HueApiError,
+        OSError,
+        ValueError,
+        KeyError,
+        IndexError,
+    ) as exc:
         raise _api_error(exc) from exc
 
 

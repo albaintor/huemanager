@@ -8,7 +8,9 @@ from huemanager.migration import (
     _create_entertainment_configurations,
     _create_schedules,
     _device_identifiers,
+    audit_bridge,
     build_mapping_plan,
+    delete_audit_issue,
     delete_empty_room,
     rewrite_behavior_configuration,
     rewrite_rule,
@@ -579,3 +581,96 @@ def test_room_deletion_refuses_room_with_devices():
     impact = room_deletion_impact(FakeClient(), "room-live")
     assert not impact["empty"]
     assert impact["devices"] == 1
+
+
+
+def test_bridge_audit_finds_safe_and_broken_cleanup_candidates():
+    class FakeClient:
+        def __init__(self):
+            self.deleted = []
+
+        def v2_resources(self):
+            return [
+                {
+                    "id": "room-empty",
+                    "type": "room",
+                    "id_v1": "/groups/7",
+                    "metadata": {"name": "Ancienne pièce"},
+                    "children": [],
+                },
+                {
+                    "id": "scene-empty",
+                    "type": "scene",
+                    "id_v1": "/scenes/9",
+                    "metadata": {"name": "Scène vide"},
+                    "group": {"rid": "room-empty", "rtype": "room"},
+                    "actions": [],
+                },
+                {
+                    "id": "automation-broken",
+                    "type": "behavior_instance",
+                    "metadata": {"name": "Broken automation"},
+                    "script_id": "missing-script",
+                    "configuration": {
+                        "where": [
+                            {"group": {"rid": "missing-room", "rtype": "room"}}
+                        ]
+                    },
+                },
+            ]
+
+        def v1_all(self):
+            return {
+                "config": {"name": "Test bridge", "bridgeid": "ABC"},
+                "lights": {},
+                "sensors": {},
+                "groups": {"7": {"name": "Ancienne pièce"}},
+                "scenes": {"9": {"name": "Scène vide"}},
+                "rules": {
+                    "1": {
+                        "name": "No-op",
+                        "status": "enabled",
+                        "conditions": [],
+                        "actions": [],
+                    },
+                    "2": {
+                        "name": "Broken",
+                        "status": "enabled",
+                        "conditions": [],
+                        "actions": [
+                            {
+                                "address": "/lights/99/state",
+                                "method": "PUT",
+                                "body": {"on": True},
+                            }
+                        ],
+                    },
+                },
+                "schedules": {},
+                "resourcelinks": {},
+            }
+
+        def v1_delete(self, path):
+            self.deleted.append(("v1", path))
+            return [{"success": path}]
+
+        def v2_delete(self, resource_type, resource_id):
+            self.deleted.append(("v2", resource_type, resource_id))
+            return []
+
+    client = FakeClient()
+    audit = audit_bridge(client)
+    kinds = {issue["kind"] for issue in audit["issues"]}
+
+    assert "empty_room" in kinds
+    assert "rule_no_actions" in kinds
+    assert "rule_broken_refs" in kinds
+    assert "automation_broken_refs" in kinds
+    assert audit["summary"]["safe_cleanup"] >= 1
+
+    safe_rule = next(
+        issue for issue in audit["issues"] if issue["kind"] == "rule_no_actions"
+    )
+    result = delete_audit_issue(client, safe_rule["id"])
+    assert result["deleted"]
+    assert ("v1", "/rules/1") in client.deleted

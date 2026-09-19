@@ -419,6 +419,408 @@ def delete_empty_room(
     }
 
 
+
+def _raw_v2_resource_refs(value: Any) -> set[tuple[str, str]]:
+    refs: set[tuple[str, str]] = set()
+    if isinstance(value, dict):
+        rid = value.get("rid")
+        rtype = value.get("rtype")
+        if isinstance(rid, str) and isinstance(rtype, str):
+            refs.add((rid, rtype))
+        for child in value.values():
+            refs.update(_raw_v2_resource_refs(child))
+    elif isinstance(value, list):
+        for child in value:
+            refs.update(_raw_v2_resource_refs(child))
+    return refs
+
+
+def _existing_v1_paths(v1: dict) -> set[str]:
+    paths = {"/groups/0"}
+    for section in (
+        "lights",
+        "sensors",
+        "groups",
+        "scenes",
+        "rules",
+        "schedules",
+        "resourcelinks",
+    ):
+        paths.update(f"/{section}/{rid}" for rid in v1.get(section, {}))
+    return paths
+
+
+def _v1_referrers(v1: dict) -> dict[str, list[dict]]:
+    result: dict[str, list[dict]] = {}
+    for section in ("rules", "schedules", "resourcelinks"):
+        for rid, resource in v1.get(section, {}).items():
+            refs = _extract_refs(resource)
+            if section == "resourcelinks":
+                refs.update(
+                    link
+                    for link in resource.get("links", [])
+                    if isinstance(link, str)
+                )
+            for ref in refs:
+                result.setdefault(ref, []).append(
+                    {
+                        "section": section,
+                        "id": rid,
+                        "name": resource.get("name") or f"{section[:-1]} {rid}",
+                    }
+                )
+    return result
+
+
+def audit_bridge(client: HueBridgeClient) -> dict:
+    """Find high-confidence cleanup candidates and configuration inconsistencies."""
+    resources = client.v2_resources()
+    v1 = client.v1_all()
+    by_id = _resource_index(resources)
+    existing_v1 = _existing_v1_paths(v1)
+    v1_referrers = _v1_referrers(v1)
+    v2_referrers: dict[str, list[dict]] = {}
+
+    for resource in resources:
+        source_id = resource.get("id")
+        for rid, _rtype in _raw_v2_resource_refs(resource):
+            if rid == source_id:
+                continue
+            v2_referrers.setdefault(rid, []).append(
+                {
+                    "id": source_id,
+                    "type": resource.get("type"),
+                    "name": resource.get("metadata", {}).get("name") or source_id,
+                }
+            )
+
+    issues: list[dict] = []
+
+    def add_issue(
+        *,
+        issue_id: str,
+        kind: str,
+        severity: str,
+        title: str,
+        message: str,
+        details: Any = None,
+        cleanup: dict | None = None,
+    ) -> None:
+        issues.append(
+            {
+                "id": issue_id,
+                "kind": kind,
+                "severity": severity,
+                "title": title,
+                "message": message,
+                "details": details,
+                "cleanup": cleanup,
+            }
+        )
+
+    room_names: dict[str, list[str]] = {}
+    for room in (item for item in resources if item.get("type") == "room"):
+        room_id = room.get("id")
+        name = room.get("metadata", {}).get("name") or room_id or "?"
+        if room_id:
+            room_names.setdefault(name, []).append(room_id)
+        if not room_id or _room_devices(room, by_id):
+            continue
+        impact = room_deletion_impact(client, room_id)
+        safe = impact["safe_to_delete"]
+        add_issue(
+            issue_id=f"empty_room:{room_id}",
+            kind="empty_room",
+            severity="cleanup" if safe else "warning",
+            title=f"Pièce vide : {name}",
+            message=(
+                "Aucun appareil et aucune dépendance détectée."
+                if safe
+                else (
+                    f"Aucun appareil, mais {impact['dependency_count']} "
+                    "configuration(s) la référencent encore."
+                )
+            ),
+            details=impact["dependencies"],
+            cleanup={
+                "kind": "room",
+                "resource_id": room_id,
+                "safe": safe,
+            },
+        )
+
+    for name, room_ids in room_names.items():
+        if len(room_ids) <= 1:
+            continue
+        add_issue(
+            issue_id=f"duplicate_room_name:{name}",
+            kind="duplicate_room_name",
+            severity="warning",
+            title=f"Nom de pièce dupliqué : {name}",
+            message=f"{len(room_ids)} pièces utilisent le même nom.",
+            details={"room_ids": room_ids},
+        )
+
+    rule_ref_prefixes = (
+        "/lights/",
+        "/sensors/",
+        "/groups/",
+        "/scenes/",
+        "/rules/",
+        "/schedules/",
+        "/resourcelinks/",
+    )
+    for rule_id, rule in v1.get("rules", {}).items():
+        name = rule.get("name") or f"Rule {rule_id}"
+        actions = rule.get("actions", [])
+        refs = {
+            ref
+            for ref in _extract_refs(rule)
+            if ref.startswith(rule_ref_prefixes)
+        }
+        missing = sorted(ref for ref in refs if ref not in existing_v1)
+        if not actions:
+            add_issue(
+                issue_id=f"rule_no_actions:{rule_id}",
+                kind="rule_no_actions",
+                severity="cleanup",
+                title=f"Règle sans action : {name}",
+                message="Cette règle ne peut déclencher aucune action.",
+                details={"status": rule.get("status"), "references": sorted(refs)},
+                cleanup={
+                    "kind": "v1",
+                    "resource_type": "rules",
+                    "resource_id": rule_id,
+                    "safe": True,
+                },
+            )
+        elif missing:
+            add_issue(
+                issue_id=f"rule_broken_refs:{rule_id}",
+                kind="rule_broken_refs",
+                severity="error",
+                title=f"Règle incohérente : {name}",
+                message="La règle référence des ressources absentes.",
+                details={"missing": missing, "status": rule.get("status")},
+                cleanup={
+                    "kind": "v1",
+                    "resource_type": "rules",
+                    "resource_id": rule_id,
+                    "safe": False,
+                },
+            )
+
+    for scene in (
+        item
+        for item in resources
+        if item.get("type") in {"scene", "smart_scene"}
+    ):
+        scene_id = scene.get("id")
+        if not scene_id:
+            continue
+        name = scene.get("metadata", {}).get("name") or scene_id
+        group_id = scene.get("group", {}).get("rid")
+        if group_id and group_id not in by_id:
+            add_issue(
+                issue_id=f"scene_orphan_group:{scene_id}",
+                kind="scene_orphan_group",
+                severity="error",
+                title=f"Scène orpheline : {name}",
+                message="Le groupe/pièce associé à cette scène n'existe plus.",
+                details={"missing_group": group_id},
+                cleanup={
+                    "kind": "v2",
+                    "resource_type": scene.get("type", "scene"),
+                    "resource_id": scene_id,
+                    "safe": False,
+                },
+            )
+            continue
+        if scene.get("actions"):
+            continue
+        id_v1 = scene.get("id_v1")
+        referrers = list(v2_referrers.get(scene_id, []))
+        if id_v1:
+            referrers.extend(v1_referrers.get(id_v1, []))
+        safe = not referrers
+        add_issue(
+            issue_id=f"scene_no_actions:{scene_id}",
+            kind="scene_no_actions",
+            severity="cleanup" if safe else "warning",
+            title=f"Scène vide : {name}",
+            message=(
+                "La scène ne contient aucune action et n'est pas référencée."
+                if safe
+                else "La scène ne contient aucune action mais reste référencée."
+            ),
+            details={"referrers": referrers},
+            cleanup={
+                "kind": "v2",
+                "resource_type": scene.get("type", "scene"),
+                "resource_id": scene_id,
+                "safe": safe,
+            },
+        )
+
+    for schedule_id, schedule in v1.get("schedules", {}).items():
+        refs = {
+            ref
+            for ref in _extract_refs(schedule)
+            if ref.startswith(rule_ref_prefixes)
+        }
+        missing = sorted(ref for ref in refs if ref not in existing_v1)
+        if not missing:
+            continue
+        name = schedule.get("name") or f"Schedule {schedule_id}"
+        add_issue(
+            issue_id=f"schedule_broken_refs:{schedule_id}",
+            kind="schedule_broken_refs",
+            severity="error",
+            title=f"Schedule incohérent : {name}",
+            message="Le schedule référence des ressources absentes.",
+            details={"missing": missing, "status": schedule.get("status")},
+            cleanup={
+                "kind": "v1",
+                "resource_type": "schedules",
+                "resource_id": schedule_id,
+                "safe": False,
+            },
+        )
+
+    for link_id, link in v1.get("resourcelinks", {}).items():
+        missing = sorted(
+            ref
+            for ref in link.get("links", [])
+            if isinstance(ref, str) and ref not in existing_v1
+        )
+        if not missing:
+            continue
+        name = link.get("name") or f"Resource link {link_id}"
+        add_issue(
+            issue_id=f"resourcelink_broken:{link_id}",
+            kind="resourcelink_broken",
+            severity="error",
+            title=f"Resource link incohérent : {name}",
+            message="Le resource link contient des références absentes.",
+            details={"missing": missing},
+            cleanup={
+                "kind": "v1",
+                "resource_type": "resourcelinks",
+                "resource_id": link_id,
+                "safe": False,
+            },
+        )
+
+    for instance in (
+        item
+        for item in resources
+        if item.get("type") == "behavior_instance"
+    ):
+        instance_id = instance.get("id")
+        if not instance_id:
+            continue
+        raw_refs = _raw_v2_resource_refs(instance.get("configuration", {}))
+        missing = sorted(
+            {"rid": rid, "rtype": rtype}
+            for rid, rtype in raw_refs
+            if rid not in by_id
+        , key=lambda item: (item["rtype"], item["rid"]))
+        script_id = instance.get("script_id")
+        if isinstance(script_id, str) and script_id not in by_id:
+            missing.append({"rid": script_id, "rtype": "behavior_script"})
+        if not missing:
+            continue
+        name = instance.get("metadata", {}).get("name") or instance_id
+        add_issue(
+            issue_id=f"automation_broken_refs:{instance_id}",
+            kind="automation_broken_refs",
+            severity="error",
+            title=f"Automation v2 incohérente : {name}",
+            message="L'automation référence des ressources v2 absentes.",
+            details={"missing": missing, "enabled": instance.get("enabled")},
+            cleanup={
+                "kind": "v2",
+                "resource_type": "behavior_instance",
+                "resource_id": instance_id,
+                "safe": False,
+            },
+        )
+
+    severity_order = {"error": 0, "warning": 1, "cleanup": 2, "info": 3}
+    issues.sort(
+        key=lambda item: (
+            severity_order.get(item["severity"], 9),
+            item["kind"],
+            item["title"].lower(),
+        )
+    )
+    safe_cleanup = sum(
+        1
+        for issue in issues
+        if issue.get("cleanup", {}).get("safe")
+    )
+    return {
+        "bridge": {
+            key: v1.get("config", {}).get(key)
+            for key in ("name", "bridgeid", "modelid", "swversion", "apiversion")
+        },
+        "summary": {
+            "issues": len(issues),
+            "safe_cleanup": safe_cleanup,
+            "errors": sum(issue["severity"] == "error" for issue in issues),
+            "warnings": sum(issue["severity"] == "warning" for issue in issues),
+            "empty_rooms": sum(issue["kind"] == "empty_room" for issue in issues),
+            "rule_issues": sum(issue["kind"].startswith("rule_") for issue in issues),
+        },
+        "issues": issues,
+    }
+
+
+def delete_audit_issue(
+    client: HueBridgeClient,
+    issue_id: str,
+    *,
+    force: bool = False,
+) -> dict:
+    audit = audit_bridge(client)
+    issue = next(
+        (candidate for candidate in audit["issues"] if candidate["id"] == issue_id),
+        None,
+    )
+    if not issue:
+        raise MigrationError("Audit issue no longer exists; refresh the analysis")
+
+    cleanup = issue.get("cleanup")
+    if not cleanup:
+        raise MigrationError("This issue has no supported cleanup action")
+    if not cleanup.get("safe") and not force:
+        raise MigrationError(
+            "This cleanup may affect a referenced configuration; explicit force is required"
+        )
+
+    kind = cleanup.get("kind")
+    resource_id = cleanup.get("resource_id")
+    resource_type = cleanup.get("resource_type")
+
+    if kind == "room":
+        result = delete_empty_room(
+            client,
+            str(resource_id),
+            confirm_dependencies=force,
+        )
+    elif kind == "v1":
+        result = client.v1_delete(f"/{resource_type}/{resource_id}")
+    elif kind == "v2":
+        result = client.v2_delete(str(resource_type), str(resource_id))
+    else:
+        raise MigrationError(f"Unsupported cleanup kind: {kind!r}")
+
+    return {
+        "deleted": True,
+        "issue": issue,
+        "bridge_result": result,
+    }
+
 def inventory_tree(client: HueBridgeClient) -> dict:
     resources = client.v2_resources()
     v1 = client.v1_all()
