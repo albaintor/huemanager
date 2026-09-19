@@ -298,6 +298,127 @@ def _device_identifiers(device: dict, v1: dict) -> dict:
     }
 
 
+
+def room_deletion_impact(client: HueBridgeClient, room_id: str) -> dict:
+    resources = client.v2_resources()
+    v1 = client.v1_all()
+    by_id = _resource_index(resources)
+    room = by_id.get(room_id)
+    if not room or room.get("type") != "room":
+        raise MigrationError(f"Room not found: {room_id}")
+
+    devices = _room_devices(room, by_id)
+    room_v1 = room.get("id_v1")
+    known_ids = set(by_id)
+
+    scenes = [
+        {
+            "id": resource.get("id"),
+            "type": resource.get("type"),
+            "name": resource.get("metadata", {}).get("name") or resource.get("id"),
+        }
+        for resource in resources
+        if resource.get("type") in {"scene", "smart_scene"}
+        and resource.get("group", {}).get("rid") == room_id
+    ]
+
+    automations = []
+    for resource in resources:
+        if resource.get("type") != "behavior_instance":
+            continue
+        refs = _extract_v2_ref_ids(resource.get("configuration", {}), known_ids)
+        if room_id not in refs:
+            continue
+        automations.append(
+            {
+                "id": resource.get("id"),
+                "name": resource.get("metadata", {}).get("name") or resource.get("id"),
+                "enabled": resource.get("enabled"),
+                "script_id": resource.get("script_id"),
+            }
+        )
+
+    rules = []
+    schedules = []
+    resource_links = []
+    if room_v1:
+        for rule_id, rule in v1.get("rules", {}).items():
+            if room_v1 in _extract_refs(rule):
+                rules.append(
+                    {
+                        "id": rule_id,
+                        "name": rule.get("name") or f"Rule {rule_id}",
+                        "status": rule.get("status"),
+                    }
+                )
+        for schedule_id, schedule in v1.get("schedules", {}).items():
+            if room_v1 in _extract_refs(schedule):
+                schedules.append(
+                    {
+                        "id": schedule_id,
+                        "name": schedule.get("name") or f"Schedule {schedule_id}",
+                        "status": schedule.get("status"),
+                    }
+                )
+        for link_id, link in v1.get("resourcelinks", {}).items():
+            if room_v1 in set(link.get("links", [])) or room_v1 in _extract_refs(link):
+                resource_links.append(
+                    {
+                        "id": link_id,
+                        "name": link.get("name") or f"Resource link {link_id}",
+                    }
+                )
+
+    dependencies = {
+        "scenes": scenes,
+        "rules": rules,
+        "automations_v2": automations,
+        "schedules": schedules,
+        "resourcelinks": resource_links,
+    }
+    dependency_count = sum(len(items) for items in dependencies.values())
+    return {
+        "id": room_id,
+        "id_v1": room_v1,
+        "name": room.get("metadata", {}).get("name") or room_id,
+        "devices": len(devices),
+        "empty": not devices,
+        "dependencies": dependencies,
+        "dependency_count": dependency_count,
+        "has_dependencies": dependency_count > 0,
+        "safe_to_delete": not devices and dependency_count == 0,
+    }
+
+
+def delete_empty_room(
+    client: HueBridgeClient,
+    room_id: str,
+    *,
+    confirm_dependencies: bool = False,
+) -> dict:
+    impact = room_deletion_impact(client, room_id)
+    if not impact["empty"]:
+        raise MigrationError(
+            f"Room {impact['name']!r} still contains {impact['devices']} device(s)"
+        )
+    if impact["has_dependencies"] and not confirm_dependencies:
+        raise MigrationError(
+            f"Room {impact['name']!r} is still referenced by "
+            f"{impact['dependency_count']} configuration resource(s)"
+        )
+    client.v2_delete("room", room_id)
+    return {
+        "deleted": True,
+        "room": {
+            "id": impact["id"],
+            "id_v1": impact["id_v1"],
+            "name": impact["name"],
+        },
+        "dependencies_present": impact["has_dependencies"],
+        "dependencies": impact["dependencies"],
+    }
+
+
 def inventory_tree(client: HueBridgeClient) -> dict:
     resources = client.v2_resources()
     v1 = client.v1_all()
