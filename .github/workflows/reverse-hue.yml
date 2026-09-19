@@ -12,6 +12,10 @@ on:
       - "tests/test_hue_private_proto.py"
       - "pyproject.toml"
 
+concurrency:
+  group: hue-reverse-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
