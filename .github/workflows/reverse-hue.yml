@@ -39,30 +39,39 @@ jobs:
             arm64_split="$(find "$bundle" -type f \( -name 'config.arm64_v8a.apk' -o -name 'config.arm64_v8a' \) -print -quit)"
             test -n "$arm64_split"
             echo "arm64 split: $arm64_split"
-            unzip -l "$arm64_split" | grep -E 'lib/(arm64-v8a/)?(libapp|libflutter)\.so'
-            unzip -q "$arm64_split"               "lib/arm64-v8a/libapp.so"               "lib/arm64-v8a/libflutter.so"               -d "$out"
+            unzip -q "$arm64_split" \
+              "lib/arm64-v8a/libapp.so" \
+              "lib/arm64-v8a/libflutter.so" \
+              -d "$out"
             file "$out/lib/arm64-v8a/libapp.so"
             sha256sum "$out/lib/arm64-v8a/libapp.so"
-            strings "$out/lib/arm64-v8a/libapp.so" | grep -E -m 20               'StartDeviceMigrationRequest|CreateBridgeMergeJobRequest|CreateMigrateBridgeJobRequest|BridgeService' || true
           done
 
-      - name: Install DAE Dart AOT analyzer
-        run: cargo install dae-rs --locked
+      - name: Install Blutter dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            cmake ninja-build build-essential pkg-config \
+            libicu-dev libcapstone-dev
+          python -m pip install pyelftools requests
 
-      - name: Dump Dart snapshots
-        env:
-          DAE_LANG: en
+      - name: Run Blutter against Hue 5.57.0
         run: |
           set -euxo pipefail
-          dae work/5.56.0/lib/arm64-v8a/libapp.so work/dae-5.56.0
-          dae work/5.57.0/lib/arm64-v8a/libapp.so work/dae-5.57.0
+          git clone --depth 1 https://github.com/worawit/blutter.git work/blutter-tool
+          python work/blutter-tool/blutter.py \
+            work/5.57.0/lib/arm64-v8a \
+            work/blutter-5.57.0
 
-      - name: Recover protobuf candidate descriptors
+      - name: Recover protobuf descriptors from Blutter
         run: |
-          python tools/reverse_hue/extract_proto_candidates.py             --old work/dae-5.56.0             --new work/dae-5.57.0             --output reverse-output
-          cat reverse-output/summary.md
-          echo "===== 5.57.0 target neighborhoods (first 600 lines) ====="
-          sed -n '1,600p' reverse-output/5.57.0-neighborhoods.txt
+          python tools/reverse_hue/extract_proto_candidates.py \
+            --old work/blutter-5.57.0 \
+            --new work/blutter-5.57.0 \
+            --output reverse-output/blutter
+          cat reverse-output/blutter/summary.md
+          echo "===== Blutter target neighborhoods ====="
+          sed -n '1,2400p' reverse-output/blutter/5.57.0-neighborhoods.txt
 
       - name: Upload textual RE results
         uses: actions/upload-artifact@v4
