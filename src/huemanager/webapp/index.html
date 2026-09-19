@@ -292,6 +292,14 @@
       count.className = "pill";
       count.textContent = `${room.devices.length} appareil(s) · ${room.scenes.length} scène(s) · ${room.rules.length} règle(s)`;
       head.append(checkbox, title, count);
+      if (!room.devices.length) {
+        const deleteButton = document.createElement("button");
+        deleteButton.className = "danger";
+        deleteButton.textContent = "Supprimer";
+        deleteButton.title = "Supprimer cette pièce vide du Bridge après analyse des dépendances";
+        deleteButton.addEventListener("click", () => deleteEmptyRoom(room, deleteButton));
+        head.append(deleteButton);
+      }
       wrapper.append(head);
 
       const deviceDetails = document.createElement("details");
@@ -375,6 +383,55 @@
       automationDetails.append(automationBody);
       wrapper.append(automationDetails);
       root.append(wrapper);
+    }
+  }
+
+  async function deleteEmptyRoom(room, button) {
+    const bridge = $("sourceBridge").value;
+    if (!bridge) return;
+    try {
+      button.disabled = true;
+      status(`Analyse de la suppression de « ${room.name} »…`);
+      const base = `/api/bridges/${encodeURIComponent(bridge)}/rooms/${encodeURIComponent(room.id)}`;
+      const impact = await api(`${base}/delete-impact`);
+      if (!impact.empty) {
+        throw new Error(`La pièce contient encore ${impact.devices} appareil(s).`);
+      }
+
+      const deps = impact.dependencies || {};
+      const details = [
+        ["scène(s)", deps.scenes?.length || 0],
+        ["règle(s)", deps.rules?.length || 0],
+        ["automation(s) v2", deps.automations_v2?.length || 0],
+        ["schedule(s)", deps.schedules?.length || 0],
+        ["resourcelink(s)", deps.resourcelinks?.length || 0],
+      ].filter(([, count]) => count > 0);
+
+      let message = `Supprimer la pièce « ${impact.name} » du Bridge ?`;
+      if (details.length) {
+        message += "\n\nAttention : elle est encore référencée par "
+          + details.map(([label, count]) => `${count} ${label}`).join(", ")
+          + ". HueManager ne supprime pas automatiquement ces configurations ; "
+          + "elles peuvent être supprimées/corrigées par le Bridge ou devenir orphelines.";
+      } else {
+        message += "\n\nAucun appareil ni dépendance de configuration détecté.";
+      }
+      if (!window.confirm(message)) {
+        status("Suppression annulée.", "warn");
+        return;
+      }
+
+      await api(
+        `${base}?confirm_dependencies=${impact.has_dependencies ? "true" : "false"}`,
+        { method: "DELETE" },
+      );
+      const tree = await api(`/api/bridges/${encodeURIComponent(bridge)}/tree`);
+      renderTree(tree);
+      status(`Pièce « ${impact.name} » supprimée du Bridge.`, "good");
+    } catch (e) {
+      status(e.message, "bad");
+    } finally {
+      button.disabled = false;
     }
   }
 
