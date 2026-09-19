@@ -102,6 +102,9 @@ class HueBridgeClient:
     def v1_put(self, path: str, body: dict) -> Any:
         return self._request_v1("PUT", path, body)
 
+    def v1_delete(self, path: str) -> Any:
+        return self._request_v1("DELETE", path)
+
     def v2_resources(self) -> list[dict]:
         return self._request_v2("GET")
 
@@ -116,3 +119,6 @@ class HueBridgeClient:
 
     def v2_put(self, resource_type: str, resource_id: str, body: dict) -> list[dict]:
         return self._request_v2("PUT", f"/{resource_type}/{resource_id}", body)
+
+    def v2_delete(self, resource_type: str, resource_id: str) -> list[dict]:
+        return self._request_v2("DELETE", f"/{resource_type}/{resource_id}")
