@@ -26,7 +26,9 @@ from .migration import (
     analyse,
     apply_snapshot,
     create_selection_snapshot,
+    delete_empty_room,
     inventory_tree,
+    room_deletion_impact,
     load_snapshot,
     save_snapshot,
 )
@@ -182,6 +184,30 @@ def pair(request: PairRequest) -> dict:
 def bridge_tree(bridge_name: str) -> dict:
     try:
         return inventory_tree(_client(bridge_name))
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@app.get("/api/bridges/{bridge_name}/rooms/{room_id}/delete-impact")
+def room_delete_impact(bridge_name: str, room_id: str) -> dict:
+    try:
+        return room_deletion_impact(_client(bridge_name), room_id)
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@app.delete("/api/bridges/{bridge_name}/rooms/{room_id}")
+def delete_room(
+    bridge_name: str,
+    room_id: str,
+    confirm_dependencies: bool = False,
+) -> dict:
+    try:
+        return delete_empty_room(
+            _client(bridge_name),
+            room_id,
+            confirm_dependencies=confirm_dependencies,
+        )
     except Exception as exc:
         raise _api_error(exc) from exc
 
