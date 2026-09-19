@@ -121,6 +121,12 @@ jobs:
       - name: Verify Hue private client in project
         run: |
           python -m pip install -e '.[dev]'
+          mkdir -p /tmp/hue-protoc
+          python -m grpc_tools.protoc \
+            -I src/huemanager/hue_private/proto \
+            --python_out=/tmp/hue-protoc \
+            --grpc_python_out=/tmp/hue-protoc \
+            src/huemanager/hue_private/proto/bridge.proto
           ruff check src tests
           pytest -q
 
