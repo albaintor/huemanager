@@ -1,6 +1,6 @@
-import pytest
-
 from types import SimpleNamespace
+
+import pytest
 
 from huemanager.backup import backup_summary, create_bridge_backup
 from huemanager.migration import (
