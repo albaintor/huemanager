@@ -3,12 +3,13 @@ from __future__ import annotations
 import copy
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
-from .client import HueBridgeClient
+from .client import HueApiError, HueBridgeClient
 
 REF_RE = re.compile(r"/(lights|sensors|groups|scenes|rules|schedules|resourcelinks)/([^/]+)")
 MIGRATABLE_REF_PREFIXES = (
@@ -54,6 +55,8 @@ CLIP_SENSOR_TYPES = {
     "CLIPOpenClose",
     "CLIPSwitch",
 }
+BRIDGE_ERRORS = (HueApiError, OSError, ValueError, KeyError, IndexError)
+
 WRITABLE_CLIP_STATE = {
     "CLIPGenericFlag": {"flag"},
     "CLIPGenericStatus": {"status"},
@@ -591,7 +594,7 @@ def create_selection_snapshot(client: HueBridgeClient, room_names: list[str]) ->
     config = v1.get("config", {})
     return {
         "schema": 3,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "source_bridge": {
             key: config.get(key)
             for key in ("name", "bridgeid", "modelid", "swversion")
@@ -834,7 +837,7 @@ def _restore_v1_names(
                 continue
             try:
                 client.v1_put(destination, {"name": name})
-            except Exception as exc:
+            except BRIDGE_ERRORS as exc:
                 warnings.append(
                     {
                         "source": f"/{section}/{source_id}",
@@ -1171,7 +1174,7 @@ def _create_entertainment_configurations(
             existing.append(destination)
             plan.v2_map[source["id"]] = destination
             created += 1
-        except Exception as exc:
+        except BRIDGE_ERRORS as exc:
             warnings.append(
                 {
                     "id": source.get("id"),
@@ -1426,7 +1429,7 @@ def _create_behavior_instances(
                         "semantic_change": True,
                     }
                 )
-        except Exception as exc:
+        except BRIDGE_ERRORS as exc:
             skipped.append(
                 {
                     "id": source.get("id"),
@@ -1491,8 +1494,8 @@ def _ensure_virtual_sensors(
             if state:
                 try:
                     client.v1_put(f"/sensors/{match_id}/state", state)
-                except Exception:
-                    pass
+                except BRIDGE_ERRORS:
+                    pass  # noqa: S110 - restoring CLIP state is best-effort
             created.append({"source": source_path, "destination": f"/sensors/{match_id}"})
         plan.v1_map[source_path] = f"/sensors/{match_id}"
     return created
@@ -1721,7 +1724,7 @@ def _create_schedules(
             destination_id = _new_v1_id(result)
             schedule_map[f"/schedules/{source_id}"] = f"/schedules/{destination_id}"
             created += 1
-        except Exception as exc:
+        except BRIDGE_ERRORS as exc:
             warnings.append(
                 {
                     "id": source_id,
