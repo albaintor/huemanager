@@ -28,6 +28,7 @@ from .migration import (
     audit_bridge,
     create_selection_snapshot,
     delete_audit_issue,
+    delete_audit_issues,
     delete_empty_room,
     inventory_tree,
     load_snapshot,
@@ -69,6 +70,11 @@ class ApplyRequest(DestinationRequest):
 
 class RestoreRequest(DestinationRequest):
     prune_external: bool = False
+
+
+class AuditCleanupRequest(BaseModel):
+    issue_ids: list[str] = Field(min_length=1, max_length=200)
+    force_risky: bool = False
 
 
 def _store() -> ConfigStore:
@@ -217,6 +223,28 @@ def cleanup_bridge_issue(
             _client(bridge_name),
             issue_id,
             force=force,
+        )
+    except (
+        MigrationError,
+        HueApiError,
+        OSError,
+        ValueError,
+        KeyError,
+        IndexError,
+    ) as exc:
+        raise _api_error(exc) from exc
+
+
+@app.post("/api/bridges/{bridge_name}/audit/cleanup")
+def cleanup_bridge_issues(
+    bridge_name: str,
+    request: AuditCleanupRequest,
+) -> dict:
+    try:
+        return delete_audit_issues(
+            _client(bridge_name),
+            request.issue_ids,
+            force_risky=request.force_risky,
         )
     except (
         MigrationError,
