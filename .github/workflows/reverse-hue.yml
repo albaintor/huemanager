@@ -75,22 +75,20 @@ jobs:
           cat reverse-output/bridge/bridge-migration-evidence.json
           cat reverse-output/bridge/bridge-enum-evidence.txt
 
-      - name: Recover migration orchestration evidence
+      - name: Preserve focused reconstructed Dart evidence
         run: |
-          mkdir -p reverse-output/orchestration
-          rg -n -C 35 \
-            'StartDeviceMigration|CreateMigrateBridgeJob|CreateBridgeMergeJob|deviceIds|StartDeviceMigrationRequest' \
-            work/blutter-5.57.0/asm \
-            > reverse-output/orchestration/migration-call-sites.txt || true
-          rg -n -C 20 \
-            'BuilderInfo::(pPS|pPM|pc)|r[0-9]+ = "deviceIds"' \
-            work/blutter-5.57.0/asm/account_api_client_dart \
-            > reverse-output/orchestration/deviceids-protobuf.txt || true
-          rg -n -C 20 \
-            'deviceIds' \
-            work/blutter-5.57.0/asm \
-            > reverse-output/orchestration/deviceids-all.txt || true
-          wc -l reverse-output/orchestration/*.txt
+          set -euxo pipefail
+          mkdir -p reverse-output/reconstructed reverse-output/orchestration
+          while IFS= read -r file; do
+            rel="${file#work/blutter-5.57.0/asm/}"
+            mkdir -p "reverse-output/reconstructed/$(dirname "$rel")"
+            cp "$file" "reverse-output/reconstructed/$rel"
+          done < <(
+            find work/blutter-5.57.0/asm -type f | grep -E               '(hue/accounts/v1/bridge\.(pb|pbenum|pbgrpc)\.dart|remote_bridge_client\.dart|grpc_request_utils\.dart|move_data_to_target_bridge\.dart|bridge_backup_and_restore/.*/(actions|middleware).*\.dart)'
+          )
+          grep -n -B 8 -A 12 -E             'Obj!(MergeStage|MigrationStage|BackupStage|DeviceMigrationStatus)|MERGE_STAGE_|MIGRATION_STAGE_|BACKUP_STAGE_|DEVICE_MIGRATION_STATUS_'             work/blutter-5.57.0/pp.txt             > reverse-output/orchestration/migration-enum-objects.txt || true
+          grep -R -n -C 35 -E             'eligibleDevices|determineDevicesEligibleForDeviceMigration|StartDeviceMigrationActionParams|StartBridgeMergeDeviceMigrationActionParams'             work/blutter-5.57.0/asm/bridge_backup_and_restore             > reverse-output/orchestration/eligible-devices.txt || true
+          grep -R -n -C 30 -E             'authorization|Bearer|CallOptions|metadata|ClientChannel|api.account.meethue.com'             work/blutter-5.57.0/asm/account_management             > reverse-output/orchestration/grpc-auth.txt || true
 
       - name: Upload textual RE results
         uses: actions/upload-artifact@v4
