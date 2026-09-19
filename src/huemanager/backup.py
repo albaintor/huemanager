@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -86,7 +86,7 @@ def create_bridge_backup(client: HueBridgeClient) -> dict:
         config = source_v1.get("config", {})
         logical = {
             "schema": 3,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "source_bridge": {
                 key: config.get(key)
                 for key in ("name", "bridgeid", "modelid", "swversion")
@@ -187,7 +187,7 @@ def create_bridge_backup(client: HueBridgeClient) -> dict:
     config = source_v1.get("config", {})
     return {
         "backup_schema": BACKUP_SCHEMA,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "source_bridge": {
             key: config.get(key)
             for key in ("name", "bridgeid", "modelid", "swversion", "apiversion")
