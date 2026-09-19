@@ -195,35 +195,42 @@ def extract_enum_evidence(path: Path) -> dict[str, list[str]]:
     return result
 
 
-def extract_enum_instances(objs_path: Path) -> dict[str, list[dict]]:
-    """Recover enum name/value pairs from Blutter's object dump when available."""
-    if not objs_path.exists():
-        return {}
-    text = objs_path.read_text(errors="replace")
+def extract_enum_instances(*paths: Path) -> dict[str, list[dict]]:
+    """Recover enum name/value pairs from Blutter object-pool dumps."""
     result: dict[str, list[dict]] = {}
-    for enum_name in TARGET_ENUMS:
-        items: list[dict] = []
-        # Blutter prints enum objects as Obj!EnumName@... blocks. The generated
-        # ProtobufEnum base stores numeric value and symbolic name in the first
-        # instance fields; accept both field_* and off_* naming across versions.
-        pattern = re.compile(
-            rf"Obj!{re.escape(enum_name)}@[0-9A-Fa-f]+\s*:\s*\{{(.*?)^\}}",
-            re.MULTILINE | re.DOTALL,
-        )
-        for match in pattern.finditer(text):
-            block = match.group(1)
-            value_match = re.search(r"(?:field_8|off_8):\s*(-?\d+)", block)
-            name_match = re.search(r'(?:field_10|off_10):\s*"([^"]+)"', block)
-            if value_match and name_match:
-                item = {
-                    "name": name_match.group(1),
-                    "value": int(value_match.group(1)),
-                }
+    for path in paths:
+        if not path.exists():
+            continue
+        text = path.read_text(errors="replace")
+        for enum_name in TARGET_ENUMS:
+            items = result.setdefault(enum_name, [])
+            pattern = re.compile(
+                rf"Obj!{re.escape(enum_name)}@[0-9A-Fa-f]+\s*:\s*\{{(.*?)^\}}",
+                re.MULTILINE | re.DOTALL,
+            )
+            for match in pattern.finditer(text):
+                block = match.group(1)
+                value_match = re.search(
+                    r"(?:field_8|off_8):\s*(?:int\()?((?:0x)?[0-9A-Fa-f]+)\)?",
+                    block,
+                )
+                name_match = re.search(
+                    r'(?:field_10|off_10):\s*"([^"]+)"',
+                    block,
+                )
+                if not value_match or not name_match:
+                    continue
+                raw_value = value_match.group(1)
+                value = int(raw_value, 16 if raw_value.lower().startswith("0x") else 10)
+                item = {"name": name_match.group(1), "value": value}
                 if item not in items:
                     items.append(item)
-        if items:
-            result[enum_name] = sorted(items, key=lambda item: item["value"])
-    return result
+
+    return {
+        name: sorted(items, key=lambda item: item["value"])
+        for name, items in result.items()
+        if items
+    }
 
 
 def main() -> None:
@@ -248,7 +255,10 @@ def main() -> None:
     messages = parse_message_file(pb)
     rpcs = parse_service_file(grpc)
     enum_evidence = extract_enum_evidence(pbenum)
-    enum_instances = extract_enum_instances(args.blutter_root / "objs.txt")
+    enum_instances = extract_enum_instances(
+        args.blutter_root / "pp.txt",
+        args.blutter_root / "objs.txt",
+    )
 
     evidence = {
         "package": "hue.accounts.v1",
