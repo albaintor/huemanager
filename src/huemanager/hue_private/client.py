@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, Self
 
 import grpc
 
@@ -172,7 +172,7 @@ class HuePrivateBridgeClient:
         if self._owns_channel:
             self._channel.close()
 
-    def __enter__(self) -> HuePrivateBridgeClient:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *_: object) -> None:
