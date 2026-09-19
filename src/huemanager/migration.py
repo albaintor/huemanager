@@ -505,6 +505,7 @@ def audit_bridge(client: HueBridgeClient) -> dict:
         message: str,
         details: Any = None,
         cleanup: dict | None = None,
+        risk_reason: str | None = None,
     ) -> None:
         issues.append(
             {
@@ -515,6 +516,7 @@ def audit_bridge(client: HueBridgeClient) -> dict:
                 "message": message,
                 "details": details,
                 "cleanup": cleanup,
+                "risk_reason": risk_reason,
             }
         )
 
@@ -547,6 +549,15 @@ def audit_bridge(client: HueBridgeClient) -> dict:
                 "resource_id": room_id,
                 "safe": safe,
             },
+            risk_reason=(
+                None
+                if safe
+                else (
+                    "La pièce ne contient aucun appareil, mais elle est encore "
+                    "référencée par des scènes, règles ou automatisations. La supprimer "
+                    "peut laisser ces configurations orphelines ou modifier leur comportement."
+                )
+            ),
         )
 
     for name, room_ids in room_names.items():
@@ -559,6 +570,10 @@ def audit_bridge(client: HueBridgeClient) -> dict:
             title=f"Nom de pièce dupliqué : {name}",
             message=f"{len(room_ids)} pièces utilisent le même nom.",
             details={"room_ids": room_ids},
+            risk_reason=(
+                "Un nom identique n'indique pas quelle pièce est obsolète. "
+                "HueManager ne propose donc aucune suppression automatique."
+            ),
         )
 
     rule_ref_prefixes = (
@@ -608,6 +623,11 @@ def audit_bridge(client: HueBridgeClient) -> dict:
                     "resource_id": rule_id,
                     "safe": False,
                 },
+                risk_reason=(
+                    "Une référence cassée prouve une incohérence, mais la règle peut encore "
+                    "contenir des conditions et actions valides. La supprimer enlèverait la "
+                    "règle entière, pas uniquement la référence invalide."
+                ),
             )
 
     for scene in (
@@ -634,6 +654,11 @@ def audit_bridge(client: HueBridgeClient) -> dict:
                     "resource_id": scene_id,
                     "safe": False,
                 },
+                risk_reason=(
+                    "Le groupe associé n'existe plus, mais cette scène peut encore être "
+                    "appelée par une règle, une automatisation ou une application externe. "
+                    "La suppression retire l'identifiant de scène définitivement."
+                ),
             )
             continue
         if scene.get("actions"):
@@ -660,6 +685,15 @@ def audit_bridge(client: HueBridgeClient) -> dict:
                 "resource_id": scene_id,
                 "safe": safe,
             },
+            risk_reason=(
+                None
+                if safe
+                else (
+                    "La scène est vide mais d'autres ressources la référencent encore. "
+                    "Ces références peuvent être utilisées comme cible ou identifiant par "
+                    "une règle, une automatisation ou une application tierce."
+                )
+            ),
         )
 
     for schedule_id, schedule in v1.get("schedules", {}).items():
@@ -685,6 +719,10 @@ def audit_bridge(client: HueBridgeClient) -> dict:
                 "resource_id": schedule_id,
                 "safe": False,
             },
+            risk_reason=(
+                "Le schedule contient une référence absente, mais son horaire ou d'autres "
+                "commandes peuvent rester utiles. Le supprimer retire toute la planification."
+            ),
         )
 
     for link_id, link in v1.get("resourcelinks", {}).items():
@@ -709,6 +747,11 @@ def audit_bridge(client: HueBridgeClient) -> dict:
                 "resource_id": link_id,
                 "safe": False,
             },
+            risk_reason=(
+                "Les resource links sont souvent des métadonnées créées par iConnectHue "
+                "ou d'autres applications. Même avec un lien cassé, les autres liens "
+                "peuvent encore être utilisés par l'application qui les possède."
+            ),
         )
 
     for instance in (
@@ -747,6 +790,11 @@ def audit_bridge(client: HueBridgeClient) -> dict:
                 "resource_id": instance_id,
                 "safe": False,
             },
+            risk_reason=(
+                "L'automation contient au moins une référence absente, mais d'autres "
+                "branches de sa configuration peuvent encore être valides. La supprimer "
+                "désactive l'automation complète."
+            ),
         )
 
     severity_order = {"error": 0, "warning": 1, "cleanup": 2, "info": 3}
@@ -823,6 +871,89 @@ def delete_audit_issue(
         "issue": issue,
         "bridge_result": result,
     }
+
+
+def delete_audit_issues(
+    client: HueBridgeClient,
+    issue_ids: list[str],
+    *,
+    force_risky: bool = False,
+) -> dict:
+    """Delete several audit findings while revalidating each item before deletion."""
+    unique_ids = list(dict.fromkeys(issue_ids))
+    if not unique_ids:
+        raise MigrationError("Select at least one cleanup item")
+
+    deleted: list[dict] = []
+    skipped: list[dict] = []
+
+    for issue_id in unique_ids:
+        current = audit_bridge(client)
+        issue = next(
+            (candidate for candidate in current["issues"] if candidate["id"] == issue_id),
+            None,
+        )
+        if not issue:
+            skipped.append(
+                {
+                    "id": issue_id,
+                    "reason": "The issue disappeared after a previous cleanup",
+                }
+            )
+            continue
+
+        cleanup = issue.get("cleanup")
+        if not cleanup:
+            skipped.append(
+                {
+                    "id": issue_id,
+                    "title": issue.get("title"),
+                    "reason": "No supported cleanup action",
+                }
+            )
+            continue
+
+        if not cleanup.get("safe") and not force_risky:
+            skipped.append(
+                {
+                    "id": issue_id,
+                    "title": issue.get("title"),
+                    "reason": "Risky cleanup requires explicit confirmation",
+                    "risk_reason": issue.get("risk_reason"),
+                }
+            )
+            continue
+
+        try:
+            result = delete_audit_issue(
+                client,
+                issue_id,
+                force=force_risky,
+            )
+        except MigrationError as exc:
+            skipped.append(
+                {
+                    "id": issue_id,
+                    "title": issue.get("title"),
+                    "reason": str(exc),
+                }
+            )
+            continue
+        deleted.append(
+            {
+                "id": issue_id,
+                "title": issue.get("title"),
+                "safe": bool(cleanup.get("safe")),
+                "bridge_result": result.get("bridge_result"),
+            }
+        )
+
+    return {
+        "requested": len(unique_ids),
+        "deleted": deleted,
+        "skipped": skipped,
+    }
+
 
 def inventory_tree(client: HueBridgeClient) -> dict:
     resources = client.v2_resources()
