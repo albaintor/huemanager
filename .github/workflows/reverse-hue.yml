@@ -23,28 +23,35 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Fetch exact Hue APKs
+      - name: Fetch exact Hue arm64 APKS bundles
         run: |
-          python tools/reverse_hue/fetch_apk.py 5.56.0 work/Hue-5.56.0.apk
-          python tools/reverse_hue/fetch_apk.py 5.57.0 work/Hue-5.57.0.apk
+          python tools/reverse_hue/fetch_apks.py 5.56.0 work/Hue-5.56.0.zip
+          python tools/reverse_hue/fetch_apks.py 5.57.0 work/Hue-5.57.0.zip
 
-      - name: Verify and extract Flutter AOT libraries
+      - name: Extract Flutter AOT libraries from arm64 split
         run: |
           set -euxo pipefail
           for version in 5.56.0 5.57.0; do
-            mkdir -p "work/$version"
-            unzip -q "work/Hue-$version.apk" \
-              "lib/arm64-v8a/libapp.so" \
-              "lib/arm64-v8a/libflutter.so" \
-              -d "work/$version"
-            file "work/$version/lib/arm64-v8a/libapp.so"
-            sha256sum "work/$version/lib/arm64-v8a/libapp.so"
+            bundle="work/bundle-$version"
+            out="work/$version"
+            mkdir -p "$bundle" "$out"
+            unzip -q "work/Hue-$version.zip" -d "$bundle"
+            arm64_split="$(find "$bundle" -type f \( -name 'config.arm64_v8a.apk' -o -name 'config.arm64_v8a' \) -print -quit)"
+            test -n "$arm64_split"
+            echo "arm64 split: $arm64_split"
+            unzip -l "$arm64_split" | grep -E 'lib/(arm64-v8a/)?(libapp|libflutter)\.so'
+            unzip -q "$arm64_split"               "lib/arm64-v8a/libapp.so"               "lib/arm64-v8a/libflutter.so"               -d "$out"
+            file "$out/lib/arm64-v8a/libapp.so"
+            sha256sum "$out/lib/arm64-v8a/libapp.so"
+            strings "$out/lib/arm64-v8a/libapp.so" | grep -E -m 20               'StartDeviceMigrationRequest|CreateBridgeMergeJobRequest|CreateMigrateBridgeJobRequest|BridgeService' || true
           done
 
       - name: Install DAE Dart AOT analyzer
         run: cargo install dae-rs --locked
 
       - name: Dump Dart snapshots
+        env:
+          DAE_LANG: en
         run: |
           set -euxo pipefail
           dae work/5.56.0/lib/arm64-v8a/libapp.so work/dae-5.56.0
@@ -52,11 +59,10 @@ jobs:
 
       - name: Recover protobuf candidate descriptors
         run: |
-          python tools/reverse_hue/extract_proto_candidates.py \
-            --old work/dae-5.56.0 \
-            --new work/dae-5.57.0 \
-            --output reverse-output
+          python tools/reverse_hue/extract_proto_candidates.py             --old work/dae-5.56.0             --new work/dae-5.57.0             --output reverse-output
           cat reverse-output/summary.md
+          echo "===== 5.57.0 target neighborhoods (first 600 lines) ====="
+          sed -n '1,600p' reverse-output/5.57.0-neighborhoods.txt
 
       - name: Upload textual RE results
         uses: actions/upload-artifact@v4
