@@ -10,9 +10,9 @@ from huemanager.migration import (
     _device_identifiers,
     build_mapping_plan,
     delete_empty_room,
-    room_deletion_impact,
     rewrite_behavior_configuration,
     rewrite_rule,
+    room_deletion_impact,
 )
 
 
