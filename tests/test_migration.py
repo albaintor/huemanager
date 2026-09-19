@@ -11,6 +11,7 @@ from huemanager.migration import (
     audit_bridge,
     build_mapping_plan,
     delete_audit_issue,
+    delete_audit_issues,
     delete_empty_room,
     rewrite_behavior_configuration,
     rewrite_rule,
@@ -674,3 +675,29 @@ def test_bridge_audit_finds_safe_and_broken_cleanup_candidates():
     result = delete_audit_issue(client, safe_rule["id"])
     assert result["deleted"]
     assert ("v1", "/rules/1") in client.deleted
+
+    broken_rule = next(
+        issue for issue in audit["issues"] if issue["kind"] == "rule_broken_refs"
+    )
+    assert broken_rule["risk_reason"]
+
+    batch_client = FakeClient()
+    batch = delete_audit_issues(
+        batch_client,
+        [safe_rule["id"], broken_rule["id"]],
+    )
+    assert len(batch["deleted"]) == 1
+    assert batch["deleted"][0]["id"] == safe_rule["id"]
+    assert len(batch["skipped"]) == 1
+    assert batch["skipped"][0]["id"] == broken_rule["id"]
+    assert batch["skipped"][0]["risk_reason"]
+    assert ("v1", "/rules/1") in batch_client.deleted
+
+    forced_client = FakeClient()
+    forced = delete_audit_issues(
+        forced_client,
+        [broken_rule["id"]],
+        force_risky=True,
+    )
+    assert len(forced["deleted"]) == 1
+    assert ("v1", "/rules/2") in forced_client.deleted
