@@ -41,6 +41,17 @@ jobs:
       - name: Build package
         run: python -m pip wheel --no-deps -w dist .
 
+      - name: Verify web UI is packaged
+        run: |
+          python - <<'PY'
+          import glob
+          import zipfile
+
+          wheel = glob.glob("dist/*.whl")[0]
+          with zipfile.ZipFile(wheel) as archive:
+              assert "huemanager/webapp/index.html" in archive.namelist()
+          PY
+
   docker:
     name: Docker multi-arch
     needs: [test]
