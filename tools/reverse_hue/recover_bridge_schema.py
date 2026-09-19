@@ -224,6 +224,7 @@ def main() -> None:
         "messages": messages,
         "rpcs": rpcs,
         "enum_classes_found": sorted(enum_evidence),
+        "enums": enum_instances,
     }
     (args.output / "bridge-migration-evidence.json").write_text(
         json.dumps(evidence, indent=2, sort_keys=True) + "\n"
