@@ -1,0 +1,67 @@
+name: Hue reverse engineering
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - reverse-engineering/protobuf
+    paths:
+      - ".github/workflows/reverse-hue.yml"
+      - "tools/reverse_hue/**"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch exact Hue APKs
+        run: |
+          python tools/reverse_hue/fetch_apk.py 5.56.0 work/Hue-5.56.0.apk
+          python tools/reverse_hue/fetch_apk.py 5.57.0 work/Hue-5.57.0.apk
+
+      - name: Verify and extract Flutter AOT libraries
+        run: |
+          set -euxo pipefail
+          for version in 5.56.0 5.57.0; do
+            mkdir -p "work/$version"
+            unzip -q "work/Hue-$version.apk" \
+              "lib/arm64-v8a/libapp.so" \
+              "lib/arm64-v8a/libflutter.so" \
+              -d "work/$version"
+            file "work/$version/lib/arm64-v8a/libapp.so"
+            sha256sum "work/$version/lib/arm64-v8a/libapp.so"
+          done
+
+      - name: Install DAE Dart AOT analyzer
+        run: cargo install dae-rs --locked
+
+      - name: Dump Dart snapshots
+        run: |
+          set -euxo pipefail
+          dae work/5.56.0/lib/arm64-v8a/libapp.so work/dae-5.56.0
+          dae work/5.57.0/lib/arm64-v8a/libapp.so work/dae-5.57.0
+
+      - name: Recover protobuf candidate descriptors
+        run: |
+          python tools/reverse_hue/extract_proto_candidates.py \
+            --old work/dae-5.56.0 \
+            --new work/dae-5.57.0 \
+            --output reverse-output
+          cat reverse-output/summary.md
+
+      - name: Upload textual RE results
+        uses: actions/upload-artifact@v4
+        with:
+          name: hue-protobuf-reverse
+          path: reverse-output/
+          if-no-files-found: error
+          retention-days: 7
