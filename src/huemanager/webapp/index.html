@@ -347,6 +347,7 @@
         const checkbox = document.createElement("input");
         checkbox.type = "checkbox";
         checkbox.setAttribute("aria-label", `Sélectionner ${issue.title}`);
+        checkbox.dataset.issueId = issue.id;
         checkbox.addEventListener("change", () => {
           if (checkbox.checked) {
             state.auditSelected.add(issue.id);
@@ -443,11 +444,7 @@
     }
     const selectedIds = state.auditSelected;
     for (const checkbox of $("auditIssues").querySelectorAll('input[type="checkbox"]')) {
-      const box = checkbox.closest(".audit-issue");
-      const issue = (state.audit?.issues || []).find(candidate =>
-        box?.querySelector("h3")?.textContent === candidate.title
-      );
-      checkbox.checked = Boolean(issue && selectedIds.has(issue.id));
+      checkbox.checked = selectedIds.has(checkbox.dataset.issueId);
     }
     updateAuditSelectionControls();
   }
