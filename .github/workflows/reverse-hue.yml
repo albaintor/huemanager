@@ -91,7 +91,7 @@ jobs:
             cp "$file" "reverse-output/reconstructed/$rel"
           done < <(
             find work/blutter-5.57.0/asm -type f | grep -E \
-              '(hue/accounts/v1/bridge\.(pb|pbenum|pbgrpc)\.dart|remote_bridge_client\.dart|grpc_request_utils\.dart|grpc_request_metadata_provider\.dart|authorization_token_resolver\.dart|move_data_to_target_bridge\.dart|bridge_backup_and_restore/.*/(actions|middleware).*\.dart)'
+              '(hue/accounts/v1/bridge\.(pb|pbenum|pbgrpc)\.dart|remote_bridge_client\.dart|grpc_request_utils\.dart|grpc_request_metadata_provider\.dart|authorization_token_resolver\.dart|move_data_to_target_bridge\.dart|bridge_migration_service\.dart|bridge_backup_and_restore/.*/(actions|middleware).*\.dart)'
           )
 
           grep -n -B 8 -A 12 -E \
@@ -112,6 +112,17 @@ jobs:
             'eligibleDevices|determineDevicesEligibleForDeviceMigration|StartDeviceMigrationActionParams|StartBridgeMergeDeviceMigrationActionParams' \
             work/blutter-5.57.0/asm/bridge_backup_and_restore \
             > reverse-output/orchestration/eligible-devices.txt || true
+
+          grep -R -l -E \
+            'DeviceMigrationStartedAction|BridgeMergeDeviceMigrationStartedAction|eligibleDevices' \
+            work/blutter-5.57.0/asm/bridge_backup_and_restore \
+            > reverse-output/orchestration/device-migration-consumer-files.txt || true
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            rel="${file#work/blutter-5.57.0/asm/}"
+            mkdir -p "reverse-output/consumers/$(dirname "$rel")"
+            cp "$file" "reverse-output/consumers/$rel"
+          done < reverse-output/orchestration/device-migration-consumer-files.txt
 
           grep -R -n -C 30 -E \
             'authorization|Bearer|CallOptions|metadata|ClientChannel|api.account.meethue.com' \
