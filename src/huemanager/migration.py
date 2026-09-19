@@ -721,10 +721,13 @@ def audit_bridge(client: HueBridgeClient) -> dict:
             continue
         raw_refs = _raw_v2_resource_refs(instance.get("configuration", {}))
         missing = sorted(
-            {"rid": rid, "rtype": rtype}
-            for rid, rtype in raw_refs
-            if rid not in by_id
-        , key=lambda item: (item["rtype"], item["rid"]))
+            (
+                {"rid": rid, "rtype": rtype}
+                for rid, rtype in raw_refs
+                if rid not in by_id
+            ),
+            key=lambda item: (item["rtype"], item["rid"]),
+        )
         script_id = instance.get("script_id")
         if isinstance(script_id, str) and script_id not in by_id:
             missing.append({"rid": script_id, "rtype": "behavior_script"})
