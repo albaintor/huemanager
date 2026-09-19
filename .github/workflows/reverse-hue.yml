@@ -8,6 +8,9 @@ on:
     paths:
       - ".github/workflows/reverse-hue.yml"
       - "tools/reverse_hue/**"
+      - "src/huemanager/hue_private/**"
+      - "tests/test_hue_private_proto.py"
+      - "pyproject.toml"
 
 permissions:
   contents: read
@@ -110,6 +113,12 @@ jobs:
             'authorization|Bearer|CallOptions|metadata|ClientChannel|api.account.meethue.com' \
             work/blutter-5.57.0/asm/account_management \
             > reverse-output/orchestration/grpc-auth.txt || true
+
+      - name: Verify Hue private client in project
+        run: |
+          python -m pip install -e '.[dev]'
+          ruff check src tests
+          pytest -q
 
       - name: Upload textual RE results
         uses: actions/upload-artifact@v4
