@@ -6,6 +6,8 @@ from huemanager.migration import (
     _create_schedules,
     _device_identifiers,
     build_mapping_plan,
+    delete_empty_room,
+    room_deletion_impact,
     rewrite_behavior_configuration,
     rewrite_rule,
 )
@@ -470,3 +472,111 @@ def test_entertainment_configuration_restore_remaps_services():
         == "service-dest"
     )
     assert plan.v2_map["ent-source"]["id"] == "ent-dest"
+
+
+
+def test_empty_room_deletion_reports_dependencies_and_requires_confirmation():
+    class FakeClient:
+        def __init__(self):
+            self.deleted = None
+
+        def v2_resources(self):
+            return [
+                {
+                    "id": "room-empty",
+                    "type": "room",
+                    "id_v1": "/groups/7",
+                    "metadata": {"name": "Ancienne pièce"},
+                    "children": [],
+                },
+                {
+                    "id": "scene-old",
+                    "type": "scene",
+                    "metadata": {"name": "Old scene"},
+                    "group": {"rid": "room-empty", "rtype": "room"},
+                },
+                {
+                    "id": "automation-old",
+                    "type": "behavior_instance",
+                    "metadata": {"name": "Old automation"},
+                    "configuration": {
+                        "where": [{"group": {"rid": "room-empty", "rtype": "room"}}]
+                    },
+                },
+            ]
+
+        def v1_all(self):
+            return {
+                "rules": {
+                    "4": {
+                        "name": "Old rule",
+                        "conditions": [],
+                        "actions": [
+                            {
+                                "address": "/groups/7/action",
+                                "method": "PUT",
+                                "body": {"on": False},
+                            }
+                        ],
+                    }
+                },
+                "schedules": {},
+                "resourcelinks": {},
+            }
+
+        def v2_delete(self, resource_type, resource_id):
+            self.deleted = (resource_type, resource_id)
+            return []
+
+    client = FakeClient()
+    impact = room_deletion_impact(client, "room-empty")
+
+    assert impact["empty"]
+    assert impact["has_dependencies"]
+    assert impact["dependency_count"] == 3
+    assert len(impact["dependencies"]["scenes"]) == 1
+    assert len(impact["dependencies"]["rules"]) == 1
+    assert len(impact["dependencies"]["automations_v2"]) == 1
+
+    try:
+        delete_empty_room(client, "room-empty")
+    except Exception as exc:
+        assert "still referenced" in str(exc)
+    else:
+        raise AssertionError("dependency confirmation should be required")
+
+    result = delete_empty_room(
+        client,
+        "room-empty",
+        confirm_dependencies=True,
+    )
+    assert result["deleted"]
+    assert client.deleted == ("room", "room-empty")
+
+
+def test_room_deletion_refuses_room_with_devices():
+    class FakeClient:
+        def v2_resources(self):
+            return [
+                {
+                    "id": "room-live",
+                    "type": "room",
+                    "metadata": {"name": "Salon"},
+                    "children": [{"rid": "device-1", "rtype": "device"}],
+                },
+                {
+                    "id": "device-1",
+                    "type": "device",
+                    "services": [],
+                },
+            ]
+
+        def v1_all(self):
+            return {"rules": {}, "schedules": {}, "resourcelinks": {}}
+
+        def v2_delete(self, resource_type, resource_id):
+            raise AssertionError("must not delete a non-empty room")
+
+    impact = room_deletion_impact(FakeClient(), "room-live")
+    assert not impact["empty"]
+    assert impact["devices"] == 1
