@@ -304,6 +304,14 @@ complete.
 L'onglet **Gestion** analyse un Bridge sans le modifier et détecte notamment les pièces vides,
 les règles sans action, les références v1/v2 cassées, les scènes vides/orphelines, les schedules
 et resource links incohérents ainsi que les automations v2 qui ciblent des ressources absentes.
-Les suppressions sont individuelles. Les candidats à faible risque sont distingués des suppressions
-qui nécessitent une confirmation explicite.
+
+Chaque anomalie indique si le nettoyage est considéré à faible risque ou s'il nécessite une
+confirmation explicite. Pour les suppressions risquées, HueManager explique la raison : ressource
+encore référencée, règle partiellement valide, automation comportant encore des branches utiles,
+métadonnées potentiellement détenues par une application tierce, etc.
+
+Plusieurs éléments peuvent être sélectionnés en même temps, avec **Tout sélectionner** et
+**Tout désélectionner**, puis supprimés en une seule opération. Avant chaque suppression du lot,
+HueManager relance l'audit : si une anomalie a disparu ou changé à la suite d'un nettoyage précédent,
+elle est ignorée plutôt que supprimée sur la base d'un état devenu obsolète.
 
