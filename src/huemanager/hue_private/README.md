@@ -55,3 +55,24 @@ and into `BridgeMergeState.eligibleForDeviceMigration`. This supports UI,
 progress accounting, and post-migration reconstruction, but changing that Set
 alone cannot change the wire request because no device list is serialized into
 the recovered gRPC calls.
+
+## Local bridge clients
+
+The migration-specific local bridge clients recovered from Hue 5.57.0 are
+read-only:
+
+- `BridgeMigrationClient.fetchBridgeResource()` queues
+  `BridgeLib.fetchBridgeResource()`, which performs a CLIP v2 `GET` on
+  `resource/bridge`.
+- `BridgeMergeClient.fetchDeviceResourceLimits()` performs a CLIP v1 `GET`
+  on `capabilities` and parses the light/sensor resource limits.
+
+No migration/import write operation and no device-id collection is present in
+either client. The generic `BridgeLib` implementation confirms that
+`fetchBridgeResource()` is only a `GET resource/bridge` request.
+
+This narrows the effective migration trigger further: the recovered app-side
+local clients do not submit the eligible-device Set to the source or target
+bridge. Device filtering therefore has to be encoded in server-side job state,
+performed by the bridge firmware/cloud service from the migration backup, or
+implemented by another component not reached by the recovered app flow.
