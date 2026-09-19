@@ -36,7 +36,7 @@ from .migration import (
     save_snapshot,
 )
 
-app = FastAPI(title="HueManager", version="0.5.0")
+app = FastAPI(title="HueManager", version="0.5.1")
 SNAPSHOT_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 BACKUP_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 
