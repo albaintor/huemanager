@@ -91,7 +91,7 @@ jobs:
             cp "$file" "reverse-output/reconstructed/$rel"
           done < <(
             find work/blutter-5.57.0/asm -type f | grep -E \
-              '(hue/accounts/v1/bridge\.(pb|pbenum|pbgrpc)\.dart|remote_bridge_client\.dart|grpc_request_utils\.dart|grpc_request_metadata_provider\.dart|authorization_token_resolver\.dart|move_data_to_target_bridge\.dart|bridge_migration_service\.dart|bridge_backup_and_restore/.*/(actions|middleware|client).*\.dart)'
+              '(hue/accounts/v1/bridge\.(pb|pbenum|pbgrpc)\.dart|remote_bridge_client\.dart|grpc_request_utils\.dart|grpc_request_metadata_provider\.dart|authorization_token_resolver\.dart|move_data_to_target_bridge\.dart|bridge_migration_service\.dart|bridge_backup_and_restore/.*/(actions|middleware|client).*\.dart|bridge_control/src/(bridge_lib|bridge_client|bridges_client)\.dart)'
           )
 
           grep -n -B 8 -A 12 -E \
@@ -117,6 +117,11 @@ jobs:
             'BridgeMigrationClient|BridgeMergeClient|createBridgeBackupJob|CreateBridgeBackupJob|backupJobId|bridgeResourceUuid|fetchBridgeResource|device_migration|device migration' \
             work/blutter-5.57.0/asm/bridge_backup_and_restore \
             > reverse-output/orchestration/backup-and-local-clients.txt || true
+
+          grep -R -n -C 40 -E \
+            'fetchBridgeResource|makeBridgeClipV1Request|migration|merge|backup|import|device_migration|zigbee|hardwareAddress' \
+            work/blutter-5.57.0/asm/bridge_control/src/bridge_lib.dart \
+            > reverse-output/orchestration/bridge-lib-migration-calls.txt || true
 
           grep -R -l -E \
             'DeviceMigrationStartedAction|BridgeMergeDeviceMigrationStartedAction|eligibleDevices' \
