@@ -141,7 +141,6 @@ def test_rewrite_rule_without_pruning_blocks_external_reference():
     assert "/sensors/99" in unresolved
 
 
-
 def test_rewrite_behavior_graph_maps_uuid_keys_and_nested_resources():
     configuration = {
         "device": {"rtype": "device", "rid": "device-source"},
@@ -268,7 +267,6 @@ def test_device_identifiers_exposes_mac_and_uniqueid_but_not_fake_serial():
     assert not identifiers["pairing_serial_available"]
 
 
-
 def test_rewrite_behavior_graph_does_not_broaden_empty_items_scope():
     configuration = {
         "where": [
@@ -290,7 +288,6 @@ def test_rewrite_behavior_graph_does_not_broaden_empty_items_scope():
     assert not unresolved
     assert rewritten is None
     assert any(item["rid"] == "light-external" for item in pruned)
-
 
 
 def test_full_backup_redacts_bridge_api_users():
@@ -404,7 +401,6 @@ def test_schedule_restore_rewrites_api_user_and_resource_ids():
     assert mapping == {"/schedules/2": "/schedules/8"}
     assert client.created["command"]["address"] == "/api/new-api-user/groups/30/action"
     assert client.created["command"]["body"]["scene"] == "new-scene"
-
 
 
 def test_entertainment_configuration_restore_remaps_services():
