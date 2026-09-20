@@ -45,7 +45,7 @@ struct ContentView: View {
             )
             LabeledContent("Maisons détectées", value: "\(model.homes.count)")
 
-            Button("Recharger les données Maison") {
+            Button("Actualiser les données Maison") {
                 model.reloadHomeKit()
             }
 
