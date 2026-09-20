@@ -207,12 +207,27 @@ def _apple_accessory_origin(accessory: dict) -> str:
     manufacturer = str(accessory.get("manufacturer") or "").strip()
     model = str(accessory.get("model") or "").strip()
     name = str(accessory.get("name") or "").strip()
+    bridge_name = str(accessory.get("bridge_name") or "").strip()
+    bridge_manufacturer = str(accessory.get("bridge_manufacturer") or "").strip()
+    bridge_model = str(accessory.get("bridge_model") or "").strip()
 
-    haystack = f"{manufacturer} {model} {name}".lower()
-    if any(hint in haystack for hint in HUE_ACCESSORY_HINTS):
-        if "bridge" in haystack:
+    own_haystack = f"{manufacturer} {model} {name}".lower()
+    bridge_haystack = f"{bridge_manufacturer} {bridge_model} {bridge_name}".lower()
+
+    # The strongest signal for third-party Hue-compatible devices is that
+    # HomeKit explicitly exposes them behind a Hue bridge.
+    if any(hint in bridge_haystack for hint in HUE_ACCESSORY_HINTS):
+        return "hue"
+
+    if any(hint in own_haystack for hint in HUE_ACCESSORY_HINTS):
+        if "bridge" in own_haystack:
             return "hue_bridge"
         return "hue"
+
+    # A bridged accessory behind a clearly non-Hue bridge is outside this
+    # Hue-focused synchronization scope, regardless of its own manufacturer.
+    if accessory.get("is_bridged") and bridge_manufacturer:
+        return "other"
     if manufacturer:
         return "other"
     return "unknown"
@@ -530,6 +545,11 @@ def build_apple_home_sync_plan(
             "manufacturer": accessory.get("manufacturer"),
             "model": accessory.get("model"),
             "serial_number": accessory.get("serial_number"),
+            "is_bridged": bool(accessory.get("is_bridged")),
+            "bridge_id": accessory.get("bridge_id"),
+            "bridge_name": accessory.get("bridge_name"),
+            "bridge_manufacturer": accessory.get("bridge_manufacturer"),
+            "bridge_model": accessory.get("bridge_model"),
             "origin": _apple_accessory_origin(accessory),
         }
         for accessory in accessories
@@ -591,6 +611,11 @@ def build_apple_home_sync_plan(
                 "name": accessory.get("name"),
                 "manufacturer": accessory.get("manufacturer"),
                 "model": accessory.get("model"),
+                "is_bridged": bool(accessory.get("is_bridged")),
+                "bridge_id": accessory.get("bridge_id"),
+                "bridge_name": accessory.get("bridge_name"),
+                "bridge_manufacturer": accessory.get("bridge_manufacturer"),
+                "bridge_model": accessory.get("bridge_model"),
                 "origin": (
                     "hue"
                     if str(accessory.get("id") or "") in matched_device_by_apple_id
