@@ -84,8 +84,7 @@ struct ContentView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(minWidth: 720, minHeight: 520)
-        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {
             model.start()
         }
