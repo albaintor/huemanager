@@ -40,6 +40,12 @@ jobs:
         working-directory: ios/HueManagerHomeSync
         run: xcodegen generate
 
+      - name: Verify HomeKit target capability
+        working-directory: ios/HueManagerHomeSync
+        run: |
+          python3 Scripts/fix_homekit_capability.py             HueManagerHomeSync.xcodeproj/project.pbxproj --check
+          grep -n -A8 -B4 "SystemCapabilities"             HueManagerHomeSync.xcodeproj/project.pbxproj
+
       - name: Build iOS app without signing
         working-directory: ios/HueManagerHomeSync
         run: |
