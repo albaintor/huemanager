@@ -30,8 +30,6 @@ targets:
         MARKETING_VERSION: "0.7.0"
         CURRENT_PROJECT_VERSION: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-    entitlements:
-      path: HueManagerHomeSync.entitlements
 schemes:
   HueManagerHomeSync:
     build:
