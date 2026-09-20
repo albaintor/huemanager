@@ -986,6 +986,63 @@ def test_apple_home_device_matching_rejects_room_prefix_false_positive_and_class
     assert room_accessories["denon"]["origin"] == "other"
 
 
+def test_apple_home_includes_third_party_accessory_when_exposed_by_hue_bridge():
+    hue_tree = {
+        "rooms": [
+            {
+                "id": "hue-room",
+                "name": "Salon",
+                "devices": [
+                    {
+                        "id": "hue-innr",
+                        "name": "Lampe canapé",
+                        "identifiers": {
+                            "zigbee_macs": [],
+                            "v1_uniqueids": [],
+                            "pairing_fields": [],
+                        },
+                    }
+                ],
+            }
+        ]
+    }
+    inventory = {
+        "home": {"id": "home-1", "name": "Maison"},
+        "rooms": [{"id": "apple-room", "name": "Salon"}],
+        "accessories": [
+            {
+                "id": "innr",
+                "name": "Lampe canapé",
+                "manufacturer": "Innr Lighting BV",
+                "model": "RB 285 C",
+                "serial_number": None,
+                "is_bridged": True,
+                "bridge_id": "hue-bridge",
+                "bridge_name": "Hue Bridge Pro",
+                "bridge_manufacturer": "Signify Netherlands B.V.",
+                "bridge_model": "BSB003",
+                "room_id": "apple-room",
+                "room_name": "Salon",
+            }
+        ],
+    }
+
+    plan = build_apple_home_sync_plan(
+        hue_tree,
+        inventory,
+        room_map={"hue-room": "apple-room"},
+    )
+
+    device = plan["devices"][0]
+    assert device["status"] == "already_correct"
+    assert device["apple_accessory_id"] == "innr"
+
+    accessory = plan["rooms"][0]["apple_accessories"][0]
+    assert accessory["origin"] == "hue"
+    assert accessory["manufacturer"] == "Innr Lighting BV"
+    assert accessory["bridge_name"] == "Hue Bridge Pro"
+
+
 def test_apple_home_matching_never_reuses_the_same_apple_accessory():
     hue_tree = {
         "rooms": [
