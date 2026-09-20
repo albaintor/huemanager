@@ -11,6 +11,8 @@ struct SyncMove: Codable, Identifiable {
     let toRoomName: String
     let hueDeviceID: String
     let hueDeviceName: String
+    let hueRoomID: String?
+    let hueRoomName: String?
     let matchMethod: String
     let roomMatchMethod: String?
     let roomMatchConfidence: Double?
@@ -26,6 +28,8 @@ struct SyncMove: Codable, Identifiable {
         case toRoomName = "to_room_name"
         case hueDeviceID = "hue_device_id"
         case hueDeviceName = "hue_device_name"
+        case hueRoomID = "hue_room_id"
+        case hueRoomName = "hue_room_name"
         case matchMethod = "match_method"
         case roomMatchMethod = "room_match_method"
         case roomMatchConfidence = "room_match_confidence"
@@ -52,7 +56,92 @@ struct SyncSummary: Codable {
     }
 }
 
+struct SyncRoomHueDevice: Codable, Identifiable {
+    let id: String
+    let name: String
+    let status: String
+    let matchMethod: String?
+    let appleAccessoryID: String?
+    let appleAccessoryName: String?
+    let appleCurrentRoomID: String?
+    let appleCurrentRoomName: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case status
+        case matchMethod = "match_method"
+        case appleAccessoryID = "apple_accessory_id"
+        case appleAccessoryName = "apple_accessory_name"
+        case appleCurrentRoomID = "apple_current_room_id"
+        case appleCurrentRoomName = "apple_current_room_name"
+    }
+}
+
+struct SyncRoomAppleAccessory: Codable, Identifiable {
+    let id: String
+    let name: String
+    let manufacturer: String?
+    let model: String?
+    let matchedHueDeviceID: String?
+    let matchedHueDeviceName: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case manufacturer
+        case model
+        case matchedHueDeviceID = "matched_hue_device_id"
+        case matchedHueDeviceName = "matched_hue_device_name"
+    }
+}
+
+struct SyncRoomImpact: Codable {
+    let hueDeviceCount: Int
+    let appleAccessoryCount: Int
+    let moveCount: Int
+    let alreadyCorrectCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case hueDeviceCount = "hue_device_count"
+        case appleAccessoryCount = "apple_accessory_count"
+        case moveCount = "move_count"
+        case alreadyCorrectCount = "already_correct_count"
+    }
+}
+
+struct SyncRoomPlan: Codable, Identifiable {
+    let hueRoomID: String
+    let hueRoomName: String
+    let appleRoomID: String?
+    let appleRoomName: String?
+    let method: String?
+    let confidence: Double?
+    let status: String
+    let hueDevices: [SyncRoomHueDevice]?
+    let appleAccessories: [SyncRoomAppleAccessory]?
+    let plannedMoves: [SyncMove]?
+    let impact: SyncRoomImpact?
+
+    var id: String { hueRoomID }
+
+    enum CodingKeys: String, CodingKey {
+        case hueRoomID = "hue_room_id"
+        case hueRoomName = "hue_room_name"
+        case appleRoomID = "apple_room_id"
+        case appleRoomName = "apple_room_name"
+        case method
+        case confidence
+        case status
+        case hueDevices = "hue_devices"
+        case appleAccessories = "apple_accessories"
+        case plannedMoves = "planned_moves"
+        case impact
+    }
+}
+
 private struct SyncPlan: Codable {
+    let rooms: [SyncRoomPlan]?
     let actions: [SyncMove]
     let summary: SyncSummary
 }
@@ -143,6 +232,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
 
     @Published private(set) var homes: [HMHome] = []
     @Published private(set) var moves: [SyncMove] = []
+    @Published private(set) var roomPlans: [SyncRoomPlan] = []
     @Published private(set) var planSummary: SyncSummary?
     @Published private(set) var status = "En attente de l’autorisation Apple Maison…"
     @Published private(set) var hasError = false
@@ -514,6 +604,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
                 path: "/api/bridges/\(encodedBridge)/apple-home/plan"
             )
             let plan = try JSONDecoder().decode(SyncPlan.self, from: data)
+            roomPlans = plan.rooms ?? []
             moves = plan.actions
             planSummary = plan.summary
             status = plan.actions.isEmpty
