@@ -7,6 +7,9 @@ options:
   preGenCommand: >-
     xcrun --sdk macosx swift Scripts/generate_app_icon.swift
     Sources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png
+  postGenCommand: >-
+    python3 Scripts/fix_homekit_capability.py
+    HueManagerHomeSync.xcodeproj/project.pbxproj
 settings:
   base:
     SWIFT_VERSION: 5.10
