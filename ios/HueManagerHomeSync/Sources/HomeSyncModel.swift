@@ -143,8 +143,59 @@ struct SyncRoomPlan: Codable, Identifiable {
 
 private struct SyncPlan: Codable {
     let rooms: [SyncRoomPlan]?
+    let devices: [SyncDeviceRow]?
     let actions: [SyncMove]
     let summary: SyncSummary
+}
+
+struct BridgeInfo: Codable, Identifiable, Hashable {
+    let name: String
+    let host: String
+    let verifyTLS: Bool?
+
+    var id: String { name }
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case host
+        case verifyTLS = "verify_tls"
+    }
+}
+
+private struct BridgesResponse: Codable {
+    let bridges: [BridgeInfo]
+}
+
+struct SyncDeviceRow: Codable, Identifiable {
+    let hueDeviceID: String
+    let hueDeviceName: String
+    let hueRoomID: String
+    let hueRoomName: String?
+    let appleAccessoryID: String?
+    let appleAccessoryName: String?
+    let appleRoomID: String?
+    let appleRoomName: String?
+    let desiredAppleRoomID: String?
+    let desiredAppleRoomName: String?
+    let status: String
+    let matchMethod: String?
+
+    var id: String { hueDeviceID }
+
+    enum CodingKeys: String, CodingKey {
+        case hueDeviceID = "hue_device_id"
+        case hueDeviceName = "hue_device_name"
+        case hueRoomID = "hue_room_id"
+        case hueRoomName = "hue_room_name"
+        case appleAccessoryID = "apple_accessory_id"
+        case appleAccessoryName = "apple_accessory_name"
+        case appleRoomID = "apple_room_id"
+        case appleRoomName = "apple_room_name"
+        case desiredAppleRoomID = "desired_apple_room_id"
+        case desiredAppleRoomName = "desired_apple_room_name"
+        case status
+        case matchMethod = "match_method"
+    }
 }
 
 private struct HealthResponse: Codable {
@@ -232,6 +283,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     }
 
     @Published private(set) var homes: [HMHome] = []
+    @Published private(set) var bridges: [BridgeInfo] = []
     @Published private(set) var moves: [SyncMove] = []
     @Published private(set) var roomPlans: [SyncRoomPlan] = []
     @Published private(set) var planSummary: SyncSummary?
@@ -283,6 +335,11 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
             hasError = false
         }
         configureAutomaticSync()
+        if !serverURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Task {
+                await loadBridges()
+            }
+        }
     }
 
     nonisolated func homeManagerDidUpdateHomes(_ manager: HMHomeManager) {
@@ -566,6 +623,22 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         return try await responseData(for: request)
     }
 
+    func loadBridges() async {
+        do {
+            let data = try await get(path: "/api/bridges")
+            let response = try JSONDecoder().decode(BridgesResponse.self, from: data)
+            bridges = response.bridges.sorted {
+                $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
+
+            if bridgeProfile.isEmpty || !bridges.contains(where: { $0.name == bridgeProfile }) {
+                bridgeProfile = bridges.first?.name ?? ""
+            }
+        } catch {
+            bridges = []
+        }
+    }
+
     func testConnection() async {
         do {
             status = "Connexion à HueManager…"
@@ -573,6 +646,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
             let health = try JSONDecoder().decode(HealthResponse.self, from: data)
             status = "HueManager \(health.version) accessible."
             hasError = false
+            await loadBridges()
         } catch {
             status = error.localizedDescription
             hasError = true
@@ -601,6 +675,85 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         }
     }
 
+    private func enrichedRoomPlans(
+        _ rooms: [SyncRoomPlan],
+        devices: [SyncDeviceRow],
+        moves: [SyncMove]
+    ) -> [SyncRoomPlan] {
+        guard let home = selectedHome else { return rooms }
+
+        let homeAccessoriesByRoom = Dictionary(
+            grouping: home.accessories,
+            by: { $0.room?.uniqueIdentifier.uuidString ?? "" }
+        )
+        let devicesByRoom = Dictionary(grouping: devices, by: { $0.hueRoomID })
+        let movesByRoom = Dictionary(grouping: moves, by: { $0.hueRoomID ?? "" })
+
+        return rooms.map { room in
+            let deviceRows = devicesByRoom[room.hueRoomID] ?? []
+            let hueDevices = room.hueDevices ?? deviceRows.map { row in
+                SyncRoomHueDevice(
+                    id: row.hueDeviceID,
+                    name: row.hueDeviceName,
+                    status: row.status,
+                    matchMethod: row.matchMethod,
+                    appleAccessoryID: row.appleAccessoryID,
+                    appleAccessoryName: row.appleAccessoryName,
+                    appleCurrentRoomID: row.appleRoomID,
+                    appleCurrentRoomName: row.appleRoomName
+                )
+            }
+
+            let appleAccessories: [SyncRoomAppleAccessory]
+            if let serverAccessories = room.appleAccessories {
+                appleAccessories = serverAccessories
+            } else if let appleRoomID = room.appleRoomID {
+                let matchedByAccessoryID = Dictionary(
+                    uniqueKeysWithValues: deviceRows.compactMap { row in
+                        guard let id = row.appleAccessoryID else { return nil }
+                        return (id, row)
+                    }
+                )
+                appleAccessories = (homeAccessoriesByRoom[appleRoomID] ?? []).map { accessory in
+                    let id = accessory.uniqueIdentifier.uuidString
+                    let match = matchedByAccessoryID[id]
+                    return SyncRoomAppleAccessory(
+                        id: id,
+                        name: accessory.name,
+                        manufacturer: accessory.manufacturer,
+                        model: accessory.model,
+                        matchedHueDeviceID: match?.hueDeviceID,
+                        matchedHueDeviceName: match?.hueDeviceName
+                    )
+                }
+            } else {
+                appleAccessories = []
+            }
+
+            let plannedMoves = room.plannedMoves ?? movesByRoom[room.hueRoomID] ?? []
+            let impact = room.impact ?? SyncRoomImpact(
+                hueDeviceCount: hueDevices.count,
+                appleAccessoryCount: appleAccessories.count,
+                moveCount: plannedMoves.count,
+                alreadyCorrectCount: deviceRows.filter { $0.status == "already_correct" }.count
+            )
+
+            return SyncRoomPlan(
+                hueRoomID: room.hueRoomID,
+                hueRoomName: room.hueRoomName,
+                appleRoomID: room.appleRoomID,
+                appleRoomName: room.appleRoomName,
+                method: room.method,
+                confidence: room.confidence,
+                status: room.status,
+                hueDevices: hueDevices,
+                appleAccessories: appleAccessories,
+                plannedMoves: plannedMoves,
+                impact: impact
+            )
+        }
+    }
+
     func loadPlan() async {
         guard !bridgeProfile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             status = "Indique le nom du profil Bridge HueManager."
@@ -620,8 +773,12 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
                 path: "/api/bridges/\(encodedBridge)/apple-home/plan"
             )
             let plan = try JSONDecoder().decode(SyncPlan.self, from: data)
-            roomPlans = plan.rooms ?? []
             moves = plan.actions
+            roomPlans = enrichedRoomPlans(
+                plan.rooms ?? [],
+                devices: plan.devices ?? [],
+                moves: plan.actions
+            )
             planSummary = plan.summary
             status = plan.actions.isEmpty
                 ? "Aucun déplacement nécessaire."
