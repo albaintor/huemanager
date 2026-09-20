@@ -49,17 +49,11 @@ GENERIC_DEVICE_WORDS = {
     "hue",
     "philips",
     "signify",
-    "light",
-    "lamp",
-    "lampe",
-    "bulb",
-    "ampoule",
-    "spot",
-    "plafonnier",
-    "ceiling",
     "device",
     "appareil",
 }
+
+HUE_ACCESSORY_HINTS = ("hue", "philips", "signify")
 
 
 def _words(value: str | None) -> list[str]:
@@ -203,6 +197,25 @@ def _hue_identifier_candidates(device: dict) -> set[str]:
     return candidates
 
 
+def _apple_accessory_origin(accessory: dict) -> str:
+    """Classify an Apple Home accessory for Hue-focused previews.
+
+    "hue" means the HomeKit metadata clearly identifies Philips/Signify/Hue.
+    "other" means a different manufacturer is explicitly reported.
+    "unknown" keeps accessories whose origin cannot be established safely.
+    """
+    manufacturer = str(accessory.get("manufacturer") or "").strip()
+    model = str(accessory.get("model") or "").strip()
+    name = str(accessory.get("name") or "").strip()
+
+    haystack = " ".join((manufacturer, model, name)).lower()
+    if any(hint in haystack for hint in HUE_ACCESSORY_HINTS):
+        return "hue"
+    if manufacturer:
+        return "other"
+    return "unknown"
+
+
 def load_apple_home_state(path: Path) -> dict:
     if not path.exists():
         return {
@@ -303,14 +316,20 @@ def build_apple_home_sync_plan(
     accessories = [
         accessory for accessory in inventory.get("accessories", []) if accessory.get("id")
     ]
+    candidate_accessories = [
+        accessory
+        for accessory in accessories
+        if _apple_accessory_origin(accessory) != "other"
+    ]
+
     accessories_by_serial: dict[str, list[dict]] = {}
-    for accessory in accessories:
+    for accessory in candidate_accessories:
         serial = _normalise_identifier(accessory.get("serial_number"))
         if serial:
             accessories_by_serial.setdefault(serial, []).append(accessory)
 
     accessories_by_name: dict[str, list[dict]] = {}
-    for accessory in accessories:
+    for accessory in candidate_accessories:
         key = _normalise(accessory.get("name"))
         if key:
             accessories_by_name.setdefault(key, []).append(accessory)
@@ -398,11 +417,11 @@ def build_apple_home_sync_plan(
                         device_name,
                         [
                             accessory
-                            for accessory in accessories
+                            for accessory in candidate_accessories
                             if str(accessory.get("id")) not in matched_apple_ids
                         ],
-                        threshold=0.84,
-                        ambiguity_gap=0.10,
+                        threshold=0.90,
+                        ambiguity_gap=0.12,
                         ignore_generic_device_words=True,
                     )
                     if fuzzy:
@@ -503,6 +522,7 @@ def build_apple_home_sync_plan(
             "manufacturer": accessory.get("manufacturer"),
             "model": accessory.get("model"),
             "serial_number": accessory.get("serial_number"),
+            "origin": _apple_accessory_origin(accessory),
         }
         for accessory in accessories
         if str(accessory.get("id")) not in matched_apple_ids
@@ -563,6 +583,11 @@ def build_apple_home_sync_plan(
                 "name": accessory.get("name"),
                 "manufacturer": accessory.get("manufacturer"),
                 "model": accessory.get("model"),
+                "origin": (
+                    "hue"
+                    if str(accessory.get("id") or "") in matched_device_by_apple_id
+                    else _apple_accessory_origin(accessory)
+                ),
                 "matched_hue_device_id": matched_device_by_apple_id.get(
                     str(accessory.get("id") or ""), {}
                 ).get("hue_device_id"),
