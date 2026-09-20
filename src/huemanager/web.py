@@ -11,6 +11,15 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
+from .apple_home import (
+    build_apple_home_sync_plan,
+    get_room_map,
+    load_apple_home_state,
+    record_sync_result,
+    save_apple_home_state,
+    store_inventory,
+    store_room_map,
+)
 from .backup import (
     analyse_bridge_restore,
     backup_summary,
@@ -47,7 +56,7 @@ from .session import (
     session_summary,
 )
 
-app = FastAPI(title="HueManager", version="0.6.0")
+app = FastAPI(title="HueManager", version="0.7.0")
 SNAPSHOT_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 BACKUP_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 
@@ -91,6 +100,24 @@ class RestoreRequest(DestinationRequest):
 class AuditCleanupRequest(BaseModel):
     issue_ids: list[str] = Field(min_length=1, max_length=200)
     force_risky: bool = False
+
+
+class AppleHomeInventoryRequest(BaseModel):
+    home: dict[str, Any]
+    rooms: list[dict[str, Any]] = Field(default_factory=list)
+    accessories: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class AppleHomeRoomMapRequest(BaseModel):
+    home_id: str = Field(min_length=1)
+    room_map: dict[str, str] = Field(default_factory=dict)
+
+
+class AppleHomeSyncResultRequest(BaseModel):
+    home_id: str
+    bridge_profile: str
+    moved: int = 0
+    failed: list[dict[str, Any]] = Field(default_factory=list)
 
 
 def _store() -> ConfigStore:
@@ -165,6 +192,18 @@ def _load_backup(backup_id: str) -> dict:
     return load_bridge_backup(path)
 
 
+def _apple_home_path() -> Path:
+    return _store().path.parent / "apple-home.json"
+
+
+def _load_apple_home() -> dict:
+    return load_apple_home_state(_apple_home_path())
+
+
+def _save_apple_home(state: dict) -> None:
+    save_apple_home_state(state, _apple_home_path())
+
+
 def _api_error(exc: Exception) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
 
@@ -223,6 +262,91 @@ def pair(request: PairRequest) -> dict:
                 "info": tree.get("bridge", {}),
             },
         }
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+
+@app.get("/api/apple-home")
+def apple_home_status() -> dict:
+    state = _load_apple_home()
+    inventory = state.get("inventory")
+    return {
+        "connected": bool(inventory),
+        "inventory": inventory,
+        "last_sync": state.get("last_sync"),
+    }
+
+
+@app.post("/api/apple-home/inventory")
+def update_apple_home_inventory(request: AppleHomeInventoryRequest) -> dict:
+    try:
+        state = store_inventory(_load_apple_home(), request.model_dump())
+        _save_apple_home(state)
+        inventory = state["inventory"]
+        return {
+            "ok": True,
+            "home": inventory.get("home"),
+            "rooms": len(inventory.get("rooms", [])),
+            "accessories": len(inventory.get("accessories", [])),
+            "received_at": inventory.get("received_at"),
+        }
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@app.post("/api/apple-home/sync-result")
+def update_apple_home_sync_result(request: AppleHomeSyncResultRequest) -> dict:
+    try:
+        state = record_sync_result(_load_apple_home(), request.model_dump())
+        _save_apple_home(state)
+        return {"ok": True, "last_sync": state.get("last_sync")}
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@app.get("/api/bridges/{bridge_name}/apple-home/plan")
+def apple_home_plan(bridge_name: str) -> dict:
+    try:
+        state = _load_apple_home()
+        inventory = state.get("inventory")
+        if not inventory:
+            raise MigrationError(
+                "No Apple Home inventory available. Open HueManager Home Sync on an Apple device first."
+            )
+        home_id = str((inventory.get("home") or {}).get("id") or "")
+        room_map = get_room_map(state, bridge_name, home_id)
+        return build_apple_home_sync_plan(
+            inventory_tree(_client(bridge_name)),
+            inventory,
+            room_map=room_map,
+        )
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@app.put("/api/bridges/{bridge_name}/apple-home/room-map")
+def update_apple_home_room_map(
+    bridge_name: str,
+    request: AppleHomeRoomMapRequest,
+) -> dict:
+    try:
+        state = store_room_map(
+            _load_apple_home(),
+            bridge_name,
+            request.home_id,
+            request.room_map,
+        )
+        _save_apple_home(state)
+        inventory = state.get("inventory")
+        if not inventory:
+            return {"ok": True, "room_map": request.room_map}
+        plan = build_apple_home_sync_plan(
+            inventory_tree(_client(bridge_name)),
+            inventory,
+            room_map=get_room_map(state, bridge_name, request.home_id),
+        )
+        return {"ok": True, "room_map": request.room_map, "plan": plan}
     except Exception as exc:
         raise _api_error(exc) from exc
 
