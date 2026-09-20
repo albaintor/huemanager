@@ -6,3 +6,10 @@ __pycache__/
 *.json
 config/
 !tests/fixtures/*.json
+
+# Xcode / iOS generated files
+ios/**/DerivedData/
+ios/**/*.xcworkspace/
+ios/**/*.xcodeproj/
+*.xcuserstate
+xcuserdata/
