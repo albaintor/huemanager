@@ -2,7 +2,8 @@ import SwiftUI
 
 @main
 struct HueManagerHomeSyncApp: App {
-    @StateObject private var model = HomeSyncModel()
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @StateObject private var model = HomeSyncModel.shared
 
     var body: some Scene {
         WindowGroup {
