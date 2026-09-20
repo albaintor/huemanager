@@ -120,36 +120,51 @@ def record_restore(session: dict, destination_profile: str, report: dict) -> dic
 
 
 def release_source_resources(snapshot: dict, client: Any) -> dict:
-    """Remove selected physical v1 resources from the source Bridge.
+    """Remove selected physical devices from the source Bridge.
 
-    The snapshot remains the source of truth. This operation is intentionally
-    idempotent: resources already absent from the Bridge are reported as such.
+    The snapshot remains the source of truth. Deletion is performed once per
+    CLIP v2 device instead of once per light/sensor service, which avoids
+    partially deleting multi-service accessories. Re-running the operation is
+    safe: devices that have already disappeared are reported as already absent.
     """
-    root = client.v1_all()
-    selected_v1 = snapshot.get("v1", {})
+    current_ids = {
+        resource.get("id")
+        for resource in client.v2_resources()
+        if resource.get("type") == "device" and resource.get("id")
+    }
     results: list[dict] = []
 
-    for section in ("lights", "sensors"):
-        existing = root.get(section, {})
-        for resource_id, saved in selected_v1.get(section, {}).items():
-            item = {
-                "section": section,
-                "id": str(resource_id),
-                "path": f"/{section}/{resource_id}",
-                "name": saved.get("name") or saved.get("type") or str(resource_id),
-                "uniqueid": saved.get("uniqueid"),
-            }
-            if str(resource_id) not in existing:
-                item["status"] = "already_absent"
-                results.append(item)
-                continue
-            try:
-                client.v1_delete(item["path"])
-                item["status"] = "deleted"
-            except Exception as exc:  # keep partial progress and make retry possible
-                item["status"] = "failed"
-                item["error"] = str(exc)
+    for device in snapshot.get("devices", []):
+        device_id = device.get("id")
+        if not device_id:
+            continue
+        product = device.get("product_data", {})
+        v1_paths = [
+            service.get("id_v1")
+            for service in device.get("services_expanded", [])
+            if service.get("id_v1")
+        ]
+        item = {
+            "type": "device",
+            "id": device_id,
+            "name": device.get("metadata", {}).get("name")
+            or product.get("product_name")
+            or device_id,
+            "product": product.get("product_name"),
+            "model": product.get("model_id"),
+            "v1_paths": v1_paths,
+        }
+        if device_id not in current_ids:
+            item["status"] = "already_absent"
             results.append(item)
+            continue
+        try:
+            client.v2_delete("device", device_id)
+            item["status"] = "deleted"
+        except Exception as exc:  # keep partial progress and make retry possible
+            item["status"] = "failed"
+            item["error"] = str(exc)
+        results.append(item)
 
     deleted = sum(item["status"] == "deleted" for item in results)
     already_absent = sum(item["status"] == "already_absent" for item in results)
