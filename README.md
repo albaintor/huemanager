@@ -131,7 +131,7 @@ huemanager apply bureau-salon.json pro --execute --keep-external-strict
 
 ## What is preserved
 
-Current v0.6 scope:
+Current v0.7 scope:
 
 - selected rooms and device membership;
 - Hue v2 scenes and scene actions;
@@ -334,8 +334,8 @@ pièces Apple Maison.
 
 L'affectation d'un accessoire à une pièce Apple est stockée dans la base HomeKit du compte Apple,
 pas dans le Bridge Hue. Le serveur HueManager calcule donc les correspondances et les actions,
-tandis que l'application compagnon `apple-home-helper`, autorisée HomeKit sur iPhone/iPad, lit et
-modifie la base Maison.
+tandis que l'application compagnon `ios/HueManagerHomeSync`, autorisée HomeKit sur iPhone/iPad,
+lit et modifie la base Maison.
 
 Le matching des pièces est volontairement heuristique mais conservateur :
 
@@ -357,3 +357,36 @@ accessoire est ambigu, absent, ou si le score heuristique est inférieur aux seu
 Un contrôleur HAP/HomeKit tiers exécuté dans Docker ne peut pas remplacer ce compagnon pour cette
 fonction : les pièces Apple appartiennent à la base HomeKit du contrôleur Apple et ne sont pas
 des propriétés stockées dans les accessoires Hue.
+
+
+### Application iOS
+
+L'application iOS est volontairement conservée dans le même dépôt que HueManager :
+
+```text
+huemanager/
+├── src/huemanager/              # serveur/API HueManager
+├── ios/HueManagerHomeSync/      # application iPhone/iPad HomeKit
+└── .github/workflows/ios.yml    # build iOS sans signature
+```
+
+Le projet Xcode est généré avec XcodeGen afin d'éviter de versionner les fichiers
+`.xcodeproj` générés :
+
+```bash
+brew install xcodegen
+cd ios/HueManagerHomeSync
+xcodegen generate
+open HueManagerHomeSync.xcodeproj
+```
+
+Dans Xcode, sélectionner le target **HueManagerHomeSync**, puis son équipe Apple Developer dans
+**Signing & Capabilities**. L'identifiant d'équipe et les certificats ne sont pas stockés dans le
+dépôt. La capability **HomeKit** est déjà déclarée.
+
+Au premier lancement sur iPhone/iPad, autoriser l'accès à **Maison**, saisir l'URL HueManager
+accessible depuis l'iPhone et le nom du profil Bridge configuré côté serveur, puis utiliser
+**Tester HueManager** avant l'analyse.
+
+L'URL, le profil Bridge, la Maison sélectionnée et le mode de synchronisation automatique sont
+mémorisés localement par l'application.
