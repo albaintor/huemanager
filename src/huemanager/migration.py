@@ -1671,12 +1671,27 @@ def _map_group_owned_v2_services(
                 plan.v2_map[source["id"]] = same_type[0]
 
 
-def _scene_body(scene: dict, destination_group: dict, plan: MappingPlan) -> dict:
+def _scene_body_with_pruning(
+    scene: dict,
+    destination_group: dict,
+    plan: MappingPlan,
+    *,
+    prune_unmapped: bool,
+) -> tuple[dict | None, list[dict]]:
     actions: list[dict] = []
+    pruned: list[dict] = []
     for action in scene.get("actions", []):
         target = action.get("target", {})
         mapped = plan.v2_map.get(target.get("rid"))
         if not mapped:
+            if prune_unmapped:
+                pruned.append(
+                    {
+                        "target": copy.deepcopy(target),
+                        "action": copy.deepcopy(action.get("action", {})),
+                    }
+                )
+                continue
             raise MigrationError(
                 f"Scene {scene.get('metadata', {}).get('name')} has an unmapped target {target}"
             )
@@ -1686,6 +1701,9 @@ def _scene_body(scene: dict, destination_group: dict, plan: MappingPlan) -> dict
                 "action": copy.deepcopy(action.get("action", {})),
             }
         )
+
+    if scene.get("actions") and not actions:
+        return None, pruned
 
     metadata = {
         key: copy.deepcopy(value)
@@ -1704,6 +1722,20 @@ def _scene_body(scene: dict, destination_group: dict, plan: MappingPlan) -> dict
     for key in ("palette", "speed", "auto_dynamic"):
         if key in scene:
             body[key] = copy.deepcopy(scene[key])
+    return body, pruned
+
+
+def _scene_body(scene: dict, destination_group: dict, plan: MappingPlan) -> dict:
+    body, _ = _scene_body_with_pruning(
+        scene,
+        destination_group,
+        plan,
+        prune_unmapped=False,
+    )
+    if body is None:
+        raise MigrationError(
+            f"Scene {scene.get('metadata', {}).get('name')} has no restorable actions"
+        )
     return body
 
 
@@ -1712,15 +1744,25 @@ def _create_scenes(
     snapshot: dict,
     destination_groups: dict[str, dict],
     plan: MappingPlan,
-) -> dict[str, str]:
+    *,
+    prune_unmapped: bool = False,
+) -> tuple[dict[str, str], list[dict]]:
     existing_scenes = client.v2_get("scene")
     scene_map: dict[str, str] = {}
+    warnings: list[dict] = []
     for source_scene in snapshot.get("scenes", []):
         source_room_id = source_scene.get("group", {}).get("rid")
         destination_group = destination_groups.get(source_room_id)
-        if not destination_group:
-            continue
         name = source_scene.get("metadata", {}).get("name")
+        if not destination_group:
+            warnings.append(
+                {
+                    "id": source_scene.get("id"),
+                    "name": name,
+                    "reason": "destination group unavailable",
+                }
+            )
+            continue
         existing = next(
             (
                 scene
@@ -1733,16 +1775,39 @@ def _create_scenes(
         if existing:
             dest_scene = existing
         else:
-            rid = _new_resource_id(
-                client.v2_post("scene", _scene_body(source_scene, destination_group, plan))
+            body, pruned = _scene_body_with_pruning(
+                source_scene,
+                destination_group,
+                plan,
+                prune_unmapped=prune_unmapped,
             )
+            if body is None:
+                warnings.append(
+                    {
+                        "id": source_scene.get("id"),
+                        "name": name,
+                        "reason": "all scene actions target unavailable devices",
+                        "pruned": pruned,
+                    }
+                )
+                continue
+            if pruned:
+                warnings.append(
+                    {
+                        "id": source_scene.get("id"),
+                        "name": name,
+                        "reason": "unmapped scene actions pruned",
+                        "pruned": pruned,
+                    }
+                )
+            rid = _new_resource_id(client.v2_post("scene", body))
             dest_scene = client.v2_get("scene", rid)[0]
             existing_scenes.append(dest_scene)
         if source_scene.get("id"):
             plan.v2_map[source_scene["id"]] = dest_scene
         if source_scene.get("id_v1") and dest_scene.get("id_v1"):
             scene_map[source_scene["id_v1"]] = dest_scene["id_v1"]
-    return scene_map
+    return scene_map, warnings
 
 
 def _rewrite_entertainment_locations(
@@ -2505,6 +2570,7 @@ def apply_snapshot(
     *,
     prune_external: bool = True,
     allow_same_bridge: bool = False,
+    force_partial: bool = False,
 ) -> dict:
     snapshot = _normalise_snapshot(snapshot)
     dest_v1 = client.v1_all()
@@ -2518,11 +2584,18 @@ def apply_snapshot(
         raise MigrationError("Source and destination are the same Hue Bridge")
     plan = build_mapping_plan(snapshot, dest_v1, client.v2_resources())
     unmapped_devices = _unmapped_snapshot_devices(snapshot, plan)
-    if not plan.complete or unmapped_devices:
+    if (not plan.complete or unmapped_devices) and not force_partial:
         raise MigrationError(
             "Destination bridge is missing migrated devices; pair them first. "
             f"Missing v1 resources: {plan.missing}; unmapped v2 devices: {unmapped_devices}"
         )
+    if force_partial and not prune_external:
+        raise MigrationError("Forced partial restore requires prune_external=True")
+
+    forced_missing = {
+        "v1": copy.deepcopy(plan.missing),
+        "devices": copy.deepcopy(unmapped_devices),
+    }
 
     virtual_created = _ensure_virtual_sensors(client, snapshot, plan)
     name_warnings = _restore_v1_names(client, snapshot, plan)
@@ -2530,7 +2603,14 @@ def apply_snapshot(
     destination_zones, zone_warnings = _merge_zones(client, snapshot, plan)
     destination_groups = {**destination_rooms, **destination_zones}
     _map_group_owned_v2_services(client, snapshot, plan, destination_groups)
-    plan.v1_map.update(_create_scenes(client, snapshot, destination_groups, plan))
+    scene_map, scene_warnings = _create_scenes(
+        client,
+        snapshot,
+        destination_groups,
+        plan,
+        prune_unmapped=force_partial,
+    )
+    plan.v1_map.update(scene_map)
     entertainment_created, entertainment_warnings = (
         _create_entertainment_configurations(client, snapshot, plan)
     )
@@ -2559,6 +2639,9 @@ def apply_snapshot(
             room.get("metadata", {}).get("name") for room in destination_rooms.values()
         ],
         "scenes_total": len(snapshot.get("scenes", [])),
+        "scene_warnings": scene_warnings,
+        "forced_partial": force_partial,
+        "forced_missing": forced_missing if force_partial else {"v1": [], "devices": []},
         "zones_restored": [
             zone.get("metadata", {}).get("name") for zone in destination_zones.values()
         ],
