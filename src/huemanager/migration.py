@@ -576,6 +576,101 @@ def audit_bridge(client: HueBridgeClient) -> dict:
             ),
         )
 
+    room_device_ids = {
+        child.get("rid")
+        for room in resources
+        if room.get("type") == "room"
+        for child in room.get("children", [])
+        if child.get("rtype") == "device" and child.get("rid")
+    }
+    physical_devices: list[dict] = []
+    device_names: dict[str, list[str]] = {}
+    for device in (
+        item for item in resources if item.get("type") == "device" and item.get("id")
+    ):
+        services = [
+            by_id.get(ref.get("rid"), {})
+            for ref in device.get("services", [])
+            if ref.get("rid")
+        ]
+        zigbee_services = [
+            service for service in services if service.get("type") == "zigbee_connectivity"
+        ]
+        if not zigbee_services:
+            continue
+        physical_devices.append(device)
+        device_id = device["id"]
+        product = device.get("product_data", {})
+        name = (
+            device.get("metadata", {}).get("name")
+            or product.get("product_name")
+            or device_id
+        )
+        device_names.setdefault(name, []).append(device_id)
+
+        if device_id not in room_device_ids:
+            add_issue(
+                issue_id=f"device_without_room:{device_id}",
+                kind="device_without_room",
+                severity="warning",
+                title=f"Appareil hors pièce : {name}",
+                message="Cet appareil Zigbee n'est affecté à aucune pièce Hue.",
+                details={
+                    "device_id": device_id,
+                    "product": product.get("product_name"),
+                    "model": product.get("model_id"),
+                },
+                risk_reason=(
+                    "L'appareil est valide et appairé ; l'absence de pièce n'est pas une "
+                    "raison suffisante pour le supprimer."
+                ),
+            )
+
+        disconnected = [
+            service
+            for service in zigbee_services
+            if service.get("status") not in (None, "connected")
+        ]
+        if disconnected:
+            add_issue(
+                issue_id=f"zigbee_disconnected:{device_id}",
+                kind="zigbee_disconnected",
+                severity="warning",
+                title=f"Appareil Zigbee déconnecté : {name}",
+                message="Le Bridge signale la connectivité Zigbee comme non connectée.",
+                details={
+                    "device_id": device_id,
+                    "statuses": [
+                        {
+                            "id": service.get("id"),
+                            "status": service.get("status"),
+                            "mac_address": service.get("mac_address"),
+                        }
+                        for service in disconnected
+                    ],
+                },
+                risk_reason=(
+                    "Une perte de connectivité peut être temporaire (alimentation, portée, "
+                    "maillage). HueManager ne supprime donc pas automatiquement l'appareil."
+                ),
+            )
+
+    for name, device_ids in device_names.items():
+        if len(device_ids) <= 1:
+            continue
+        add_issue(
+            issue_id=f"duplicate_device_name:{name}",
+            kind="duplicate_device_name",
+            severity="warning",
+            title=f"Nom d'appareil dupliqué : {name}",
+            message=f"{len(device_ids)} appareils Zigbee utilisent le même nom.",
+            details={"device_ids": device_ids},
+            risk_reason=(
+                "Les appareils sont distincts ; le doublon de nom peut être volontaire. "
+                "Aucune suppression automatique n'est proposée."
+            ),
+        )
+
     rule_ref_prefixes = (
         "/lights/",
         "/sensors/",
@@ -822,6 +917,15 @@ def audit_bridge(client: HueBridgeClient) -> dict:
             "warnings": sum(issue["severity"] == "warning" for issue in issues),
             "empty_rooms": sum(issue["kind"] == "empty_room" for issue in issues),
             "rule_issues": sum(issue["kind"].startswith("rule_") for issue in issues),
+            "devices_without_room": sum(
+                issue["kind"] == "device_without_room" for issue in issues
+            ),
+            "zigbee_disconnected": sum(
+                issue["kind"] == "zigbee_disconnected" for issue in issues
+            ),
+            "duplicate_device_names": sum(
+                issue["kind"] == "duplicate_device_name" for issue in issues
+            ),
         },
         "issues": issues,
     }
