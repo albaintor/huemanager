@@ -925,6 +925,67 @@ def test_apple_home_room_matching_does_not_guess_when_ambiguous():
     assert len(room["suggestions"]) == 2
 
 
+def test_apple_home_device_matching_rejects_room_prefix_false_positive_and_classifies_other_accessories():
+    hue_tree = {
+        "rooms": [
+            {
+                "id": "hue-cinema",
+                "name": "Cinéma",
+                "devices": [
+                    {
+                        "id": "hue-spot-1",
+                        "name": "Sous-sol principal spot 1",
+                        "identifiers": {
+                            "zigbee_macs": [],
+                            "v1_uniqueids": [],
+                            "pairing_fields": [],
+                        },
+                    }
+                ],
+            }
+        ]
+    }
+    inventory = {
+        "home": {"id": "home-1", "name": "Maison"},
+        "rooms": [{"id": "apple-room", "name": "Sous-sol principal"}],
+        "accessories": [
+            {
+                "id": "apple-module",
+                "name": "Sous-sol principal module",
+                "manufacturer": "Signify Netherlands B.V.",
+                "model": "Hue module",
+                "serial_number": None,
+                "room_id": "default",
+                "room_name": "Pièce par défaut",
+            },
+            {
+                "id": "denon",
+                "name": "Denon AVC-X4700H",
+                "manufacturer": "Denon",
+                "model": "AVC-X4700H",
+                "serial_number": None,
+                "room_id": "apple-room",
+                "room_name": "Sous-sol principal",
+            },
+        ],
+    }
+
+    plan = build_apple_home_sync_plan(
+        hue_tree,
+        inventory,
+        room_map={"hue-cinema": "apple-room"},
+    )
+
+    device = plan["devices"][0]
+    assert device["status"] == "unmatched_accessory"
+    assert plan["summary"]["moves"] == 0
+
+    room_accessories = {
+        item["id"]: item for item in plan["rooms"][0]["apple_accessories"]
+    }
+    assert room_accessories["denon"]["origin"] == "other"
+
+
 def test_apple_home_accessory_matching_prefers_serial_then_fuzzy_name():
     hue_tree = {
         "rooms": [
