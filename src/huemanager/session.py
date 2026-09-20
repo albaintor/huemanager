@@ -7,7 +7,6 @@ from pathlib import Path
 
 from .client import HueApiError, HueBridgeClient
 
-
 SESSION_SCHEMA = 1
 
 
