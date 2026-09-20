@@ -948,6 +948,13 @@ def test_apple_home_accessory_matching_prefers_serial_then_fuzzy_name():
                 "room_id": "other",
                 "room_name": "Autre",
             },
+            {
+                "id": "apple-3",
+                "name": "HomePod",
+                "serial_number": None,
+                "room_id": "apple-room",
+                "room_name": "Séjour",
+            },
         ],
     }
 
@@ -957,3 +964,18 @@ def test_apple_home_accessory_matching_prefers_serial_then_fuzzy_name():
     assert methods["hue-device-1"] == "serial"
     assert methods["hue-device-2"].startswith("heuristic:")
     assert plan["summary"]["moves"] == 2
+
+    room = plan["rooms"][0]
+    assert [item["name"] for item in room["hue_devices"]] == [
+        "Lampe canapé",
+        "Plafonnier salon",
+    ]
+    assert [item["name"] for item in room["apple_accessories"]] == ["HomePod"]
+    assert room["impact"] == {
+        "hue_device_count": 2,
+        "apple_accessory_count": 1,
+        "move_count": 2,
+        "already_correct_count": 0,
+    }
+    assert {move["from_room_name"] for move in room["planned_moves"]} == {"Autre"}
+    assert {move["to_room_name"] for move in room["planned_moves"]} == {"Séjour"}
