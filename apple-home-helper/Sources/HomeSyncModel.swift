@@ -107,6 +107,8 @@ private struct SyncResult: Codable {
 }
 
 final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
+    static let shared = HomeSyncModel()
+
     @Published var serverURL = "http://127.0.0.1:8787"
     @Published var bridgeProfile = "pro"
     @Published var selectedHomeID = ""
@@ -128,7 +130,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
 
     var pendingMoves: Int { moves.count }
 
-    override init() {
+    private override init() {
         automaticSyncEnabled = UserDefaults.standard.bool(forKey: "automaticSyncEnabled")
         super.init()
         homeManager.delegate = self
@@ -183,6 +185,21 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         default:
             return false
         }
+    }
+
+    @MainActor
+    func runBackgroundSync() async -> Bool {
+        guard automaticSyncEnabled else { return true }
+
+        for _ in 0..<10 where homes.isEmpty {
+            refreshHomes()
+            if !homes.isEmpty { break }
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+        guard !homes.isEmpty else { return false }
+
+        await automaticSyncCycle()
+        return !hasError
     }
 
     @MainActor
