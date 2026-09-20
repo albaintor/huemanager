@@ -4,7 +4,8 @@ import copy
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+
+from .client import HueApiError, HueBridgeClient
 
 
 SESSION_SCHEMA = 1
@@ -119,7 +120,7 @@ def record_restore(session: dict, destination_profile: str, report: dict) -> dic
     return result
 
 
-def release_source_resources(snapshot: dict, client: Any) -> dict:
+def release_source_resources(snapshot: dict, client: HueBridgeClient) -> dict:
     """Remove selected physical devices from the source Bridge.
 
     The snapshot remains the source of truth. Deletion is performed once per
@@ -161,7 +162,7 @@ def release_source_resources(snapshot: dict, client: Any) -> dict:
         try:
             client.v2_delete("device", device_id)
             item["status"] = "deleted"
-        except Exception as exc:  # keep partial progress and make retry possible
+        except (HueApiError, OSError, ValueError, KeyError, IndexError) as exc:
             item["status"] = "failed"
             item["error"] = str(exc)
         results.append(item)
