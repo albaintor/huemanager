@@ -71,6 +71,10 @@ class ImportBackupRequest(BaseModel):
     backup: dict[str, Any]
 
 
+class SourceRequest(BaseModel):
+    source: str
+
+
 class DestinationRequest(BaseModel):
     destination: str
 
@@ -496,14 +500,12 @@ def snapshot_details(snapshot_id: str) -> dict:
 
 
 @app.post("/api/snapshots/{snapshot_id}/release-source")
-def release_snapshot_source(snapshot_id: str) -> dict:
+def release_snapshot_source(snapshot_id: str, request: SourceRequest) -> dict:
     try:
         snapshot = _load_snapshot(snapshot_id)
-        session = _load_session(snapshot_id)
-        source_profile = session.get("source_profile")
-        if not source_profile:
-            raise MigrationError("Snapshot has no source Bridge profile")
-        release = release_source_resources(snapshot, _client(source_profile))
+        session = _load_session(snapshot_id, source_profile=request.source)
+        session["source_profile"] = request.source
+        release = release_source_resources(snapshot, _client(request.source))
         session = record_source_release(session, release)
         _save_session(snapshot_id, session)
         return {"release": release, "session": session_summary(session)}
