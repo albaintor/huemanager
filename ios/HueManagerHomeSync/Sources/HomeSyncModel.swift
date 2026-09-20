@@ -708,12 +708,12 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
             if let serverAccessories = room.appleAccessories {
                 appleAccessories = serverAccessories
             } else if let appleRoomID = room.appleRoomID {
-                let matchedByAccessoryID = Dictionary(
-                    uniqueKeysWithValues: deviceRows.compactMap { row in
-                        guard let id = row.appleAccessoryID else { return nil }
-                        return (id, row)
+                var matchedByAccessoryID: [String: SyncDeviceRow] = [:]
+                for row in deviceRows {
+                    if let id = row.appleAccessoryID {
+                        matchedByAccessoryID[id] = row
                     }
-                )
+                }
                 appleAccessories = (homeAccessoriesByRoom[appleRoomID] ?? []).map { accessory in
                     let id = accessory.uniqueIdentifier.uuidString
                     let match = matchedByAccessoryID[id]
