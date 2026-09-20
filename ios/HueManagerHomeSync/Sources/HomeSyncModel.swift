@@ -319,14 +319,16 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         }
     }
 
-    private let homeManager = HMHomeManager()
+    private var homeManager: HMHomeManager?
     private var automaticTimer: Timer?
     private var automaticSyncRunning = false
+    private var started = false
 
     var pendingMoves: Int { moves.count }
 
     var homeKitDiagnostic: String {
-        return "auth=\(homeKitAuthorization) raw=\(homeManager.authorizationStatus.rawValue) " +
+        let raw = homeManager?.authorizationStatus.rawValue.description ?? "n/a"
+        return "auth=\(homeKitAuthorization) raw=\(raw) " +
             "loaded=\(homeKitLoaded) homes=\(homes.count)"
     }
 
@@ -337,20 +339,22 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         selectedHomeID = defaults.string(forKey: DefaultsKey.selectedHomeID) ?? ""
         automaticSyncEnabled = defaults.bool(forKey: DefaultsKey.automaticSyncEnabled)
         super.init()
-        homeManager.delegate = self
-        updateAuthorizationStatus(homeManager.authorizationStatus)
     }
 
     func start() {
-        updateAuthorizationStatus(homeManager.authorizationStatus)
-        updateBackgroundRefreshStatus()
-        if homeKitLoaded {
-            refreshHomes()
-        } else {
-            status = "Chargement de la base Apple Maison…"
-            hasError = false
+        guard !started else {
+            updateBackgroundRefreshStatus()
+            if homeKitLoaded {
+                refreshHomes()
+            }
+            return
         }
+        started = true
+
+        updateBackgroundRefreshStatus()
+        startHomeKitIfNeeded()
         configureAutomaticSync()
+
         if !serverURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             Task {
                 await loadBridges()
@@ -358,15 +362,38 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         }
     }
 
+    private func startHomeKitIfNeeded() {
+        guard homeManager == nil else { return }
+
+        // Create HomeKit only after the SwiftUI scene is active. Initializing
+        // HMHomeManager from singleton/bootstrap or background-launch paths can
+        // race the homed XPC service.
+        let manager = HMHomeManager()
+        homeManager = manager
+        manager.delegate = self
+        updateAuthorizationStatus(manager.authorizationStatus)
+        status = "Chargement de la base Apple Maison…"
+        hasError = false
+    }
+
     nonisolated func homeManagerDidUpdateHomes(_ manager: HMHomeManager) {
-        Task { @MainActor [weak self] in
-            guard let self, manager === self.homeManager else { return }
+        let managerID = ObjectIdentifier(manager)
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  let current = self.homeManager,
+                  ObjectIdentifier(current) == managerID
+            else {
+                return
+            }
+
             self.homeKitLoaded = true
-            self.updateAuthorizationStatus(manager.authorizationStatus)
+            self.updateAuthorizationStatus(current.authorizationStatus)
             self.refreshHomes()
 
             if self.automaticSyncEnabled {
-                await self.automaticSyncCycle()
+                Task { @MainActor [weak self] in
+                    await self?.automaticSyncCycle()
+                }
             }
         }
     }
@@ -375,40 +402,55 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         _ manager: HMHomeManager,
         didUpdate authorizationStatus: HMHomeManagerAuthorizationStatus
     ) {
-        Task { @MainActor [weak self] in
-            guard let self, manager === self.homeManager else { return }
+        let managerID = ObjectIdentifier(manager)
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  let current = self.homeManager,
+                  ObjectIdentifier(current) == managerID
+            else {
+                return
+            }
 
-            self.updateAuthorizationStatus(authorizationStatus)
+            // Read the manager again on the main actor instead of carrying a
+            // HomeKit object across a Swift-concurrency boundary.
+            self.updateAuthorizationStatus(current.authorizationStatus)
 
-            if authorizationStatus.contains(.authorized) {
-                if self.homeKitLoaded || !manager.homes.isEmpty {
+            if current.authorizationStatus.contains(.authorized) {
+                if self.homeKitLoaded || !current.homes.isEmpty {
                     self.refreshHomes()
                 } else {
                     self.status = "Autorisation accordée, chargement de la base Apple Maison…"
                     self.hasError = false
                 }
-            } else if authorizationStatus.contains(.restricted) {
+            } else if current.authorizationStatus.contains(.restricted) {
                 self.homes = []
                 self.homeKitLoaded = false
+                self.selectedHomeID = ""
                 self.status =
                     "Accès Apple Maison refusé ou restreint. Autorise HueManager Home Sync " +
-                    "dans Réglages, puis recharge les données Maison."
+                    "dans Réglages."
                 self.hasError = true
             }
         }
     }
 
     func reloadHomeKit() {
-        // HMHomeManager maintains a live connection to the shared HomeKit database.
-        // Do not replace it: Apple documents one manager instance per app, and
-        // recreating it while homed is synchronizing can invalidate the XPC session.
-        updateAuthorizationStatus(homeManager.authorizationStatus)
-        refreshHomes()
+        guard let manager = homeManager else {
+            startHomeKitIfNeeded()
+            return
+        }
 
-        if !homes.isEmpty {
-            status = "\(homes.count) maison(s) Apple actualisée(s)."
-            hasError = false
-        } else if !homeKitLoaded {
+        updateAuthorizationStatus(manager.authorizationStatus)
+
+        // HMHomeManager is live-updated by homed. Never recreate it and never
+        // poll homes repeatedly while its initial database sync is in progress.
+        if homeKitLoaded {
+            refreshHomes()
+            if !homes.isEmpty {
+                status = "\(homes.count) maison(s) Apple actualisée(s)."
+                hasError = false
+            }
+        } else {
             status = "Chargement de la base Apple Maison en cours…"
             hasError = false
         }
@@ -481,12 +523,11 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     func runBackgroundSync() async -> Bool {
         guard automaticSyncEnabled else { return true }
 
-        for _ in 0..<10 where homes.isEmpty {
-            refreshHomes()
-            if !homes.isEmpty { break }
-            try? await Task.sleep(for: .milliseconds(500))
+        // A BGAppRefresh launch must not bootstrap/poll HomeKit. Only reuse an
+        // already loaded manager from the foreground process.
+        guard homeKitLoaded, homeManager != nil, !homes.isEmpty else {
+            return false
         }
-        guard !homes.isEmpty else { return false }
 
         await automaticSyncCycle()
         return !hasError
@@ -529,8 +570,15 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     }
 
     private func refreshHomes() {
-        updateAuthorizationStatus(homeManager.authorizationStatus)
-        homes = homeManager.homes.sorted {
+        guard let manager = homeManager else {
+            homes = []
+            selectedHomeID = ""
+            homeKitLoaded = false
+            return
+        }
+
+        updateAuthorizationStatus(manager.authorizationStatus)
+        homes = manager.homes.sorted {
             $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
         }
 
@@ -540,7 +588,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         }
 
         if homes.isEmpty {
-            if homeManager.authorizationStatus.contains(.restricted) {
+            if manager.authorizationStatus.contains(.restricted) {
                 status =
                     "Accès Apple Maison refusé ou restreint. Vérifie Réglages > " +
                     "Confidentialité et sécurité > HomeKit."
@@ -548,10 +596,9 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
             } else if !homeKitLoaded {
                 status = "Chargement de la base Apple Maison…"
                 hasError = false
-            } else if homeManager.authorizationStatus.contains(.authorized) {
+            } else if manager.authorizationStatus.contains(.authorized) {
                 status =
-                    "HomeKit est autorisé mais n’a retourné aucune Maison après le chargement. " +
-                    "Relève le diagnostic affiché."
+                    "HomeKit est autorisé mais n’a retourné aucune Maison après le chargement."
                 hasError = true
             } else {
                 status = "En attente de l’autorisation Apple Maison…"
