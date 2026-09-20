@@ -1,0 +1,2 @@
+"NSHomeKitUsageDescription" = "HueManager Home Sync uses Apple Home to align accessories with Philips Hue rooms.";
+"NSLocalNetworkUsageDescription" = "HueManager Home Sync communicates with your HueManager server on the local network.";
