@@ -334,7 +334,7 @@ pièces Apple Maison.
 
 L'affectation d'un accessoire à une pièce Apple est stockée dans la base HomeKit du compte Apple,
 pas dans le Bridge Hue. Le serveur HueManager calcule donc les correspondances et les actions,
-tandis que l'application compagnon `apple-home-helper`, autorisée HomeKit sur macOS, lit et
+tandis que l'application compagnon `apple-home-helper`, autorisée HomeKit sur iPhone/iPad, lit et
 modifie la base Maison.
 
 Le matching des pièces est volontairement heuristique mais conservateur :
@@ -349,9 +349,9 @@ Le matching des pièces est volontairement heuristique mais conservateur :
 Les accessoires sont appariés en priorité avec les identifiants disponibles (numéro de série/MAC
 lorsqu'ils correspondent), puis par nom normalisé et enfin par similarité de nom avec seuil élevé.
 
-Le compagnon macOS dispose aussi d'un mode **Synchronisation automatique sûre**. Après
+Le compagnon iPhone/iPad dispose aussi d'un mode **Synchronisation automatique sûre**. Après
 l'autorisation HomeKit initiale, il peut republier l'inventaire et appliquer périodiquement les
-déplacements sans intervention. Le mode auto s'arrête et ne modifie rien si une pièce ou un
+déplacements sans intervention lorsqu'iOS lui accorde du temps d'exécution en arrière-plan. Le mode auto s'arrête et ne modifie rien si une pièce ou un
 accessoire est ambigu, absent, ou si le score heuristique est inférieur aux seuils de confiance.
 
 Un contrôleur HAP/HomeKit tiers exécuté dans Docker ne peut pas remplacer ce compagnon pour cette
