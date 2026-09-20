@@ -10,23 +10,22 @@ let outputPath = CommandLine.arguments[1]
 let size = 1024
 let rect = NSRect(x: 0, y: 0, width: size, height: size)
 
-guard let bitmap = NSBitmapImageRep(
-    bitmapDataPlanes: nil,
-    pixelsWide: size,
-    pixelsHigh: size,
-    bitsPerSample: 8,
-    samplesPerPixel: 4,
-    hasAlpha: false,
-    isPlanar: false,
-    colorSpaceName: .deviceRGB,
-    bytesPerRow: 0,
-    bitsPerPixel: 32
-),
-let context = NSGraphicsContext(bitmapImageRep: bitmap)
-else {
-    fatalError("Unable to create bitmap context")
+let colorSpace = CGColorSpaceCreateDeviceRGB()
+let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue)
+
+guard let cgContext = CGContext(
+    data: nil,
+    width: size,
+    height: size,
+    bitsPerComponent: 8,
+    bytesPerRow: size * 4,
+    space: colorSpace,
+    bitmapInfo: bitmapInfo.rawValue
+) else {
+    fatalError("Unable to create RGB CGContext")
 }
 
+let context = NSGraphicsContext(cgContext: cgContext, flipped: false)
 NSGraphicsContext.saveGraphicsState()
 NSGraphicsContext.current = context
 
@@ -189,6 +188,10 @@ for (a, b, color) in rays {
 context.flushGraphics()
 NSGraphicsContext.restoreGraphicsState()
 
+guard let cgImage = cgContext.makeImage() else {
+    fatalError("Unable to create CGImage")
+}
+let bitmap = NSBitmapImageRep(cgImage: cgImage)
 guard let png = bitmap.representation(using: .png, properties: [:]) else {
     fatalError("Unable to encode PNG")
 }
