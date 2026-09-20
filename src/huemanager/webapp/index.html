@@ -248,7 +248,7 @@
         <h2>Apple Maison — synchronisation des pièces Hue</h2>
         <p class="muted">
           Apple Maison conserve ses propres affectations de pièces. HueManager calcule la
-          correspondance avec les pièces Hue ; l’application compagnon macOS
+          correspondance avec les pièces Hue ; l’application compagnon iPhone/iPad
           <code>apple-home-helper</code> publie l’inventaire HomeKit et applique ensuite les
           déplacements autorisés par Apple.
         </p>
@@ -650,7 +650,7 @@
     const inventory = data?.inventory;
     if (!inventory) {
       $("appleHomeStatus").textContent =
-        "Aucun inventaire Apple Maison reçu. Ouvre HueManager Home Sync sur le Mac puis publie l’inventaire.";
+        "Aucun inventaire Apple Maison reçu. Ouvre HueManager Home Sync sur l’iPhone/iPad puis publie l’inventaire.";
       $("planAppleHome").disabled = true;
       $("saveAppleRoomMap").disabled = true;
       return;
@@ -755,7 +755,7 @@
       const note = document.createElement("p");
       note.className = "muted";
       note.textContent =
-        "Ces déplacements sont appliqués depuis l’application compagnon macOS, car seule une application Apple autorisée HomeKit peut modifier la pièce d’un accessoire Maison.";
+        "Ces déplacements sont appliqués depuis l’application compagnon iPhone/iPad, car seule une application Apple autorisée HomeKit peut modifier la pièce d’un accessoire Maison.";
       movesRoot.append(note);
     }
   }
