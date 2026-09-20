@@ -12,9 +12,6 @@ struct ContentView: View {
                 proposedMovesSection
             }
             .navigationTitle("HueManager Home Sync")
-            .task {
-                model.start()
-            }
         }
     }
 
