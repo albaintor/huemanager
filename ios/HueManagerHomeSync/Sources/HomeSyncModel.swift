@@ -84,6 +84,9 @@ struct SyncRoomAppleAccessory: Codable, Identifiable {
     let name: String
     let manufacturer: String?
     let model: String?
+    let origin: String?
+    let bridgeName: String?
+    let bridgeManufacturer: String?
     let matchedHueDeviceID: String?
     let matchedHueDeviceName: String?
 
@@ -92,6 +95,9 @@ struct SyncRoomAppleAccessory: Codable, Identifiable {
         case name
         case manufacturer
         case model
+        case origin
+        case bridgeName = "bridge_name"
+        case bridgeManufacturer = "bridge_manufacturer"
         case matchedHueDeviceID = "matched_hue_device_id"
         case matchedHueDeviceName = "matched_hue_device_name"
     }
@@ -221,6 +227,11 @@ private struct AccessoryInfo: Codable {
     let manufacturer: String?
     let model: String?
     let serialNumber: String?
+    let isBridged: Bool
+    let bridgeID: String?
+    let bridgeName: String?
+    let bridgeManufacturer: String?
+    let bridgeModel: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -230,6 +241,11 @@ private struct AccessoryInfo: Codable {
         case manufacturer
         case model
         case serialNumber = "serial_number"
+        case isBridged = "is_bridged"
+        case bridgeID = "bridge_id"
+        case bridgeName = "bridge_name"
+        case bridgeManufacturer = "bridge_manufacturer"
+        case bridgeModel = "bridge_model"
     }
 }
 
@@ -552,7 +568,16 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     }
 
     private func inventory(for home: HMHome) -> HomeInventory {
-        HomeInventory(
+        var parentBridgeByAccessoryID: [String: HMAccessory] = [:]
+        for possibleBridge in home.accessories {
+            for bridgedAccessory in possibleBridge.bridgedAccessories {
+                parentBridgeByAccessoryID[
+                    bridgedAccessory.uniqueIdentifier.uuidString
+                ] = possibleBridge
+            }
+        }
+
+        return HomeInventory(
             home: HomeInfo(
                 id: home.uniqueIdentifier.uuidString,
                 name: home.name
@@ -561,14 +586,22 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
                 RoomInfo(id: $0.uniqueIdentifier.uuidString, name: $0.name)
             },
             accessories: home.accessories.map { accessory in
-                AccessoryInfo(
+                let bridge = parentBridgeByAccessoryID[
+                    accessory.uniqueIdentifier.uuidString
+                ]
+                return AccessoryInfo(
                     id: accessory.uniqueIdentifier.uuidString,
                     name: accessory.name,
                     roomID: accessory.room?.uniqueIdentifier.uuidString,
                     roomName: accessory.room?.name,
                     manufacturer: accessory.manufacturer,
                     model: accessory.model,
-                    serialNumber: nil
+                    serialNumber: nil,
+                    isBridged: accessory.isBridged,
+                    bridgeID: bridge?.uniqueIdentifier.uuidString,
+                    bridgeName: bridge?.name,
+                    bridgeManufacturer: bridge?.manufacturer,
+                    bridgeModel: bridge?.model
                 )
             }
         )
@@ -722,6 +755,9 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
                         name: accessory.name,
                         manufacturer: accessory.manufacturer,
                         model: accessory.model,
+                        origin: match == nil ? nil : "hue",
+                        bridgeName: nil,
+                        bridgeManufacturer: nil,
                         matchedHueDeviceID: match?.hueDeviceID,
                         matchedHueDeviceName: match?.hueDeviceName
                     )
