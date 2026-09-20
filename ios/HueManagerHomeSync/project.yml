@@ -1,6 +1,7 @@
 name: HueManagerHomeSync
 options:
   bundleIdPrefix: com.albaintor
+  developmentLanguage: fr
   deploymentTarget:
     iOS: "18.0"
 settings:
