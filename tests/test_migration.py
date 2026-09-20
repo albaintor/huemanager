@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from huemanager.apple_home import build_apple_home_sync_plan
 from huemanager.backup import backup_summary, create_bridge_backup
 from huemanager.migration import (
     MigrationError,
@@ -846,3 +847,113 @@ def test_migration_session_survives_restart_and_keeps_partial_plan(tmp_path):
     assert not summary["ready"]
     assert summary["missing"][0]["source"] == "/lights/9"
     assert summary["unmapped_devices"][0]["id"] == "device-9"
+
+
+
+def test_apple_home_room_matching_uses_synonyms_and_partial_names():
+    hue_tree = {
+        "rooms": [
+            {"id": "hue-salon", "name": "Salon", "devices": []},
+            {"id": "hue-louis", "name": "Chambre Louis", "devices": []},
+            {"id": "hue-bureau", "name": "Bureau", "devices": []},
+        ]
+    }
+    inventory = {
+        "home": {"id": "home-1", "name": "Maison"},
+        "rooms": [
+            {"id": "apple-sejour", "name": "Séjour"},
+            {"id": "apple-louis", "name": "Louis"},
+            {"id": "apple-office", "name": "Office"},
+        ],
+        "accessories": [],
+    }
+
+    plan = build_apple_home_sync_plan(hue_tree, inventory)
+
+    mapped = {row["hue_room_name"]: row for row in plan["rooms"]}
+    assert mapped["Salon"]["apple_room_name"] == "Séjour"
+    assert mapped["Salon"]["method"] == "heuristic"
+    assert mapped["Chambre Louis"]["apple_room_name"] == "Louis"
+    assert mapped["Bureau"]["apple_room_name"] == "Office"
+    assert plan["summary"]["mapped_rooms"] == 3
+
+
+def test_apple_home_room_matching_does_not_guess_when_ambiguous():
+    hue_tree = {
+        "rooms": [
+            {"id": "hue-bedroom", "name": "Chambre", "devices": []},
+        ]
+    }
+    inventory = {
+        "home": {"id": "home-1", "name": "Maison"},
+        "rooms": [
+            {"id": "apple-1", "name": "Chambre 1"},
+            {"id": "apple-2", "name": "Chambre 2"},
+        ],
+        "accessories": [],
+    }
+
+    plan = build_apple_home_sync_plan(hue_tree, inventory)
+
+    room = plan["rooms"][0]
+    assert room["status"] == "unmapped"
+    assert room["apple_room_id"] is None
+    assert len(room["suggestions"]) == 2
+
+
+def test_apple_home_accessory_matching_prefers_serial_then_fuzzy_name():
+    hue_tree = {
+        "rooms": [
+            {
+                "id": "hue-room",
+                "name": "Salon",
+                "devices": [
+                    {
+                        "id": "hue-device-1",
+                        "name": "Lampe canapé",
+                        "identifiers": {
+                            "zigbee_macs": ["00:17:88:01:02:03:04:05"],
+                            "v1_uniqueids": [],
+                            "pairing_fields": [],
+                        },
+                    },
+                    {
+                        "id": "hue-device-2",
+                        "name": "Plafonnier salon",
+                        "identifiers": {
+                            "zigbee_macs": [],
+                            "v1_uniqueids": [],
+                            "pairing_fields": [],
+                        },
+                    },
+                ],
+            }
+        ]
+    }
+    inventory = {
+        "home": {"id": "home-1", "name": "Maison"},
+        "rooms": [{"id": "apple-room", "name": "Séjour"}],
+        "accessories": [
+            {
+                "id": "apple-1",
+                "name": "Canapé",
+                "serial_number": "0017880102030405",
+                "room_id": "other",
+                "room_name": "Autre",
+            },
+            {
+                "id": "apple-2",
+                "name": "Plafonnier du salon",
+                "serial_number": None,
+                "room_id": "other",
+                "room_name": "Autre",
+            },
+        ],
+    }
+
+    plan = build_apple_home_sync_plan(hue_tree, inventory)
+
+    methods = {row["hue_device_id"]: row["match_method"] for row in plan["devices"]}
+    assert methods["hue-device-1"] == "serial"
+    assert methods["hue-device-2"].startswith("heuristic:")
+    assert plan["summary"]["moves"] == 2
