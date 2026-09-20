@@ -23,6 +23,10 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     entitlements:
       path: HueManagerHomeSync.entitlements
+    attributes:
+      SystemCapabilities:
+        com.apple.HomeKit:
+          enabled: 1
 schemes:
   HueManagerHomeSync:
     build:
