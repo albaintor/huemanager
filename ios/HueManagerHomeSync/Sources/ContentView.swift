@@ -30,12 +30,29 @@ struct ContentView: View {
 
             Picker("Maison Apple", selection: $model.selectedHomeID) {
                 if model.homes.isEmpty {
-                    Text("Aucune maison disponible").tag("")
+                    Text(model.homeKitLoaded ? "Aucune maison disponible" : "Chargement…")
+                        .tag("")
                 }
                 ForEach(model.homes, id: \.uniqueIdentifier) { home in
                     Text(home.name).tag(home.uniqueIdentifier.uuidString)
                 }
             }
+
+            LabeledContent("Autorisation Maison", value: model.homeKitAuthorization)
+            LabeledContent(
+                "Chargement HomeKit",
+                value: model.homeKitLoaded ? "Terminé" : "En cours"
+            )
+            LabeledContent("Maisons détectées", value: "\(model.homes.count)")
+
+            Button("Recharger les données Maison") {
+                model.reloadHomeKit()
+            }
+
+            Text(model.homeKitDiagnostic)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
 
             Button("Tester HueManager") {
                 Task { await model.testConnection() }
