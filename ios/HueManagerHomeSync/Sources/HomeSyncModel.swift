@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import HomeKit
+import UIKit
 
 struct SyncMove: Codable, Identifiable {
     let accessoryID: String
@@ -238,6 +239,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     @Published private(set) var hasError = false
     @Published private(set) var homeKitAuthorization = "Indéterminée"
     @Published private(set) var homeKitLoaded = false
+    @Published private(set) var backgroundRefreshStatus = "Indéterminée"
 
     @Published var automaticSyncEnabled: Bool {
         didSet {
@@ -273,6 +275,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
 
     func start() {
         updateAuthorizationStatus(homeManager.authorizationStatus)
+        updateBackgroundRefreshStatus()
         if homeKitLoaded {
             refreshHomes()
         } else {
@@ -335,6 +338,19 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         } else if !homeKitLoaded {
             status = "Chargement de la base Apple Maison en cours…"
             hasError = false
+        }
+    }
+
+    func updateBackgroundRefreshStatus() {
+        switch UIApplication.shared.backgroundRefreshStatus {
+        case .available:
+            backgroundRefreshStatus = "Disponible"
+        case .denied:
+            backgroundRefreshStatus = "Désactivée"
+        case .restricted:
+            backgroundRefreshStatus = "Restreinte"
+        @unknown default:
+            backgroundRefreshStatus = "Inconnue"
         }
     }
 
