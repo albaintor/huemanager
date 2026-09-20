@@ -4,8 +4,8 @@ import copy
 import json
 import re
 import unicodedata
-from difflib import SequenceMatcher
 from datetime import UTC, datetime
+from difflib import SequenceMatcher
 from pathlib import Path
 
 APPLE_HOME_STATE_SCHEMA = 1
