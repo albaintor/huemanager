@@ -317,6 +317,7 @@ def build_apple_home_sync_plan(
 
     room_rows: list[dict] = []
     desired_room_by_hue_id: dict[str, dict] = {}
+    room_match_meta_by_hue_id: dict[str, dict] = {}
     for room in hue_tree.get("rooms", []):
         hue_room_id = str(room.get("id") or "")
         if not hue_room_id:
@@ -358,6 +359,10 @@ def build_apple_home_sync_plan(
         room_rows.append(row)
         if desired:
             desired_room_by_hue_id[hue_room_id] = desired
+            room_match_meta_by_hue_id[hue_room_id] = {
+                "method": method,
+                "confidence": round(confidence, 3) if confidence is not None else None,
+            }
 
     moves: list[dict] = []
     device_rows: list[dict] = []
@@ -458,6 +463,12 @@ def build_apple_home_sync_plan(
                         "hue_room_id": hue_room_id,
                         "hue_room_name": room.get("name"),
                         "match_method": match_method,
+                        "room_match_method": room_match_meta_by_hue_id.get(
+                            hue_room_id, {}
+                        ).get("method"),
+                        "room_match_confidence": room_match_meta_by_hue_id.get(
+                            hue_room_id, {}
+                        ).get("confidence"),
                     }
                 )
 
