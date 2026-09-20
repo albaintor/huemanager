@@ -343,7 +343,10 @@
       "apple.mappingTitle": "Correspondance des pièces et prévisualisation",
       "apple.noneRoom": "— aucune pièce Maison —",
       "apple.hueContents": "Accessoires dans la pièce Philips Hue",
-      "apple.homeContents": "Accessoires actuellement dans la pièce Apple sélectionnée",
+      "apple.homeContents": "Accessoires Hue/associés dans la pièce Apple sélectionnée",
+      "apple.otherHomeAccessories": "Autres accessoires Maison",
+      "apple.otherHomeAccessoriesHint": "Hors périmètre Hue — masqués pour ne pas brouiller la comparaison",
+      "apple.manufacturer": "Fabricant",
       "apple.noHueDevice": "Aucun accessoire Hue dans cette pièce.",
       "apple.noHomeAccessory": "Aucun accessoire actuellement dans cette pièce Apple.",
       "apple.noSelectedRoom": "Aucune pièce Apple sélectionnée.",
@@ -421,7 +424,10 @@
       "apple.mappingTitle": "Room mapping and preview",
       "apple.noneRoom": "— no Apple Home room —",
       "apple.hueContents": "Accessories in the Philips Hue room",
-      "apple.homeContents": "Accessories currently in the selected Apple Home room",
+      "apple.homeContents": "Hue/matched accessories in the selected Apple Home room",
+      "apple.otherHomeAccessories": "Other Apple Home accessories",
+      "apple.otherHomeAccessoriesHint": "Outside the Hue scope — collapsed to keep the comparison readable",
+      "apple.manufacturer": "Manufacturer",
       "apple.noHueDevice": "No Hue accessory in this room.",
       "apple.noHomeAccessory": "No accessory currently in this Apple Home room.",
       "apple.noSelectedRoom": "No Apple Home room selected.",
@@ -937,6 +943,31 @@
     }
   }
 
+  function renderAppleAccessory(accessory, root, { showOrigin = false } = {}) {
+    const item = document.createElement("div");
+    item.className = "room-impact-device";
+    const name = document.createElement("strong");
+    name.textContent = accessory.name || accessory.id || "?";
+    item.append(name);
+
+    const detail = document.createElement("div");
+    detail.className = "muted";
+    const lines = [];
+    if (accessory.matched_hue_device_name) {
+      lines.push(`↔ Hue: ${accessory.matched_hue_device_name}`);
+    } else if (accessory.origin === "hue") {
+      lines.push(t("apple.unmatched"));
+    }
+    if (showOrigin && (accessory.manufacturer || accessory.model)) {
+      lines.push(
+        [accessory.manufacturer, accessory.model].filter(Boolean).join(" · ")
+      );
+    }
+    detail.textContent = lines.join(" · ") || t("apple.unmatched");
+    item.append(detail);
+    root.append(item);
+  }
+
   function renderAppleTargetAccessories(room, root) {
     if (!room.apple_room_id) {
       const empty = document.createElement("p");
@@ -945,27 +976,45 @@
       root.append(empty);
       return;
     }
+
     const accessories = room.apple_accessories || [];
-    if (!accessories.length) {
+    const hueAccessories = accessories.filter(
+      accessory => accessory.origin === "hue" || accessory.matched_hue_device_id
+    );
+    const otherAccessories = accessories.filter(
+      accessory => !(accessory.origin === "hue" || accessory.matched_hue_device_id)
+    );
+
+    if (!hueAccessories.length) {
       const empty = document.createElement("p");
       empty.className = "muted";
       empty.textContent = t("apple.noHomeAccessory");
       root.append(empty);
-      return;
+    } else {
+      for (const accessory of hueAccessories) {
+        renderAppleAccessory(accessory, root);
+      }
     }
-    for (const accessory of accessories) {
-      const item = document.createElement("div");
-      item.className = "room-impact-device";
-      const name = document.createElement("strong");
-      name.textContent = accessory.name || accessory.id || "?";
-      item.append(name);
-      const detail = document.createElement("div");
-      detail.className = "muted";
-      detail.textContent = accessory.matched_hue_device_name
-        ? `↔ Hue: ${accessory.matched_hue_device_name}`
-        : t("apple.unmatched");
-      item.append(detail);
-      root.append(item);
+
+    if (otherAccessories.length) {
+      const details = document.createElement("details");
+      details.style.marginTop = "10px";
+      const summary = document.createElement("summary");
+      summary.textContent =
+        `${t("apple.otherHomeAccessories")} (${otherAccessories.length})`;
+      details.append(summary);
+
+      const body = document.createElement("div");
+      body.className = "details-body";
+      const hint = document.createElement("p");
+      hint.className = "muted";
+      hint.textContent = t("apple.otherHomeAccessoriesHint");
+      body.append(hint);
+      for (const accessory of otherAccessories) {
+        renderAppleAccessory(accessory, body, { showOrigin: true });
+      }
+      details.append(body);
+      root.append(details);
     }
   }
 
@@ -983,8 +1032,11 @@
     const appleColumn = document.createElement("div");
     appleColumn.className = "room-impact-column";
     const appleTitle = document.createElement("h4");
+    const hueAppleCount = (room.apple_accessories || []).filter(
+      accessory => accessory.origin === "hue" || accessory.matched_hue_device_id
+    ).length;
     appleTitle.textContent =
-      `${t("apple.homeContents")} (${room.apple_accessories?.length || 0})`;
+      `${t("apple.homeContents")} (${hueAppleCount})`;
     appleColumn.append(appleTitle);
     renderAppleTargetAccessories(room, appleColumn);
 
