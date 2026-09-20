@@ -878,6 +878,30 @@ def test_apple_home_room_matching_uses_synonyms_and_partial_names():
     assert plan["summary"]["mapped_rooms"] == 3
 
 
+def test_apple_home_explicit_none_disables_heuristic_room_mapping():
+    hue_tree = {
+        "rooms": [
+            {"id": "hue-salon", "name": "Salon", "devices": []},
+        ]
+    }
+    inventory = {
+        "home": {"id": "home-1", "name": "Maison"},
+        "rooms": [{"id": "apple-sejour", "name": "Séjour"}],
+        "accessories": [],
+    }
+
+    plan = build_apple_home_sync_plan(
+        hue_tree,
+        inventory,
+        room_map={"hue-salon": ""},
+    )
+
+    room = plan["rooms"][0]
+    assert room["method"] == "manual"
+    assert room["status"] == "unmapped"
+    assert room["apple_room_id"] is None
+
+
 def test_apple_home_room_matching_does_not_guess_when_ambiguous():
     hue_tree = {
         "rooms": [
