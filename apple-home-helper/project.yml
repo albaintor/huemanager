@@ -4,8 +4,8 @@ options:
 targets:
   HueManagerHomeSync:
     type: application
-    platform: macOS
-    deploymentTarget: "14.0"
+    platform: iOS
+    deploymentTarget: "18.0"
     sources:
       - Sources
     settings:
@@ -14,5 +14,6 @@ targets:
         CODE_SIGN_ENTITLEMENTS: HueManagerHomeSync.entitlements
         INFOPLIST_FILE: Info.plist
         SWIFT_VERSION: 5.10
+        TARGETED_DEVICE_FAMILY: "1,2"
     entitlements:
       path: HueManagerHomeSync.entitlements
