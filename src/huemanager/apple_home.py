@@ -4,11 +4,159 @@ import copy
 import json
 import re
 import unicodedata
+from difflib import SequenceMatcher
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 APPLE_HOME_STATE_SCHEMA = 1
+
+ROOM_WORD_ALIASES = {
+    "living": "salon",
+    "livingroom": "salon",
+    "sejour": "salon",
+    "séjour": "salon",
+    "lounge": "salon",
+    "kitchen": "cuisine",
+    "bedroom": "chambre",
+    "office": "bureau",
+    "study": "bureau",
+    "bathroom": "sdb",
+    "bath": "sdb",
+    "salledebain": "sdb",
+    "salledebains": "sdb",
+    "toilet": "wc",
+    "toilets": "wc",
+    "restroom": "wc",
+    "hall": "entree",
+    "hallway": "entree",
+    "entry": "entree",
+    "entrance": "entree",
+    "dining": "sam",
+    "diningroom": "sam",
+    "salleamanger": "sam",
+    "garage": "garage",
+    "garden": "jardin",
+    "outdoor": "exterieur",
+    "outside": "exterieur",
+    "terrace": "terrasse",
+    "patio": "terrasse",
+    "parents": "parent",
+    "parentale": "parent",
+    "master": "parent",
+}
+
+GENERIC_DEVICE_WORDS = {
+    "hue",
+    "philips",
+    "signify",
+    "light",
+    "lamp",
+    "lampe",
+    "bulb",
+    "ampoule",
+    "spot",
+    "plafonnier",
+    "ceiling",
+    "device",
+    "appareil",
+}
+
+
+def _words(value: str | None) -> list[str]:
+    if not value:
+        return []
+    ascii_value = unicodedata.normalize("NFKD", value)
+    ascii_value = "".join(ch for ch in ascii_value if not unicodedata.combining(ch))
+    return re.findall(r"[a-z0-9]+", ascii_value.lower())
+
+
+def _canonical_room_tokens(value: str | None) -> list[str]:
+    words = _words(value)
+    compact = "".join(words)
+    phrase_alias = ROOM_WORD_ALIASES.get(compact)
+    if phrase_alias:
+        return [phrase_alias]
+    return [ROOM_WORD_ALIASES.get(word, word) for word in words]
+
+
+def _similarity(
+    left: str | None,
+    right: str | None,
+    *,
+    room: bool = False,
+    ignore_generic_device_words: bool = False,
+) -> float:
+    if _normalise(left) == _normalise(right) and _normalise(left):
+        return 1.0
+
+    left_words = _canonical_room_tokens(left) if room else _words(left)
+    right_words = _canonical_room_tokens(right) if room else _words(right)
+    if ignore_generic_device_words:
+        left_words = [word for word in left_words if word not in GENERIC_DEVICE_WORDS]
+        right_words = [word for word in right_words if word not in GENERIC_DEVICE_WORDS]
+
+    if not left_words or not right_words:
+        return 0.0
+
+    left_set = set(left_words)
+    right_set = set(right_words)
+    if left_set == right_set:
+        return 0.98
+    intersection = left_set & right_set
+    union = left_set | right_set
+    jaccard = len(intersection) / len(union) if union else 0.0
+    containment = len(intersection) / min(len(left_set), len(right_set))
+    sequence = SequenceMatcher(
+        None,
+        " ".join(left_words),
+        " ".join(right_words),
+    ).ratio()
+
+    score = max(sequence, 0.55 * jaccard + 0.45 * containment)
+    if containment == 1.0 and intersection:
+        score = max(score, 0.90)
+    return min(score, 1.0)
+
+
+def _best_fuzzy_match(
+    source_name: str,
+    candidates: list[dict],
+    *,
+    field: str = "name",
+    room: bool = False,
+    threshold: float,
+    ambiguity_gap: float,
+    ignore_generic_device_words: bool = False,
+) -> tuple[dict | None, float, list[dict]]:
+    scored = [
+        (
+            _similarity(
+                source_name,
+                candidate.get(field),
+                room=room,
+                ignore_generic_device_words=ignore_generic_device_words,
+            ),
+            candidate,
+        )
+        for candidate in candidates
+    ]
+    scored.sort(key=lambda item: item[0], reverse=True)
+    suggestions = [
+        {
+            "id": item.get("id"),
+            "name": item.get(field),
+            "score": round(score, 3),
+        }
+        for score, item in scored[:3]
+        if score > 0
+    ]
+    if not scored or scored[0][0] < threshold:
+        return None, scored[0][0] if scored else 0.0, suggestions
+    top_score, top = scored[0]
+    second_score = scored[1][0] if len(scored) > 1 else 0.0
+    if second_score >= threshold and top_score - second_score < ambiguity_gap:
+        return None, top_score, suggestions
+    return top, top_score, suggestions
 
 
 def _now() -> str:
@@ -176,12 +324,26 @@ def build_apple_home_sync_plan(
         hue_name = room.get("name") or hue_room_id
 
         explicit_id = room_map.get(hue_room_id)
+        confidence = None
+        suggestions: list[dict] = []
         if explicit_id and explicit_id in apple_rooms_by_id:
             desired = apple_rooms_by_id[explicit_id]
             method = "manual"
+            confidence = 1.0
         else:
             desired = apple_rooms_by_name.get(_normalise(hue_name))
-            method = "name" if desired else None
+            if desired:
+                method = "name"
+                confidence = 1.0
+            else:
+                desired, confidence, suggestions = _best_fuzzy_match(
+                    hue_name,
+                    apple_rooms,
+                    room=True,
+                    threshold=0.72,
+                    ambiguity_gap=0.08,
+                )
+                method = "heuristic" if desired else None
 
         row = {
             "hue_room_id": hue_room_id,
@@ -189,6 +351,8 @@ def build_apple_home_sync_plan(
             "apple_room_id": str(desired.get("id")) if desired else None,
             "apple_room_name": desired.get("name") if desired else None,
             "method": method,
+            "confidence": round(confidence, 3) if confidence is not None else None,
+            "suggestions": suggestions,
             "status": "mapped" if desired else "unmapped",
         }
         room_rows.append(row)
@@ -223,6 +387,24 @@ def build_apple_home_sync_plan(
                 elif len(name_matches) > 1:
                     candidates = name_matches
                     match_method = "name_ambiguous"
+                else:
+                    fuzzy, fuzzy_score, fuzzy_suggestions = _best_fuzzy_match(
+                        device_name,
+                        [
+                            accessory
+                            for accessory in accessories
+                            if str(accessory.get("id")) not in matched_apple_ids
+                        ],
+                        threshold=0.84,
+                        ambiguity_gap=0.10,
+                        ignore_generic_device_words=True,
+                    )
+                    if fuzzy:
+                        candidates = [fuzzy]
+                        match_method = f"heuristic:{fuzzy_score:.2f}"
+                    elif fuzzy_suggestions:
+                        candidates = []
+                        match_method = "heuristic_unmatched"
             else:
                 candidates = list(serial_matches.values())
                 match_method = "serial_ambiguous"
