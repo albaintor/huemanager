@@ -4,6 +4,9 @@ options:
   developmentLanguage: fr
   deploymentTarget:
     iOS: "18.0"
+  preGenCommand: >-
+    xcrun --sdk macosx swift Scripts/generate_app_icon.swift
+    Sources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png
 settings:
   base:
     SWIFT_VERSION: 5.10
