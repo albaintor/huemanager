@@ -18,6 +18,32 @@ struct ContentView: View {
         }
     }
 
+    private var bridgeSelection: Binding<String> {
+        Binding(
+            get: {
+                if model.bridges.contains(where: { $0.name == model.bridgeProfile }) {
+                    return model.bridgeProfile
+                }
+                return model.bridges.first?.name ?? ""
+            },
+            set: { model.bridgeProfile = $0 }
+        )
+    }
+
+    private var homeSelection: Binding<String> {
+        Binding(
+            get: {
+                if model.homes.contains(
+                    where: { $0.uniqueIdentifier.uuidString == model.selectedHomeID }
+                ) {
+                    return model.selectedHomeID
+                }
+                return model.homes.first?.uniqueIdentifier.uuidString ?? ""
+            },
+            set: { model.selectedHomeID = $0 }
+        )
+    }
+
     private var connectionSection: some View {
         Section("Connexion") {
             TextField("URL HueManager", text: $model.serverURL)
@@ -25,29 +51,42 @@ struct ContentView: View {
                 .keyboardType(.URL)
                 .autocorrectionDisabled()
 
-            Picker("Bridge Hue", selection: $model.bridgeProfile) {
-                if model.bridges.isEmpty {
-                    Text("Aucun Bridge configuré").tag("")
-                }
-                ForEach(model.bridges) { bridge in
-                    Text("\(bridge.name) · \(bridge.host)")
-                        .tag(bridge.name)
-                }
-            }
-
             if model.bridges.isEmpty {
+                LabeledContent("Bridge Hue") {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text("Chargement…")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 Button("Charger les Bridges HueManager") {
                     Task { await model.loadBridges() }
                 }
+            } else {
+                Picker("Bridge Hue", selection: bridgeSelection) {
+                    ForEach(model.bridges) { bridge in
+                        Text("\(bridge.name) · \(bridge.host)")
+                            .tag(bridge.name)
+                    }
+                }
             }
 
-            Picker("Maison Apple", selection: $model.selectedHomeID) {
-                if model.homes.isEmpty {
-                    Text(model.homeKitLoaded ? "Aucune maison disponible" : "Chargement…")
-                        .tag("")
+            if model.homes.isEmpty {
+                LabeledContent("Maison Apple") {
+                    HStack(spacing: 8) {
+                        if !model.homeKitLoaded {
+                            ProgressView()
+                        }
+                        Text(model.homeKitLoaded ? "Aucune maison disponible" : "Chargement…")
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                ForEach(model.homes, id: \.uniqueIdentifier) { home in
-                    Text(home.name).tag(home.uniqueIdentifier.uuidString)
+            } else {
+                Picker("Maison Apple", selection: homeSelection) {
+                    ForEach(model.homes, id: \.uniqueIdentifier) { home in
+                        Text(home.name).tag(home.uniqueIdentifier.uuidString)
+                    }
                 }
             }
 
@@ -61,6 +100,7 @@ struct ContentView: View {
             Button("Actualiser les données Maison") {
                 model.reloadHomeKit()
             }
+            .disabled(!model.homeKitLoaded)
 
             Text(model.homeKitDiagnostic)
                 .font(.caption2)
@@ -78,15 +118,25 @@ struct ContentView: View {
             Button("Publier l’inventaire Maison") {
                 Task { await model.publishInventory() }
             }
+            .disabled(!model.homeKitLoaded || model.homes.isEmpty)
 
             Button("Analyser et afficher le détail") {
                 Task { await model.loadPlan() }
             }
+            .disabled(
+                !model.homeKitLoaded ||
+                model.homes.isEmpty ||
+                model.bridges.isEmpty
+            )
 
             Button("Appliquer les déplacements") {
                 Task { await model.applyPlan() }
             }
-            .disabled(model.pendingMoves == 0)
+            .disabled(
+                !model.homeKitLoaded ||
+                model.homes.isEmpty ||
+                model.pendingMoves == 0
+            )
 
             Toggle("Synchronisation automatique sûre", isOn: $model.automaticSyncEnabled)
 
