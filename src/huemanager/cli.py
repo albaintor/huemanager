@@ -229,6 +229,11 @@ def apply(
         "--keep-external-strict",
         help="Skip rules with out-of-scope references instead of pruning them",
     ),
+    force_partial: bool = typer.Option(
+        False,
+        "--force-partial",
+        help="Restore what can be mapped and prune references to missing physical devices",
+    ),
 ) -> None:
     """Apply a snapshot. Without --execute this is a dry-run only."""
     try:
@@ -242,11 +247,20 @@ def apply(
                 "[yellow]Dry-run only.[/yellow] "
                 "Re-run with --execute to create resources."
             )
-            if not report["ready"]:
+            if not report["ready"] and not force_partial:
                 raise typer.Exit(2)
+            if not report["ready"] and force_partial:
+                console.print(
+                    "[yellow]Forced partial restore is available with --execute.[/yellow]"
+                )
             return
 
-        if not report["ready"]:
+        if force_partial and keep_external_strict:
+            raise MigrationError(
+                "--force-partial cannot be combined with --keep-external-strict"
+            )
+
+        if not report["ready"] and not force_partial:
             console.print(json.dumps(report, indent=2, ensure_ascii=False))
             console.print(
                 "[red]Aborted:[/red] "
@@ -258,13 +272,20 @@ def apply(
             payload,
             client,
             prune_external=not keep_external_strict,
+            force_partial=force_partial,
         )
     except (MigrationError, HueApiError, OSError) as exc:
         console.print(f"[red]Migration failed:[/red] {exc}")
         raise typer.Exit(1) from exc
 
     console.print(json.dumps(result, indent=2, ensure_ascii=False))
-    console.print("[green]Done.[/green] The source bridge was not modified.")
+    if force_partial:
+        console.print(
+            "[yellow]Done with partial restore.[/yellow] "
+            "Review forced_missing and warning sections."
+        )
+    else:
+        console.print("[green]Done.[/green] The source bridge was not modified.")
 
 
 @app.command()
