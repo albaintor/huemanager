@@ -1,0 +1,18 @@
+name: HueManagerHomeSync
+options:
+  bundleIdPrefix: com.albaintor
+targets:
+  HueManagerHomeSync:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - Sources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.albaintor.HueManagerHomeSync
+        CODE_SIGN_ENTITLEMENTS: HueManagerHomeSync.entitlements
+        INFOPLIST_FILE: Info.plist
+        SWIFT_VERSION: 5.10
+    entitlements:
+      path: HueManagerHomeSync.entitlements
