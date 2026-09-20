@@ -304,6 +304,99 @@
     status(ready ? `${state.bridges.length} Bridge(s) configuré(s).` : "Aucun Bridge configuré.", ready ? "good" : "warn");
   }
 
+  function sessionStatusLabel(value) {
+    return ({
+      snapshot_ready: "snapshot prêt",
+      source_released: "appareils supprimés du source",
+      source_release_partial: "suppression source partielle",
+      waiting_for_devices: "attente d’appareils",
+      ready_to_restore: "prêt à restaurer",
+      restored: "restauré"
+    })[value] || value || "snapshot prêt";
+  }
+
+  function renderSessionInfo(session) {
+    if (!session) {
+      $("sessionInfo").textContent = "";
+      return;
+    }
+    const missing = (session.missing?.length || 0) + (session.unmapped_devices?.length || 0);
+    const parts = [sessionStatusLabel(session.status)];
+    if (session.destination_profile) parts.push(`destination: ${session.destination_profile}`);
+    if (session.ready) parts.push("mapping complet");
+    else if (missing) parts.push(`${missing} ressource(s)/appareil(s) manquant(s)`);
+    if (session.source_release) {
+      parts.push(
+        `source: ${session.source_release.deleted || 0} supprimé(s), ` +
+        `${session.source_release.already_absent || 0} déjà absent(s), ` +
+        `${session.source_release.failed || 0} échec(s)`
+      );
+    }
+    $("sessionInfo").textContent = parts.join(" · ");
+  }
+
+  async function loadSnapshots() {
+    const data = await api("/api/snapshots");
+    state.snapshots = data.snapshots || [];
+    const select = $("snapshotSelect");
+    const current = state.snapshotId || select.value;
+    select.replaceChildren();
+    for (const snapshot of state.snapshots) {
+      const option = document.createElement("option");
+      option.value = snapshot.id;
+      if (snapshot.invalid) {
+        option.textContent = `${snapshot.id} — snapshot invalide`;
+      } else {
+        const roomNames = (snapshot.rooms || []).join(", ") || "sans pièce";
+        option.textContent =
+          `${snapshot.created_at || ""} — ${roomNames} — ${sessionStatusLabel(snapshot.session?.status)}`;
+      }
+      select.append(option);
+    }
+    if ([...select.options].some(option => option.value === current)) select.value = current;
+    $("resumeSnapshot").disabled = !select.value;
+  }
+
+  async function resumeSelectedSnapshot() {
+    const id = $("snapshotSelect").value;
+    if (!id) return;
+    const details = await api(`/api/snapshots/${id}`);
+    state.snapshotId = id;
+    const session = details.session || {};
+    state.planReady = Boolean(session.ready);
+    state.planChecked = ["waiting_for_devices", "ready_to_restore", "restored"].includes(
+      session.status
+    );
+    if (session.source_profile && [...$("sourceBridge").options].some(
+      option => option.value === session.source_profile
+    )) {
+      $("sourceBridge").value = session.source_profile;
+    }
+    if (session.destination_profile && [...$("destinationBridge").options].some(
+      option => option.value === session.destination_profile
+    )) {
+      $("destinationBridge").value = session.destination_profile;
+    }
+    $("snapshotInfo").textContent =
+      `${details.devices || 0} appareils · pièces : ${(details.rooms || []).join(", ")} · snapshot ${id}`;
+    renderDependencies([
+      ...(details.dependencies || []).filter(dep => dep.external?.length),
+      ...(details.behavior_dependencies || []).filter(dep => dep.external?.length)
+    ]);
+    renderSessionInfo(session);
+    const release = session.source_release;
+    $("releaseInfo").textContent = release
+      ? `${release.deleted || 0} appareil(s) supprimé(s), ${release.already_absent || 0} déjà absent(s), ${release.failed || 0} échec(s).`
+      : "";
+    $("releaseSource").disabled = false;
+    $("scanLights").disabled = false;
+    $("scanSensors").disabled = false;
+    $("planButton").disabled = false;
+    $("applyButton").disabled = !state.planReady;
+    $("forceApplyButton").disabled = !state.planChecked || state.planReady;
+    status(`Migration ${id} reprise : ${sessionStatusLabel(session.status)}.`, "good");
+  }
+
   function showView(name) {
     const migration = name === "migration";
     $("migrationView").classList.toggle("hidden", !migration);
@@ -862,16 +955,50 @@
       });
       state.snapshotId = result.id;
       state.planReady = false;
+      state.planChecked = false;
       $("snapshotInfo").textContent = `${result.devices} appareils · ${result.scenes} scènes · ${result.entertainment_configurations || 0} espaces Entertainment · ${result.rules} règles CLIP · ${result.behavior_instances} automatisations v2 · ${result.virtual_sensors} variables CLIP · ${result.resourcelinks} liens de ressources`;
       renderDependencies([
         ...(result.external_dependencies || []),
         ...(result.external_behavior_dependencies || [])
       ]);
+      $("releaseSource").disabled = false;
       $("scanLights").disabled = false;
       $("scanSensors").disabled = false;
       $("planButton").disabled = false;
       $("applyButton").disabled = true;
-      status("Snapshot enregistré. Tu peux maintenant déplacer les appareils vers le Bridge Pro.", "good");
+      $("forceApplyButton").disabled = true;
+      renderSessionInfo({ status: "snapshot_ready" });
+      await loadSnapshots();
+      $("snapshotSelect").value = result.id;
+      status("Snapshot persistant enregistré. La migration pourra être reprise même après redémarrage.", "good");
+    } catch (e) { status(e.message, "bad"); }
+  });
+
+  $("releaseSource").addEventListener("click", async () => {
+    if (!state.snapshotId) return;
+    const ok = window.confirm(
+      "Supprimer du Bridge source les appareils physiques contenus dans ce snapshot ?\n\n" +
+      "Le snapshot est déjà enregistré et restera disponible. Cette opération est destructive " +
+      "sur le Bridge source, mais peut être relancée si elle n’aboutit que partiellement."
+    );
+    if (!ok) return;
+    try {
+      status("Suppression des appareils sélectionnés du Bridge source…");
+      const result = await api(`/api/snapshots/${state.snapshotId}/release-source`, {
+        method: "POST",
+        body: JSON.stringify({ source: $("sourceBridge").value })
+      });
+      const release = result.release || {};
+      $("releaseInfo").textContent =
+        `${release.deleted || 0} appareil(s) supprimé(s), ${release.already_absent || 0} déjà absent(s), ${release.failed || 0} échec(s).`;
+      renderSessionInfo(result.session);
+      await loadSnapshots();
+      status(
+        release.failed
+          ? "Suppression partielle. Tu peux corriger/réinitialiser les appareils concernés puis relancer."
+          : "Appareils libérés du Bridge source. Lancement possible de la détection sur la destination.",
+        release.failed ? "warn" : "good"
+      );
     } catch (e) { status(e.message, "bad"); }
   });
 
@@ -879,8 +1006,18 @@
     if (!state.snapshotId) return;
     try {
       const dest = $("destinationBridge").value;
-      await api(`/api/bridges/${encodeURIComponent(dest)}/search/${kind}`, { method: "POST", body: "{}" });
-      status(kind === "lights" ? "Recherche de lampes lancée sur le Bridge Pro." : "Recherche d’accessoires lancée sur le Bridge Pro.", "good");
+      const result = await api(`/api/snapshots/${state.snapshotId}/search/${kind}`, {
+        method: "POST",
+        body: JSON.stringify({ destination: dest })
+      });
+      renderSessionInfo(result.session);
+      await loadSnapshots();
+      status(
+        kind === "lights"
+          ? "Recherche de lampes lancée sur le Bridge destination."
+          : "Recherche d’accessoires lancée sur le Bridge destination.",
+        "good"
+      );
     } catch (e) { status(e.message, "bad"); }
   }
   $("scanLights").addEventListener("click", () => scan("lights"));
@@ -896,34 +1033,67 @@
       pre.textContent = JSON.stringify(result, null, 2);
       pre.classList.remove("hidden");
       state.planReady = Boolean(result.ready);
+      state.planChecked = true;
       $("applyButton").disabled = !state.planReady;
+      $("forceApplyButton").disabled = state.planReady;
+      renderSessionInfo(result.session);
+      await loadSnapshots();
       const missingCount = (result.missing?.length || 0) + (result.unmapped_devices?.length || 0);
-      status(result.ready ? "Tous les appareils physiques du snapshot sont retrouvés sur la destination." : `${missingCount} ressource(s)/appareil(s) physique(s) non remappé(s).`, result.ready ? "good" : "warn");
+      status(
+        result.ready
+          ? "Tous les appareils physiques du snapshot sont retrouvés sur la destination."
+          : `${missingCount} ressource(s)/appareil(s) physique(s) non remappé(s). Tu peux réessayer la détection plus tard ou forcer un restore partiel.`,
+        result.ready ? "good" : "warn"
+      );
     } catch (e) { status(e.message, "bad"); }
   });
 
-  $("applyButton").addEventListener("click", async () => {
-    if (!state.planReady) return;
-    const ok = window.confirm("Créer les pièces, scènes et règles sur le Bridge Pro ? Le Bridge source ne sera pas supprimé. Les liens hors périmètre seront coupés et listés dans le rapport.");
-    if (!ok) return;
+  async function applyMigration(forcePartial) {
+    if (!state.snapshotId || (!forcePartial && !state.planReady) || (forcePartial && !state.planChecked)) return;
+    const message = forcePartial
+      ? "Forcer la restauration malgré les appareils manquants ?\n\n" +
+        "HueManager restaurera uniquement les ressources remappables. Les actions de scènes, règles, " +
+        "automatisations et autres dépendances liées aux appareils absents seront élaguées ou ignorées " +
+        "et détaillées dans le rapport."
+      : "Restaurer les pièces, scènes, règles et automatisations sur le Bridge destination ?";
+    if (!window.confirm(message)) return;
     try {
-      status("Migration en cours…");
+      status(forcePartial ? "Restauration partielle forcée en cours…" : "Restauration en cours…");
       const result = await api(`/api/snapshots/${state.snapshotId}/apply`, {
         method: "POST",
-        body: JSON.stringify({ destination: $("destinationBridge").value, prune_external: true })
+        body: JSON.stringify({
+          destination: $("destinationBridge").value,
+          prune_external: true,
+          force_partial: forcePartial
+        })
       });
       const pre = $("applyResult");
       pre.textContent = JSON.stringify(result, null, 2);
       pre.classList.remove("hidden");
+      renderSessionInfo(result.session);
       const hasWarnings = Boolean(
         result.warnings?.length
+        || result.scene_warnings?.length
         || result.behavior_warnings?.length
         || result.behavior_instances_skipped?.length
+        || result.entertainment_warnings?.length
+        || result.schedule_warnings?.length
         || result.resourcelink_warnings?.length
+        || result.forced_missing?.v1?.length
+        || result.forced_missing?.devices?.length
       );
-      status("Migration terminée. Vérifie les avertissements avant de nettoyer l’ancien Bridge.", hasWarnings ? "warn" : "good");
+      await loadSnapshots();
+      status(
+        forcePartial
+          ? "Restauration partielle terminée. Le rapport indique précisément ce qui n’a pas été restauré."
+          : "Restauration terminée.",
+        hasWarnings ? "warn" : "good"
+      );
     } catch (e) { status(e.message, "bad"); }
-  });
+  }
+
+  $("applyButton").addEventListener("click", () => applyMigration(false));
+  $("forceApplyButton").addEventListener("click", () => applyMigration(true));
 
   $("createBackup").addEventListener("click", async () => {
     try {
@@ -1028,12 +1198,26 @@
   });
   $("destinationBridge").addEventListener("change", () => {
     state.planReady = false;
+    state.planChecked = false;
     state.restoreReady = false;
     $("applyButton").disabled = true;
+    $("forceApplyButton").disabled = true;
     $("restoreBackup").disabled = true;
   });
 
-  Promise.all([loadBridges(), loadBackups()]).catch(e => status(e.message, "bad"));
+  $("refreshSnapshots").addEventListener("click", () => {
+    loadSnapshots().catch(e => status(e.message, "bad"));
+  });
+  $("snapshotSelect").addEventListener("change", () => {
+    $("resumeSnapshot").disabled = !$("snapshotSelect").value;
+  });
+  $("resumeSnapshot").addEventListener("click", () => {
+    resumeSelectedSnapshot().catch(e => status(e.message, "bad"));
+  });
+
+  Promise.all([loadBridges(), loadBackups(), loadSnapshots()]).catch(
+    e => status(e.message, "bad")
+  );
 })();
 </script>
 </body>
