@@ -325,6 +325,33 @@ def apple_home_plan(bridge_name: str) -> dict:
         raise _api_error(exc) from exc
 
 
+@app.post("/api/bridges/{bridge_name}/apple-home/preview")
+def preview_apple_home_room_map(
+    bridge_name: str,
+    request: AppleHomeRoomMapRequest,
+) -> dict:
+    """Preview a draft Hue -> Apple Home room map without persisting it."""
+    try:
+        state = _load_apple_home()
+        inventory = state.get("inventory")
+        if not inventory:
+            raise MigrationError(
+                "No Apple Home inventory available. Open HueManager Home Sync on an Apple device first."
+            )
+        inventory_home_id = str((inventory.get("home") or {}).get("id") or "")
+        if inventory_home_id != request.home_id:
+            raise MigrationError(
+                "The Apple Home inventory changed. Refresh the Home inventory before previewing."
+            )
+        return build_apple_home_sync_plan(
+            inventory_tree(_client(bridge_name)),
+            inventory,
+            room_map=request.room_map,
+        )
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
 @app.put("/api/bridges/{bridge_name}/apple-home/room-map")
 def update_apple_home_room_map(
     bridge_name: str,
