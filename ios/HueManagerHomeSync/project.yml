@@ -16,6 +16,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.albaintor.HueManagerHomeSync
+        DEVELOPMENT_TEAM: CMS96L8KZ4
+        CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: HueManagerHomeSync.entitlements
         INFOPLIST_FILE: Info.plist
         TARGETED_DEVICE_FAMILY: "1,2"
