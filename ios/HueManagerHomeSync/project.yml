@@ -12,6 +12,16 @@ targets:
     platform: iOS
     sources:
       - Sources
+    preBuildScripts:
+      - name: Generate App Icon
+        script: |
+          xcrun --sdk macosx swift "$SRCROOT/Scripts/generate_app_icon.swift" \
+            "$SRCROOT/Sources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png"
+        inputFiles:
+          - "$SRCROOT/Scripts/generate_app_icon.swift"
+          - "$SRCROOT/Sources/Assets.xcassets/AppIcon.appiconset/Contents.json"
+        outputFiles:
+          - "$SRCROOT/Sources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.albaintor.HueManagerHomeSync
@@ -20,6 +30,7 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         MARKETING_VERSION: "0.7.0"
         CURRENT_PROJECT_VERSION: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     entitlements:
       path: HueManagerHomeSync.entitlements
 schemes:
