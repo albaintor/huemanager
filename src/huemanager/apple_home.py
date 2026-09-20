@@ -511,6 +511,80 @@ def build_apple_home_sync_plan(
     for row in device_rows:
         status_counts[row["status"]] = status_counts.get(row["status"], 0) + 1
 
+    # Aggregate the plan per Hue ↔ Apple room pair so clients can preview the
+    # concrete impact of a room association before applying any HomeKit move.
+    device_rows_by_hue_room: dict[str, list[dict]] = {}
+    for device_row in device_rows:
+        device_rows_by_hue_room.setdefault(
+            str(device_row.get("hue_room_id") or ""), []
+        ).append(device_row)
+
+    accessories_by_room: dict[str, list[dict]] = {}
+    for accessory in accessories:
+        room_id = str(accessory.get("room_id") or "")
+        accessories_by_room.setdefault(room_id, []).append(accessory)
+
+    matched_device_by_apple_id = {
+        str(device_row["apple_accessory_id"]): device_row
+        for device_row in device_rows
+        if device_row.get("apple_accessory_id")
+    }
+
+    moves_by_hue_room: dict[str, list[dict]] = {}
+    for move in moves:
+        moves_by_hue_room.setdefault(str(move.get("hue_room_id") or ""), []).append(move)
+
+    for room_row in room_rows:
+        hue_room_id = str(room_row.get("hue_room_id") or "")
+        target_room_id = str(room_row.get("apple_room_id") or "")
+        hue_device_rows = device_rows_by_hue_room.get(hue_room_id, [])
+
+        room_row["hue_devices"] = [
+            {
+                "id": device_row.get("hue_device_id"),
+                "name": device_row.get("hue_device_name"),
+                "status": device_row.get("status"),
+                "match_method": device_row.get("match_method"),
+                "apple_accessory_id": device_row.get("apple_accessory_id"),
+                "apple_accessory_name": device_row.get("apple_accessory_name"),
+                "apple_current_room_id": device_row.get("apple_room_id"),
+                "apple_current_room_name": device_row.get("apple_room_name"),
+            }
+            for device_row in hue_device_rows
+        ]
+
+        target_accessories = (
+            accessories_by_room.get(target_room_id, []) if target_room_id else []
+        )
+        room_row["apple_accessories"] = [
+            {
+                "id": accessory.get("id"),
+                "name": accessory.get("name"),
+                "manufacturer": accessory.get("manufacturer"),
+                "model": accessory.get("model"),
+                "matched_hue_device_id": matched_device_by_apple_id.get(
+                    str(accessory.get("id") or ""), {}
+                ).get("hue_device_id"),
+                "matched_hue_device_name": matched_device_by_apple_id.get(
+                    str(accessory.get("id") or ""), {}
+                ).get("hue_device_name"),
+            }
+            for accessory in target_accessories
+        ]
+
+        room_row["planned_moves"] = copy.deepcopy(
+            moves_by_hue_room.get(hue_room_id, [])
+        )
+        room_row["impact"] = {
+            "hue_device_count": len(hue_device_rows),
+            "apple_accessory_count": len(target_accessories),
+            "move_count": len(room_row["planned_moves"]),
+            "already_correct_count": sum(
+                device_row.get("status") == "already_correct"
+                for device_row in hue_device_rows
+            ),
+        }
+
     return {
         "home": copy.deepcopy(home),
         "inventory_received_at": inventory.get("received_at"),
