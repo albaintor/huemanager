@@ -703,8 +703,14 @@
 
       const label = document.createElement("div");
       label.className = "grow";
+      const matchInfo = room.method
+        ? ` · ${room.method}${room.confidence != null ? ` ${Math.round(room.confidence * 100)}%` : ""}`
+        : "";
+      const suggestionInfo = !room.apple_room_id && (room.suggestions || []).length
+        ? ` · suggestions: ${room.suggestions.map(item => `${item.name} (${Math.round(item.score * 100)}%)`).join(", ")}`
+        : "";
       label.innerHTML = `<strong>${escapeHtml(room.hue_room_name)}</strong><br>` +
-        `<span class="muted"><code>${escapeHtml(room.hue_room_id)}</code></span>`;
+        `<span class="muted"><code>${escapeHtml(room.hue_room_id)}</code>${escapeHtml(matchInfo)}${escapeHtml(suggestionInfo)}</span>`;
 
       const select = document.createElement("select");
       select.dataset.hueRoomId = room.hue_room_id;
