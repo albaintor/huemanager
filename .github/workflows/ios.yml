@@ -1,0 +1,46 @@
+name: iOS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios.yml'
+      - 'src/huemanager/apple_home.py'
+      - 'src/huemanager/web.py'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios.yml'
+      - 'src/huemanager/apple_home.py'
+      - 'src/huemanager/web.py'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Xcode version
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios/HueManagerHomeSync
+        run: xcodegen generate
+
+      - name: Build iOS app without signing
+        working-directory: ios/HueManagerHomeSync
+        run: |
+          xcodebuild             -project HueManagerHomeSync.xcodeproj             -scheme HueManagerHomeSync             -configuration Debug             -sdk iphonesimulator             -destination 'generic/platform=iOS Simulator'             CODE_SIGNING_ALLOWED=NO             build
