@@ -11,6 +11,8 @@ struct SyncMove: Codable, Identifiable {
     let hueDeviceID: String
     let hueDeviceName: String
     let matchMethod: String
+    let roomMatchMethod: String?
+    let roomMatchConfidence: Double?
 
     var id: String { accessoryID + ":" + toRoomID }
 
@@ -24,6 +26,8 @@ struct SyncMove: Codable, Identifiable {
         case hueDeviceID = "hue_device_id"
         case hueDeviceName = "hue_device_name"
         case matchMethod = "match_method"
+        case roomMatchMethod = "room_match_method"
+        case roomMatchConfidence = "room_match_confidence"
     }
 }
 
@@ -111,22 +115,100 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     @Published private(set) var planSummary: SyncSummary?
     @Published private(set) var status = "En attente de l’autorisation Apple Maison…"
     @Published private(set) var hasError = false
+    @Published var automaticSyncEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(automaticSyncEnabled, forKey: "automaticSyncEnabled")
+            configureAutomaticSync()
+        }
+    }
 
     private let homeManager = HMHomeManager()
+    private var automaticTimer: Timer?
+    private var automaticSyncRunning = false
 
     var pendingMoves: Int { moves.count }
 
     override init() {
+        automaticSyncEnabled = UserDefaults.standard.bool(forKey: "automaticSyncEnabled")
         super.init()
         homeManager.delegate = self
     }
 
     func start() {
         refreshHomes()
+        configureAutomaticSync()
     }
 
     func homeManagerDidUpdateHomes(_ manager: HMHomeManager) {
         refreshHomes()
+        if automaticSyncEnabled {
+            Task { @MainActor in
+                await automaticSyncCycle()
+            }
+        }
+    }
+
+    private func configureAutomaticSync() {
+        automaticTimer?.invalidate()
+        automaticTimer = nil
+        guard automaticSyncEnabled else { return }
+
+        automaticTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                await self?.automaticSyncCycle()
+            }
+        }
+        Task { @MainActor in
+            await automaticSyncCycle()
+        }
+    }
+
+    private func accessoryMatchIsSafe(_ move: SyncMove) -> Bool {
+        if move.matchMethod == "serial" || move.matchMethod == "name" {
+            return true
+        }
+        if move.matchMethod.hasPrefix("heuristic:"),
+           let score = Double(move.matchMethod.split(separator: ":").last ?? "") {
+            return score >= 0.90
+        }
+        return false
+    }
+
+    private func roomMatchIsSafe(_ move: SyncMove) -> Bool {
+        switch move.roomMatchMethod {
+        case "manual", "name":
+            return true
+        case "heuristic":
+            return (move.roomMatchConfidence ?? 0) >= 0.85
+        default:
+            return false
+        }
+    }
+
+    @MainActor
+    private func automaticSyncCycle() async {
+        guard automaticSyncEnabled, !automaticSyncRunning, !homes.isEmpty else { return }
+        automaticSyncRunning = true
+        defer { automaticSyncRunning = false }
+
+        await loadPlan()
+        guard !hasError, let summary = planSummary else { return }
+
+        let safePlan =
+            summary.unmatchedAccessories == 0 &&
+            summary.ambiguousAccessories == 0 &&
+            summary.missingHomeRooms == 0 &&
+            moves.allSatisfy { accessoryMatchIsSafe($0) && roomMatchIsSafe($0) }
+
+        guard safePlan else {
+            if !moves.isEmpty {
+                status = "Synchronisation automatique suspendue : correspondance ambiguë ou confiance insuffisante."
+            }
+            return
+        }
+        if !moves.isEmpty {
+            await applyPlan()
+        }
     }
 
     private func refreshHomes() {
