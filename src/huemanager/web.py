@@ -35,8 +35,19 @@ from .migration import (
     room_deletion_impact,
     save_snapshot,
 )
+from .session import (
+    load_migration_session,
+    new_migration_session,
+    record_plan,
+    record_restore,
+    record_search,
+    record_source_release,
+    release_source_resources,
+    save_migration_session,
+    session_summary,
+)
 
-app = FastAPI(title="HueManager", version="0.5.1")
+app = FastAPI(title="HueManager", version="0.6.0")
 SNAPSHOT_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 BACKUP_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 
@@ -66,6 +77,7 @@ class DestinationRequest(BaseModel):
 
 class ApplyRequest(DestinationRequest):
     prune_external: bool = True
+    force_partial: bool = False
 
 
 class RestoreRequest(DestinationRequest):
@@ -105,6 +117,29 @@ def _load_snapshot(snapshot_id: str) -> dict:
     if not path.exists():
         raise HTTPException(status_code=404, detail="Snapshot not found")
     return load_snapshot(path)
+
+
+def _session_dir() -> Path:
+    path = _store().path.parent / "sessions"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _session_path(snapshot_id: str) -> Path:
+    if not SNAPSHOT_ID_RE.fullmatch(snapshot_id):
+        raise HTTPException(status_code=400, detail="Invalid snapshot id")
+    return _session_dir() / f"{snapshot_id}.json"
+
+
+def _load_session(snapshot_id: str, *, source_profile: str | None = None) -> dict:
+    return load_migration_session(
+        _session_path(snapshot_id),
+        source_profile=source_profile,
+    )
+
+
+def _save_session(snapshot_id: str, session: dict) -> None:
+    save_migration_session(session, _session_path(snapshot_id))
 
 
 def _backup_dir() -> Path:
@@ -395,6 +430,7 @@ def create_web_snapshot(request: SnapshotRequest) -> dict:
         snapshot = create_selection_snapshot(_client(request.source), request.rooms)
         snapshot_id = uuid.uuid4().hex
         save_snapshot(snapshot, _snapshot_path(snapshot_id))
+        _save_session(snapshot_id, new_migration_session(request.source))
         external = [dep for dep in snapshot.get("dependencies", []) if dep.get("external")]
         external_v2 = [
             dep for dep in snapshot.get("behavior_dependencies", []) if dep.get("external")
@@ -418,22 +454,93 @@ def create_web_snapshot(request: SnapshotRequest) -> dict:
         raise _api_error(exc) from exc
 
 
+@app.get("/api/snapshots")
+def list_snapshots() -> dict:
+    items = []
+    for path in _snapshot_dir().glob("*.json"):
+        try:
+            snapshot = load_snapshot(path)
+            session = _load_session(path.stem)
+            items.append(
+                {
+                    "id": path.stem,
+                    "created_at": snapshot.get("created_at"),
+                    "source_bridge": snapshot.get("source_bridge", {}),
+                    "rooms": [
+                        room.get("metadata", {}).get("name")
+                        for room in snapshot.get("rooms", [])
+                    ],
+                    "devices": len(snapshot.get("devices", [])),
+                    "session": session_summary(session),
+                }
+            )
+        except (MigrationError, OSError, ValueError):
+            items.append({"id": path.stem, "invalid": True, "created_at": ""})
+    items.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+    return {"snapshots": items}
+
+
 @app.get("/api/snapshots/{snapshot_id}")
 def snapshot_details(snapshot_id: str) -> dict:
     snapshot = _load_snapshot(snapshot_id)
+    session = _load_session(snapshot_id)
     return {
         "id": snapshot_id,
         "created_at": snapshot.get("created_at"),
         "rooms": [room.get("metadata", {}).get("name") for room in snapshot.get("rooms", [])],
+        "devices": len(snapshot.get("devices", [])),
         "dependencies": snapshot.get("dependencies", []),
         "behavior_dependencies": snapshot.get("behavior_dependencies", []),
+        "session": session_summary(session),
     }
+
+
+@app.post("/api/snapshots/{snapshot_id}/release-source")
+def release_snapshot_source(snapshot_id: str) -> dict:
+    try:
+        snapshot = _load_snapshot(snapshot_id)
+        session = _load_session(snapshot_id)
+        source_profile = session.get("source_profile")
+        if not source_profile:
+            raise MigrationError("Snapshot has no source Bridge profile")
+        release = release_source_resources(snapshot, _client(source_profile))
+        session = record_source_release(session, release)
+        _save_session(snapshot_id, session)
+        return {"release": release, "session": session_summary(session)}
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@app.post("/api/snapshots/{snapshot_id}/search/{kind}")
+def search_snapshot_devices(snapshot_id: str, kind: str, request: DestinationRequest) -> dict:
+    try:
+        if kind not in {"lights", "sensors"}:
+            raise MigrationError("Use lights or sensors")
+        client = _client(request.destination)
+        result = client.v1_post(f"/{kind}", {})
+        session = record_search(
+            _load_session(snapshot_id),
+            request.destination,
+            kind,
+        )
+        _save_session(snapshot_id, session)
+        return {"ok": True, "result": result, "session": session_summary(session)}
+    except Exception as exc:
+        raise _api_error(exc) from exc
 
 
 @app.post("/api/snapshots/{snapshot_id}/plan")
 def plan_snapshot(snapshot_id: str, request: DestinationRequest) -> dict:
     try:
-        return analyse(_load_snapshot(snapshot_id), _client(request.destination))
+        result = analyse(_load_snapshot(snapshot_id), _client(request.destination))
+        session = record_plan(
+            _load_session(snapshot_id),
+            request.destination,
+            result,
+        )
+        _save_session(snapshot_id, session)
+        result["session"] = session_summary(session)
+        return result
     except Exception as exc:
         raise _api_error(exc) from exc
 
@@ -441,11 +548,21 @@ def plan_snapshot(snapshot_id: str, request: DestinationRequest) -> dict:
 @app.post("/api/snapshots/{snapshot_id}/apply")
 def apply_web_snapshot(snapshot_id: str, request: ApplyRequest) -> dict:
     try:
-        return apply_snapshot(
-            _load_snapshot(snapshot_id),
+        snapshot = _load_snapshot(snapshot_id)
+        result = apply_snapshot(
+            snapshot,
             _client(request.destination),
             prune_external=request.prune_external,
+            force_partial=request.force_partial,
         )
+        session = record_restore(
+            _load_session(snapshot_id),
+            request.destination,
+            result,
+        )
+        _save_session(snapshot_id, session)
+        result["session"] = session_summary(session)
+        return result
     except MigrationError as exc:
         raise _api_error(exc) from exc
     except Exception as exc:
