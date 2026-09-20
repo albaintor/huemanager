@@ -146,6 +146,8 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     @Published private(set) var planSummary: SyncSummary?
     @Published private(set) var status = "En attente de l’autorisation Apple Maison…"
     @Published private(set) var hasError = false
+    @Published private(set) var homeKitAuthorization = "Indéterminée"
+    @Published private(set) var homeKitLoaded = false
 
     @Published var automaticSyncEnabled: Bool {
         didSet {
@@ -157,11 +159,18 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         }
     }
 
-    private let homeManager = HMHomeManager()
+    private var homeManager = HMHomeManager()
     private var automaticTimer: Timer?
     private var automaticSyncRunning = false
+    private var authorizationReloadPerformed = false
 
     var pendingMoves: Int { moves.count }
+
+    var homeKitDiagnostic: String {
+        let primary = homeManager.primaryHome?.name ?? "aucune"
+        return "auth=\(homeKitAuthorization) raw=\(homeManager.authorizationStatus.rawValue) " +
+            "loaded=\(homeKitLoaded) homes=\(homes.count) primary=\(primary)"
+    }
 
     private override init() {
         let defaults = UserDefaults.standard
@@ -171,19 +180,90 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         automaticSyncEnabled = defaults.bool(forKey: DefaultsKey.automaticSyncEnabled)
         super.init()
         homeManager.delegate = self
+        updateAuthorizationStatus(homeManager.authorizationStatus)
     }
 
     func start() {
-        refreshHomes()
+        updateAuthorizationStatus(homeManager.authorizationStatus)
+        if homeKitLoaded {
+            refreshHomes()
+        } else {
+            status = "Chargement de la base Apple Maison…"
+            hasError = false
+        }
         configureAutomaticSync()
     }
 
-    func homeManagerDidUpdateHomes(_ manager: HMHomeManager) {
-        refreshHomes()
-        if automaticSyncEnabled {
-            Task {
-                await automaticSyncCycle()
+    nonisolated func homeManagerDidUpdateHomes(_ manager: HMHomeManager) {
+        Task { @MainActor [weak self] in
+            guard let self, manager === self.homeManager else { return }
+            self.homeKitLoaded = true
+            self.updateAuthorizationStatus(manager.authorizationStatus)
+            self.refreshHomes()
+
+            if self.automaticSyncEnabled {
+                await self.automaticSyncCycle()
             }
+        }
+    }
+
+    nonisolated func homeManager(
+        _ manager: HMHomeManager,
+        didUpdate authorizationStatus: HMHomeManagerAuthorizationStatus
+    ) {
+        Task { @MainActor [weak self] in
+            guard let self, manager === self.homeManager else { return }
+
+            self.updateAuthorizationStatus(authorizationStatus)
+
+            if authorizationStatus.contains(.authorized) {
+                if self.homeKitLoaded || !manager.homes.isEmpty {
+                    self.refreshHomes()
+                } else if !self.authorizationReloadPerformed {
+                    // The authorization callback and the initial HomeKit database load are
+                    // independent. Recreate the manager once after the first authorization
+                    // transition so we cannot remain stuck with the initial empty snapshot.
+                    self.authorizationReloadPerformed = true
+                    try? await Task.sleep(for: .milliseconds(500))
+                    self.restartHomeManager()
+                }
+            } else if authorizationStatus.contains(.restricted) {
+                self.homes = []
+                self.homeKitLoaded = false
+                self.status =
+                    "Accès Apple Maison refusé ou restreint. Autorise HueManager Home Sync " +
+                    "dans Réglages, puis recharge les données Maison."
+                self.hasError = true
+            }
+        }
+    }
+
+    func reloadHomeKit() {
+        authorizationReloadPerformed = true
+        restartHomeManager()
+    }
+
+    private func restartHomeManager() {
+        homeKitLoaded = false
+        homes = []
+        status = "Rechargement de la base Apple Maison…"
+        hasError = false
+
+        let manager = HMHomeManager()
+        homeManager = manager
+        manager.delegate = self
+        updateAuthorizationStatus(manager.authorizationStatus)
+    }
+
+    private func updateAuthorizationStatus(_ authorizationStatus: HMHomeManagerAuthorizationStatus) {
+        if authorizationStatus.contains(.authorized) {
+            homeKitAuthorization = "Autorisée"
+        } else if authorizationStatus.contains(.restricted) {
+            homeKitAuthorization = "Refusée / restreinte"
+        } else if authorizationStatus.contains(.determined) {
+            homeKitAuthorization = "Déterminée, sans accès"
+        } else {
+            homeKitAuthorization = "En attente"
         }
     }
 
@@ -277,6 +357,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     }
 
     private func refreshHomes() {
+        updateAuthorizationStatus(homeManager.authorizationStatus)
         homes = homeManager.homes.sorted {
             $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
         }
@@ -287,8 +368,23 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         }
 
         if homes.isEmpty {
-            status =
-                "Aucune maison HomeKit accessible. Vérifie l’autorisation Maison de l’application."
+            if homeManager.authorizationStatus.contains(.restricted) {
+                status =
+                    "Accès Apple Maison refusé ou restreint. Vérifie Réglages > " +
+                    "Confidentialité et sécurité > HomeKit."
+                hasError = true
+            } else if !homeKitLoaded {
+                status = "Chargement de la base Apple Maison…"
+                hasError = false
+            } else if homeManager.authorizationStatus.contains(.authorized) {
+                status =
+                    "HomeKit est autorisé mais n’a retourné aucune Maison. Utilise " +
+                    "« Recharger les données Maison » et relève le diagnostic affiché."
+                hasError = true
+            } else {
+                status = "En attente de l’autorisation Apple Maison…"
+                hasError = false
+            }
         } else {
             status = "\(homes.count) maison(s) Apple disponible(s)."
             hasError = false
