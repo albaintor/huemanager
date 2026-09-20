@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import HomeKit
+import Security
 
 struct SyncMove: Codable, Identifiable {
     let accessoryID: String
@@ -166,10 +167,18 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
 
     var pendingMoves: Int { moves.count }
 
+    var homeKitEntitlementStatus: String {
+        guard let task = SecTaskCreateFromSelf(nil) else { return "Inconnu" }
+        let key = "com.apple.developer.homekit" as CFString
+        let value = SecTaskCopyValueForEntitlement(task, key, nil)
+        return (value as? Bool) == true ? "Présent" : "Absent"
+    }
+
     var homeKitDiagnostic: String {
         let primary = homeManager.primaryHome?.name ?? "aucune"
-        return "auth=\(homeKitAuthorization) raw=\(homeManager.authorizationStatus.rawValue) " +
-            "loaded=\(homeKitLoaded) homes=\(homes.count) primary=\(primary)"
+        return "entitlement=\(homeKitEntitlementStatus) auth=\(homeKitAuthorization) " +
+            "raw=\(homeManager.authorizationStatus.rawValue) loaded=\(homeKitLoaded) " +
+            "homes=\(homes.count) primary=\(primary)"
     }
 
     private override init() {
