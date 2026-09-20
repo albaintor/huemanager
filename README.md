@@ -325,3 +325,35 @@ Plusieurs éléments peuvent être sélectionnés en même temps, avec **Tout s�
 HueManager relance l'audit : si une anomalie a disparu ou changé à la suite d'un nettoyage précédent,
 elle est ignorée plutôt que supprimée sur la base d'un état devenu obsolète.
 
+
+
+## Apple Maison : synchronisation des pièces Hue
+
+HueManager 0.7 ajoute un planificateur de correspondance entre les pièces du Bridge Hue et les
+pièces Apple Maison.
+
+L'affectation d'un accessoire à une pièce Apple est stockée dans la base HomeKit du compte Apple,
+pas dans le Bridge Hue. Le serveur HueManager calcule donc les correspondances et les actions,
+tandis que l'application compagnon `apple-home-helper`, autorisée HomeKit sur macOS, lit et
+modifie la base Maison.
+
+Le matching des pièces est volontairement heuristique mais conservateur :
+
+- égalité après normalisation des accents, espaces et casse ;
+- synonymes français/anglais comme Salon/Séjour/Living room, Bureau/Office,
+  Salle de bain/SDB/Bathroom, Entrée/Hallway ;
+- noms partiels comme `Chambre Louis` et `Louis` ;
+- score de similarité avec détection des ambiguïtés ;
+- correspondance manuelle persistante disponible depuis l'onglet Gestion.
+
+Les accessoires sont appariés en priorité avec les identifiants disponibles (numéro de série/MAC
+lorsqu'ils correspondent), puis par nom normalisé et enfin par similarité de nom avec seuil élevé.
+
+Le compagnon macOS dispose aussi d'un mode **Synchronisation automatique sûre**. Après
+l'autorisation HomeKit initiale, il peut republier l'inventaire et appliquer périodiquement les
+déplacements sans intervention. Le mode auto s'arrête et ne modifie rien si une pièce ou un
+accessoire est ambigu, absent, ou si le score heuristique est inférieur aux seuils de confiance.
+
+Un contrôleur HAP/HomeKit tiers exécuté dans Docker ne peut pas remplacer ce compagnon pour cette
+fonction : les pièces Apple appartiennent à la base HomeKit du contrôleur Apple et ne sont pas
+des propriétés stockées dans les accessoires Hue.
