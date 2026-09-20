@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDisplayName</key>
+    <string>HueManager Home Sync</string>
+    <key>NSHomeKitUsageDescription</key>
+    <string>HueManager Home Sync utilise Apple Maison pour aligner les accessoires Hue avec les pièces Hue.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>HueManager Home Sync communique avec votre instance locale HueManager.</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+    </dict>
+</dict>
+</plist>
