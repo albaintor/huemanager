@@ -78,6 +78,11 @@ struct ContentView: View {
 
             Toggle("Synchronisation automatique sûre", isOn: $model.automaticSyncEnabled)
 
+            LabeledContent(
+                "Actualisation en arrière-plan",
+                value: model.backgroundRefreshStatus
+            )
+
             Text(
                 "Le mode automatique ne déplace que les accessoires dont le matching " +
                 "et la pièce cible dépassent les seuils de confiance. Les cas ambigus " +
