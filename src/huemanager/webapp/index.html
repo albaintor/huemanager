@@ -347,6 +347,7 @@
       "apple.otherHomeAccessories": "Autres accessoires Maison / infrastructure",
       "apple.otherHomeAccessoriesHint": "Hors périmètre Hue — masqués pour ne pas brouiller la comparaison",
       "apple.manufacturer": "Fabricant",
+      "apple.viaBridge": "via",
       "apple.noHueDevice": "Aucun accessoire Hue dans cette pièce.",
       "apple.noHomeAccessory": "Aucun accessoire actuellement dans cette pièce Apple.",
       "apple.noSelectedRoom": "Aucune pièce Apple sélectionnée.",
@@ -428,6 +429,7 @@
       "apple.otherHomeAccessories": "Other Apple Home accessories / infrastructure",
       "apple.otherHomeAccessoriesHint": "Outside the Hue scope — collapsed to keep the comparison readable",
       "apple.manufacturer": "Manufacturer",
+      "apple.viaBridge": "via",
       "apple.noHueDevice": "No Hue accessory in this room.",
       "apple.noHomeAccessory": "No accessory currently in this Apple Home room.",
       "apple.noSelectedRoom": "No Apple Home room selected.",
@@ -958,7 +960,14 @@
     } else if (accessory.origin === "hue") {
       lines.push(t("apple.unmatched"));
     }
-    if (showOrigin && (accessory.manufacturer || accessory.model)) {
+
+    if (accessory.origin === "hue" && accessory.bridge_name) {
+      const ownProduct = [accessory.manufacturer, accessory.model]
+        .filter(Boolean)
+        .join(" · ");
+      if (ownProduct) lines.push(ownProduct);
+      lines.push(`${t("apple.viaBridge")} ${accessory.bridge_name}`);
+    } else if (showOrigin && (accessory.manufacturer || accessory.model)) {
       lines.push(
         [accessory.manufacturer, accessory.model].filter(Boolean).join(" · ")
       );
