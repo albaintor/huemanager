@@ -8,6 +8,7 @@ from huemanager.migration import (
     _create_entertainment_configurations,
     _create_schedules,
     _device_identifiers,
+    _scene_body_with_pruning,
     audit_bridge,
     build_mapping_plan,
     delete_audit_issue,
@@ -16,6 +17,14 @@ from huemanager.migration import (
     rewrite_behavior_configuration,
     rewrite_rule,
     room_deletion_impact,
+)
+from huemanager.session import (
+    load_migration_session,
+    new_migration_session,
+    record_plan,
+    release_source_resources,
+    save_migration_session,
+    session_summary,
 )
 
 
@@ -701,3 +710,139 @@ def test_bridge_audit_finds_safe_and_broken_cleanup_candidates():
     )
     assert len(forced["deleted"]) == 1
     assert ("v1", "/rules/2") in forced_client.deleted
+
+
+
+def test_scene_force_restore_prunes_only_unmapped_actions():
+    scene = {
+        "id": "scene-source",
+        "metadata": {"name": "Mixed scene"},
+        "actions": [
+            {
+                "target": {"rid": "light-present", "rtype": "light"},
+                "action": {"on": {"on": True}},
+            },
+            {
+                "target": {"rid": "light-missing", "rtype": "light"},
+                "action": {"on": {"on": False}},
+            },
+        ],
+    }
+    destination_group = {"id": "room-dest", "type": "room"}
+    plan = SimpleNamespace(
+        v2_map={
+            "light-present": {
+                "id": "light-dest",
+                "type": "light",
+            }
+        }
+    )
+
+    body, pruned = _scene_body_with_pruning(
+        scene,
+        destination_group,
+        plan,
+        prune_unmapped=True,
+    )
+
+    assert body is not None
+    assert len(body["actions"]) == 1
+    assert body["actions"][0]["target"]["rid"] == "light-dest"
+    assert len(pruned) == 1
+    assert pruned[0]["target"]["rid"] == "light-missing"
+
+
+def test_scene_force_restore_skips_scene_when_all_actions_are_missing():
+    scene = {
+        "id": "scene-source",
+        "metadata": {"name": "Unavailable scene"},
+        "actions": [
+            {
+                "target": {"rid": "light-missing", "rtype": "light"},
+                "action": {"on": {"on": True}},
+            }
+        ],
+    }
+
+    body, pruned = _scene_body_with_pruning(
+        scene,
+        {"id": "room-dest", "type": "room"},
+        SimpleNamespace(v2_map={}),
+        prune_unmapped=True,
+    )
+
+    assert body is None
+    assert len(pruned) == 1
+
+
+def test_release_source_resources_deletes_each_v2_device_once_and_is_idempotent():
+    class FakeClient:
+        def __init__(self):
+            self.deleted = []
+
+        def v2_resources(self):
+            return [
+                {"id": "device-present", "type": "device"},
+                {"id": "unrelated", "type": "device"},
+            ]
+
+        def v2_delete(self, resource_type, resource_id):
+            self.deleted.append((resource_type, resource_id))
+            return []
+
+    snapshot = {
+        "devices": [
+            {
+                "id": "device-present",
+                "metadata": {"name": "Motion"},
+                "services_expanded": [
+                    {"id_v1": "/sensors/1"},
+                    {"id_v1": "/sensors/2"},
+                    {"id_v1": "/sensors/3"},
+                ],
+            },
+            {
+                "id": "device-gone",
+                "metadata": {"name": "Old lamp"},
+                "services_expanded": [{"id_v1": "/lights/7"}],
+            },
+        ]
+    }
+    client = FakeClient()
+
+    report = release_source_resources(snapshot, client)
+
+    assert client.deleted == [("device", "device-present")]
+    assert report["deleted"] == 1
+    assert report["already_absent"] == 1
+    assert report["failed"] == 0
+    assert report["completed"]
+
+
+def test_migration_session_survives_restart_and_keeps_partial_plan(tmp_path):
+    path = tmp_path / "session.json"
+    session = new_migration_session("old")
+    session = record_plan(
+        session,
+        "pro",
+        {
+            "ready": False,
+            "mapped": 3,
+            "lights": 2,
+            "sensors": 1,
+            "devices": 3,
+            "missing": [{"source": "/lights/9", "name": "Orphan"}],
+            "unmapped_devices": [{"id": "device-9", "name": "Orphan"}],
+        },
+    )
+    save_migration_session(session, path)
+
+    loaded = load_migration_session(path)
+    summary = session_summary(loaded)
+
+    assert loaded["source_profile"] == "old"
+    assert loaded["destination_profile"] == "pro"
+    assert loaded["status"] == "waiting_for_devices"
+    assert not summary["ready"]
+    assert summary["missing"][0]["source"] == "/lights/9"
+    assert summary["unmapped_devices"][0]["id"] == "device-9"
