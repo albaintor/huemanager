@@ -208,7 +208,7 @@ def _apple_accessory_origin(accessory: dict) -> str:
     model = str(accessory.get("model") or "").strip()
     name = str(accessory.get("name") or "").strip()
 
-    haystack = " ".join((manufacturer, model, name)).lower()
+    haystack = f"{manufacturer} {model} {name}".lower()
     if any(hint in haystack for hint in HUE_ACCESSORY_HINTS):
         if "bridge" in haystack:
             return "hue_bridge"
