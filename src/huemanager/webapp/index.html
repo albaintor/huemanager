@@ -18,6 +18,9 @@
     main { max-width: 1280px; margin: 0 auto; padding: 24px; }
     h1 { margin: 0; font-size: 28px; }
     .brand { display: flex; align-items: center; gap: 14px; margin-bottom: 4px; }
+    .language-picker { margin-left: auto; min-width: 130px; }
+    .language-picker label { margin: 0 0 4px; font-size: 12px; color: var(--muted); }
+    .language-picker select { min-height: 36px; }
     .brand img { width: 86px; max-height: 42px; object-fit: contain; }
     .tabs { display: flex; gap: 8px; margin-top: 16px; }
     .tabs button.active { border-color: var(--accent); box-shadow: inset 0 -2px var(--accent); }
@@ -69,6 +72,16 @@
     .pill { display: inline-block; padding: 2px 7px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); font-size: 12px; }
     .pill.warn { border-color: var(--warn); color: var(--warn); } .pill.good { border-color: var(--good); color: var(--good); }
     .dependency { border-left: 3px solid var(--warn); padding: 9px 11px; background: var(--panel-2); margin: 8px 0; border-radius: 0 8px 8px 0; }
+    .apple-room-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin: 12px 0; background: var(--panel-2); }
+    .apple-room-head { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.4fr); gap: 16px; align-items: end; }
+    .room-impact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+    .room-impact-column { border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--panel); }
+    .room-impact-column h4 { margin: 0 0 8px; font-size: 14px; }
+    .room-impact-device { padding: 7px 0; border-top: 1px solid var(--border); }
+    .room-impact-device:first-of-type { border-top: 0; }
+    .room-impact-actions { margin-top: 10px; padding: 10px; border-left: 3px solid var(--accent); background: rgba(122, 162, 255, .08); }
+    .room-impact-actions.warn { border-left-color: var(--warn); background: rgba(241, 189, 99, .08); }
+    .draft-note { margin-top: 10px; padding: 9px 11px; border: 1px dashed var(--warn); border-radius: 8px; color: var(--warn); }
     code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
     pre { white-space: pre-wrap; word-break: break-word; background: #090b10; border: 1px solid var(--border); border-radius: 8px; padding: 10px; max-height: 320px; overflow: auto; }
     .hidden { display: none !important; }
@@ -77,6 +90,7 @@
     @media (max-width: 850px) {
       main { padding: 14px; }
       .span-4, .span-5, .span-7, .span-8, .span-12 { grid-column: span 12; }
+      .apple-room-head, .room-impact-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -88,16 +102,23 @@
       alt="Philips Hue">
     <div>
       <h1>HueManager</h1>
-      <p class="muted">Migration, audit et nettoyage de Bridges Hue.</p>
+      <p class="muted" data-i18n="brand.subtitle">Migration, audit et nettoyage de Bridges Hue.</p>
+    </div>
+    <div class="language-picker">
+      <label for="languageSelect" data-i18n="language.label">Langue</label>
+      <select id="languageSelect" aria-label="Langue">
+        <option value="fr">Français</option>
+        <option value="en">English</option>
+      </select>
     </div>
   </div>
   <div id="globalStatus" class="status">Chargement des Bridges…</div>
   <div class="tabs" role="tablist">
-    <button id="migrationTab" class="active" type="button">Migration</button>
-    <button id="managementTab" type="button">Gestion</button>
+    <button id="managementTab" class="active" type="button" data-i18n="tab.management">Gestion</button>
+    <button id="migrationTab" type="button" data-i18n="tab.migration">Migration</button>
   </div>
 
-  <div id="migrationView">
+  <div id="migrationView" class="hidden">
   <section class="grid">
     <div class="card span-4">
       <h2>Bridges</h2>
@@ -209,31 +230,31 @@
   </section>
   </div>
 
-  <div id="managementView" class="hidden">
+  <div id="managementView">
     <section class="grid">
       <div class="card span-4">
-        <h2>Gestion du Bridge</h2>
+        <h2 data-i18n="management.title">Gestion du Bridge</h2>
         <p class="muted">
           Analyse la configuration sans modification, puis propose uniquement
           des nettoyages ciblés.
         </p>
-        <label for="managementBridge">Bridge à analyser</label>
+        <label for="managementBridge" data-i18n="management.bridge">Bridge à analyser</label>
         <select id="managementBridge"></select>
         <div class="row" style="margin-top:12px">
-          <button id="auditBridge" class="primary">Analyser</button>
+          <button id="auditBridge" class="primary" data-i18n="management.analyze">Analyser</button>
         </div>
         <div id="auditSummary" class="audit-summary"></div>
       </div>
       <div class="card span-8">
-        <h2>Incohérences et nettoyage</h2>
+        <h2 data-i18n="management.cleanupTitle">Incohérences et nettoyage</h2>
         <p class="muted">
           Les éléments verts sont des candidats de nettoyage à faible risque.
           Les éléments orange/rouge nécessitent une vérification explicite.
           HueManager indique la raison exacte avant toute suppression risquée.
         </p>
         <div class="audit-toolbar">
-          <button id="selectAllAudit" type="button" disabled>Tout sélectionner</button>
-          <button id="deselectAllAudit" type="button" disabled>Tout désélectionner</button>
+          <button id="selectAllAudit" type="button" disabled data-i18n="management.selectAll">Tout sélectionner</button>
+          <button id="deselectAllAudit" type="button" disabled data-i18n="management.selectNone">Tout désélectionner</button>
           <span id="auditSelectedCount" class="pill">0 sélectionné</span>
           <button id="cleanupSelectedAudit" class="danger" type="button" disabled>
             Supprimer la sélection
@@ -245,20 +266,18 @@
       </div>
 
       <div class="card span-12">
-        <h2>Apple Maison — synchronisation des pièces Hue</h2>
-        <p class="muted">
-          Apple Maison conserve ses propres affectations de pièces. HueManager calcule la
-          correspondance avec les pièces Hue ; l’application compagnon iPhone/iPad
-          <code>apple-home-helper</code> publie l’inventaire HomeKit et applique ensuite les
-          déplacements autorisés par Apple.
+        <h2 data-i18n="apple.title">Apple Maison — synchronisation des pièces Hue</h2>
+        <p class="muted" data-i18n="apple.description">
+          Sélectionne une pièce Apple pour chaque pièce Hue : l’impact est recalculé immédiatement
+          sans enregistrer. Enregistre seulement après avoir vérifié les accessoires présents et les déplacements proposés.
         </p>
         <div class="row">
-          <button id="refreshAppleHome">Actualiser l’état Maison</button>
-          <button id="planAppleHome" class="primary" disabled>Analyser Hue ↔ Maison</button>
-          <button id="saveAppleRoomMap" disabled>Enregistrer les correspondances</button>
+          <button id="refreshAppleHome" data-i18n="apple.refresh">Actualiser l’état Maison</button>
+          <button id="planAppleHome" class="primary" disabled data-i18n="apple.analyze">Analyser Hue ↔ Maison</button>
+          <button id="saveAppleRoomMap" disabled data-i18n="apple.save">Enregistrer les correspondances</button>
         </div>
         <div id="appleHomeStatus" class="muted" style="margin-top:10px">
-          Aucun inventaire Apple Maison reçu.
+          <span data-i18n="apple.noInventory">Aucun inventaire Apple Maison reçu.</span>
         </div>
         <div id="appleHomeSummary" class="audit-summary"></div>
         <div id="appleHomeRoomMap"></div>
