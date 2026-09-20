@@ -210,6 +210,8 @@ def _apple_accessory_origin(accessory: dict) -> str:
 
     haystack = " ".join((manufacturer, model, name)).lower()
     if any(hint in haystack for hint in HUE_ACCESSORY_HINTS):
+        if "bridge" in haystack:
+            return "hue_bridge"
         return "hue"
     if manufacturer:
         return "other"
@@ -319,7 +321,7 @@ def build_apple_home_sync_plan(
     candidate_accessories = [
         accessory
         for accessory in accessories
-        if _apple_accessory_origin(accessory) != "other"
+        if _apple_accessory_origin(accessory) in {"hue", "unknown"}
     ]
 
     accessories_by_serial: dict[str, list[dict]] = {}
@@ -400,12 +402,18 @@ def build_apple_home_sync_plan(
             serial_matches: dict[str, dict] = {}
             for identifier in _hue_identifier_candidates(device):
                 for accessory in accessories_by_serial.get(identifier, []):
-                    serial_matches[str(accessory["id"])] = accessory
+                    accessory_id = str(accessory["id"])
+                    if accessory_id not in matched_apple_ids:
+                        serial_matches[accessory_id] = accessory
             if len(serial_matches) == 1:
                 candidates = list(serial_matches.values())
                 match_method = "serial"
             elif not serial_matches:
-                name_matches = accessories_by_name.get(_normalise(device_name), [])
+                name_matches = [
+                    accessory
+                    for accessory in accessories_by_name.get(_normalise(device_name), [])
+                    if str(accessory.get("id")) not in matched_apple_ids
+                ]
                 if len(name_matches) == 1:
                     candidates = name_matches
                     match_method = "name"
