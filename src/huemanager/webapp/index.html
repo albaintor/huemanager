@@ -288,6 +288,99 @@
 </main>
 <script>
 (() => {
+  const I18N = {
+    fr: {
+      "brand.subtitle": "Migration, audit et nettoyage de Bridges Hue.",
+      "language.label": "Langue",
+      "tab.management": "Gestion",
+      "tab.migration": "Migration",
+      "management.title": "Gestion du Bridge",
+      "management.bridge": "Bridge à analyser",
+      "management.analyze": "Analyser",
+      "management.cleanupTitle": "Incohérences et nettoyage",
+      "management.selectAll": "Tout sélectionner",
+      "management.selectNone": "Tout désélectionner",
+      "apple.title": "Apple Maison — synchronisation des pièces Hue",
+      "apple.description": "Sélectionne une pièce Apple pour chaque pièce Hue : l’impact est recalculé immédiatement sans enregistrer. Enregistre seulement après avoir vérifié les accessoires présents et les déplacements proposés.",
+      "apple.refresh": "Actualiser l’état Maison",
+      "apple.analyze": "Analyser Hue ↔ Maison",
+      "apple.save": "Enregistrer les correspondances",
+      "apple.noInventory": "Aucun inventaire Apple Maison reçu.",
+      "apple.mappingTitle": "Correspondance des pièces et prévisualisation",
+      "apple.noneRoom": "— aucune pièce Maison —",
+      "apple.hueContents": "Accessoires dans la pièce Philips Hue",
+      "apple.homeContents": "Accessoires actuellement dans la pièce Apple sélectionnée",
+      "apple.noHueDevice": "Aucun accessoire Hue dans cette pièce.",
+      "apple.noHomeAccessory": "Aucun accessoire actuellement dans cette pièce Apple.",
+      "apple.noSelectedRoom": "Aucune pièce Apple sélectionnée.",
+      "apple.unmatched": "Aucune correspondance Apple trouvée",
+      "apple.currentlyIn": "actuellement dans",
+      "apple.alreadyCorrect": "déjà dans la bonne pièce",
+      "apple.impactTitle": "Impact de cette sélection",
+      "apple.noMove": "Aucun déplacement nécessaire pour cette association.",
+      "apple.previewDraft": "Prévisualisation non enregistrée : vérifie l’impact puis clique sur « Enregistrer les correspondances ».",
+      "apple.saved": "Les correspondances affichées sont enregistrées.",
+      "apple.previewing": "Recalcul de l’impact sans enregistrement…",
+      "apple.previewDone": "Prévisualisation mise à jour. Aucun changement n’a encore été enregistré.",
+      "apple.planDone": "Analyse Hue ↔ Apple Maison terminée.",
+      "apple.savedDone": "Correspondances de pièces Apple Maison enregistrées.",
+      "apple.noInventoryHelp": "Aucun inventaire Apple Maison reçu. Ouvre HueManager Home Sync sur l’iPhone/iPad puis publie l’inventaire.",
+      "apple.actions": "Déplacements proposés",
+      "apple.noGlobalMove": "Aucun déplacement HomeKit nécessaire avec les correspondances affichées.",
+      "apple.targetRoom": "Pièce Apple cible",
+      "apple.match": "Correspondance",
+      "apple.room": "Pièce",
+      "apple.accessory": "accessoire",
+      "apple.accessories": "accessoires"
+    },
+    en: {
+      "brand.subtitle": "Migration, audit and cleanup for Hue Bridges.",
+      "language.label": "Language",
+      "tab.management": "Management",
+      "tab.migration": "Migration",
+      "management.title": "Bridge management",
+      "management.bridge": "Bridge to analyze",
+      "management.analyze": "Analyze",
+      "management.cleanupTitle": "Inconsistencies and cleanup",
+      "management.selectAll": "Select all",
+      "management.selectNone": "Deselect all",
+      "apple.title": "Apple Home — Hue room synchronization",
+      "apple.description": "Select an Apple Home room for each Hue room: the impact is recalculated immediately without saving. Save only after checking the current accessories and proposed moves.",
+      "apple.refresh": "Refresh Apple Home status",
+      "apple.analyze": "Analyze Hue ↔ Home",
+      "apple.save": "Save room mappings",
+      "apple.noInventory": "No Apple Home inventory received.",
+      "apple.mappingTitle": "Room mapping and preview",
+      "apple.noneRoom": "— no Apple Home room —",
+      "apple.hueContents": "Accessories in the Philips Hue room",
+      "apple.homeContents": "Accessories currently in the selected Apple Home room",
+      "apple.noHueDevice": "No Hue accessory in this room.",
+      "apple.noHomeAccessory": "No accessory currently in this Apple Home room.",
+      "apple.noSelectedRoom": "No Apple Home room selected.",
+      "apple.unmatched": "No Apple Home match found",
+      "apple.currentlyIn": "currently in",
+      "apple.alreadyCorrect": "already in the correct room",
+      "apple.impactTitle": "Impact of this selection",
+      "apple.noMove": "No move required for this mapping.",
+      "apple.previewDraft": "Unsaved preview: review the impact, then click “Save room mappings”.",
+      "apple.saved": "The displayed mappings are saved.",
+      "apple.previewing": "Recalculating impact without saving…",
+      "apple.previewDone": "Preview updated. No change has been saved yet.",
+      "apple.planDone": "Hue ↔ Apple Home analysis completed.",
+      "apple.savedDone": "Apple Home room mappings saved.",
+      "apple.noInventoryHelp": "No Apple Home inventory received. Open HueManager Home Sync on the iPhone/iPad and publish the inventory.",
+      "apple.actions": "Proposed moves",
+      "apple.noGlobalMove": "No HomeKit move is required with the displayed mappings.",
+      "apple.targetRoom": "Target Apple Home room",
+      "apple.match": "Match",
+      "apple.room": "Room",
+      "apple.accessory": "accessory",
+      "apple.accessories": "accessories"
+    }
+  };
+  const initialLanguage = localStorage.getItem("huemanager.language")
+    || (navigator.language?.toLowerCase().startsWith("en") ? "en" : "fr");
+
   const state = {
     bridges: [],
     tree: null,
@@ -301,9 +394,32 @@
     audit: null,
     auditSelected: new Set(),
     appleHome: null,
-    appleHomePlan: null
+    appleHomePlan: null,
+    appleRoomDraft: {},
+    appleRoomSaved: {},
+    applePreviewSeq: 0,
+    language: initialLanguage
   };
   const $ = (id) => document.getElementById(id);
+
+  function t(key) {
+    return I18N[state.language]?.[key] || I18N.fr[key] || key;
+  }
+
+  function applyLanguage(language) {
+    state.language = I18N[language] ? language : "fr";
+    localStorage.setItem("huemanager.language", state.language);
+    document.documentElement.lang = state.language;
+    $("languageSelect").value = state.language;
+    for (const el of document.querySelectorAll("[data-i18n]")) {
+      el.textContent = t(el.dataset.i18n);
+    }
+    if (state.appleHomePlan) {
+      renderAppleHomePlan(state.appleHomePlan);
+    } else if (state.appleHome) {
+      renderAppleHomeStatus(state.appleHome);
+    }
+  }
 
   function status(message, kind = "") {
     const el = $("globalStatus");
@@ -668,8 +784,7 @@
     state.appleHome = data;
     const inventory = data?.inventory;
     if (!inventory) {
-      $("appleHomeStatus").textContent =
-        "Aucun inventaire Apple Maison reçu. Ouvre HueManager Home Sync sur l’iPhone/iPad puis publie l’inventaire.";
+      $("appleHomeStatus").textContent = t("apple.noInventoryHelp");
       $("planAppleHome").disabled = true;
       $("saveAppleRoomMap").disabled = true;
       return;
@@ -689,8 +804,155 @@
     return data;
   }
 
-  function renderAppleHomePlan(plan) {
+  function canonicalRoomMap(map) {
+    return JSON.stringify(Object.entries(map || {}).sort(([a], [b]) => a.localeCompare(b)));
+  }
+
+  function appleRoomMapDirty() {
+    return canonicalRoomMap(state.appleRoomDraft) !== canonicalRoomMap(state.appleRoomSaved);
+  }
+
+  function updateAppleSaveState() {
+    $("saveAppleRoomMap").disabled =
+      !(state.appleHomePlan?.rooms || []).length || !appleRoomMapDirty();
+  }
+
+  function initializeAppleRoomDraft(plan) {
+    state.appleRoomDraft = {};
+    state.appleRoomSaved = {};
+    for (const room of plan.rooms || []) {
+      state.appleRoomDraft[room.hue_room_id] = room.apple_room_id || "";
+      if (room.method === "manual") {
+        state.appleRoomSaved[room.hue_room_id] = room.apple_room_id || "";
+      }
+    }
+  }
+
+  function renderHueRoomDevices(room, root) {
+    const devices = room.hue_devices || [];
+    if (!devices.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = t("apple.noHueDevice");
+      root.append(empty);
+      return;
+    }
+
+    for (const device of devices) {
+      const item = document.createElement("div");
+      item.className = "room-impact-device";
+      const name = document.createElement("strong");
+      name.textContent = device.name || device.id || "?";
+      item.append(name);
+
+      const detail = document.createElement("div");
+      detail.className = "muted";
+      if (!device.apple_accessory_name) {
+        detail.textContent = t("apple.unmatched");
+      } else if (device.status === "move") {
+        detail.innerHTML =
+          `Apple: <strong>${escapeHtml(device.apple_accessory_name)}</strong> · ` +
+          `${escapeHtml(device.apple_current_room_name || "Sans pièce")} → ` +
+          `<strong>${escapeHtml(room.apple_room_name || "?")}</strong>`;
+      } else if (device.status === "already_correct") {
+        detail.innerHTML =
+          `Apple: <strong>${escapeHtml(device.apple_accessory_name)}</strong> · ` +
+          `${escapeHtml(device.apple_current_room_name || room.apple_room_name || "?")} · ` +
+          `<span class="pill good">${escapeHtml(t("apple.alreadyCorrect"))}</span>`;
+      } else {
+        detail.innerHTML =
+          `Apple: <strong>${escapeHtml(device.apple_accessory_name)}</strong> · ` +
+          `${escapeHtml(t("apple.currentlyIn"))} ${escapeHtml(device.apple_current_room_name || "Sans pièce")}`;
+      }
+      item.append(detail);
+      root.append(item);
+    }
+  }
+
+  function renderAppleTargetAccessories(room, root) {
+    if (!room.apple_room_id) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = t("apple.noSelectedRoom");
+      root.append(empty);
+      return;
+    }
+    const accessories = room.apple_accessories || [];
+    if (!accessories.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = t("apple.noHomeAccessory");
+      root.append(empty);
+      return;
+    }
+    for (const accessory of accessories) {
+      const item = document.createElement("div");
+      item.className = "room-impact-device";
+      const name = document.createElement("strong");
+      name.textContent = accessory.name || accessory.id || "?";
+      item.append(name);
+      const detail = document.createElement("div");
+      detail.className = "muted";
+      detail.textContent = accessory.matched_hue_device_name
+        ? `↔ Hue: ${accessory.matched_hue_device_name}`
+        : t("apple.unmatched");
+      item.append(detail);
+      root.append(item);
+    }
+  }
+
+  function renderRoomImpact(room, card) {
+    const grid = document.createElement("div");
+    grid.className = "room-impact-grid";
+
+    const hueColumn = document.createElement("div");
+    hueColumn.className = "room-impact-column";
+    const hueTitle = document.createElement("h4");
+    hueTitle.textContent = `${t("apple.hueContents")} (${room.hue_devices?.length || 0})`;
+    hueColumn.append(hueTitle);
+    renderHueRoomDevices(room, hueColumn);
+
+    const appleColumn = document.createElement("div");
+    appleColumn.className = "room-impact-column";
+    const appleTitle = document.createElement("h4");
+    appleTitle.textContent =
+      `${t("apple.homeContents")} (${room.apple_accessories?.length || 0})`;
+    appleColumn.append(appleTitle);
+    renderAppleTargetAccessories(room, appleColumn);
+
+    grid.append(hueColumn, appleColumn);
+    card.append(grid);
+
+    const impact = document.createElement("div");
+    const moves = room.planned_moves || [];
+    impact.className = `room-impact-actions ${moves.length ? "warn" : ""}`.trim();
+    const impactTitle = document.createElement("strong");
+    impactTitle.textContent = t("apple.impactTitle");
+    impact.append(impactTitle);
+
+    if (!moves.length) {
+      const line = document.createElement("div");
+      line.className = "muted";
+      line.textContent = t("apple.noMove");
+      impact.append(line);
+    } else {
+      for (const move of moves) {
+        const line = document.createElement("div");
+        line.className = "item";
+        line.innerHTML =
+          `<strong>${escapeHtml(move.accessory_name || move.hue_device_name)}</strong>: ` +
+          `${escapeHtml(move.from_room_name || "Sans pièce")} → ` +
+          `<strong>${escapeHtml(move.to_room_name || room.apple_room_name || "?")}</strong>`;
+        impact.append(line);
+      }
+    }
+    card.append(impact);
+  }
+
+  function renderAppleHomePlan(plan, { resetDraft = false } = {}) {
     state.appleHomePlan = plan;
+    if (resetDraft) initializeAppleRoomDraft(plan);
+
     const summary = plan.summary || {};
     const summaryRoot = $("appleHomeSummary");
     summaryRoot.replaceChildren();
@@ -711,31 +973,36 @@
     const mappingRoot = $("appleHomeRoomMap");
     mappingRoot.replaceChildren();
     const title = document.createElement("h3");
-    title.textContent = "Correspondance des pièces";
+    title.textContent = t("apple.mappingTitle");
     mappingRoot.append(title);
 
     const appleRooms = state.appleHome?.inventory?.rooms || [];
     for (const room of plan.rooms || []) {
-      const row = document.createElement("div");
-      row.className = "row";
-      row.style.marginBottom = "8px";
+      const card = document.createElement("div");
+      card.className = "apple-room-card";
+
+      const head = document.createElement("div");
+      head.className = "apple-room-head";
 
       const label = document.createElement("div");
-      label.className = "grow";
       const matchInfo = room.method
-        ? ` · ${room.method}${room.confidence != null ? ` ${Math.round(room.confidence * 100)}%` : ""}`
+        ? `${room.method}${room.confidence != null ? ` ${Math.round(room.confidence * 100)}%` : ""}`
         : "";
       const suggestionInfo = !room.apple_room_id && (room.suggestions || []).length
-        ? ` · suggestions: ${room.suggestions.map(item => `${item.name} (${Math.round(item.score * 100)}%)`).join(", ")}`
+        ? room.suggestions.map(item => `${item.name} (${Math.round(item.score * 100)}%)`).join(", ")
         : "";
-      label.innerHTML = `<strong>${escapeHtml(room.hue_room_name)}</strong><br>` +
-        `<span class="muted"><code>${escapeHtml(room.hue_room_id)}</code>${escapeHtml(matchInfo)}${escapeHtml(suggestionInfo)}</span>`;
+      label.innerHTML =
+        `<strong>${escapeHtml(room.hue_room_name)}</strong><br>` +
+        `<span class="muted">${escapeHtml(matchInfo)}${suggestionInfo ? " · " + escapeHtml(suggestionInfo) : ""}</span>`;
 
+      const selectWrap = document.createElement("div");
+      const selectLabel = document.createElement("label");
+      selectLabel.textContent = t("apple.targetRoom");
       const select = document.createElement("select");
       select.dataset.hueRoomId = room.hue_room_id;
       const none = document.createElement("option");
       none.value = "";
-      none.textContent = "— aucune pièce Maison —";
+      none.textContent = t("apple.noneRoom");
       select.append(none);
       for (const appleRoom of appleRooms) {
         const option = document.createElement("option");
@@ -743,22 +1010,37 @@
         option.textContent = appleRoom.name;
         select.append(option);
       }
-      select.value = room.apple_room_id || "";
-      row.append(label, select);
-      mappingRoot.append(row);
+      select.value = Object.prototype.hasOwnProperty.call(state.appleRoomDraft, room.hue_room_id)
+        ? state.appleRoomDraft[room.hue_room_id]
+        : (room.apple_room_id || "");
+      select.addEventListener("change", () => {
+        state.appleRoomDraft[room.hue_room_id] = select.value;
+        previewAppleRoomDraft();
+      });
+      selectWrap.append(selectLabel, select);
+      head.append(label, selectWrap);
+      card.append(head);
+      renderRoomImpact(room, card);
+      mappingRoot.append(card);
     }
-    $("saveAppleRoomMap").disabled = !(plan.rooms || []).length;
+
+    updateAppleSaveState();
 
     const movesRoot = $("appleHomeMoves");
     movesRoot.replaceChildren();
-    const movesTitle = document.createElement("h3");
-    movesTitle.textContent = "Actions proposées";
-    movesRoot.append(movesTitle);
+    const note = document.createElement("div");
+    note.className = appleRoomMapDirty() ? "draft-note" : "muted";
+    note.textContent = appleRoomMapDirty() ? t("apple.previewDraft") : t("apple.saved");
+    movesRoot.append(note);
 
+    const movesTitle = document.createElement("h3");
+    movesTitle.style.marginTop = "12px";
+    movesTitle.textContent = t("apple.actions");
+    movesRoot.append(movesTitle);
     if (!(plan.actions || []).length) {
       const ok = document.createElement("p");
       ok.className = "muted";
-      ok.textContent = "Aucun déplacement HomeKit nécessaire avec les correspondances actuelles.";
+      ok.textContent = t("apple.noGlobalMove");
       movesRoot.append(ok);
     } else {
       for (const move of plan.actions || []) {
@@ -771,11 +1053,6 @@
           `<span class="pill">${escapeHtml(move.match_method)}</span>`;
         movesRoot.append(item);
       }
-      const note = document.createElement("p");
-      note.className = "muted";
-      note.textContent =
-        "Ces déplacements sont appliqués depuis l’application compagnon iPhone/iPad, car seule une application Apple autorisée HomeKit peut modifier la pièce d’un accessoire Maison.";
-      movesRoot.append(note);
     }
   }
 
@@ -788,9 +1065,36 @@
       const plan = await api(
         `/api/bridges/${encodeURIComponent(bridge)}/apple-home/plan`
       );
-      renderAppleHomePlan(plan);
-      status("Analyse Hue ↔ Apple Maison terminée.", "good");
+      renderAppleHomePlan(plan, { resetDraft: true });
+      status(t("apple.planDone"), "good");
     } catch (e) {
+      status(e.message, "bad");
+    }
+  }
+
+  async function previewAppleRoomDraft() {
+    const inventory = state.appleHome?.inventory;
+    const bridge = $("managementBridge").value;
+    if (!inventory?.home?.id || !bridge) return;
+    const sequence = ++state.applePreviewSeq;
+    updateAppleSaveState();
+    status(t("apple.previewing"));
+    try {
+      const plan = await api(
+        `/api/bridges/${encodeURIComponent(bridge)}/apple-home/preview`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            home_id: inventory.home.id,
+            room_map: state.appleRoomDraft,
+          }),
+        },
+      );
+      if (sequence !== state.applePreviewSeq) return;
+      renderAppleHomePlan(plan);
+      status(t("apple.previewDone"), "warn");
+    } catch (e) {
+      if (sequence !== state.applePreviewSeq) return;
       status(e.message, "bad");
     }
   }
@@ -799,24 +1103,29 @@
     const inventory = state.appleHome?.inventory;
     const bridge = $("managementBridge").value;
     if (!inventory?.home?.id || !bridge) return;
-    const roomMap = {};
-    for (const select of $("appleHomeRoomMap").querySelectorAll("select[data-hue-room-id]")) {
-      if (select.value) roomMap[select.dataset.hueRoomId] = select.value;
-    }
     try {
       const result = await api(
         `/api/bridges/${encodeURIComponent(bridge)}/apple-home/room-map`,
         {
           method: "PUT",
-          body: JSON.stringify({ home_id: inventory.home.id, room_map: roomMap }),
+          body: JSON.stringify({
+            home_id: inventory.home.id,
+            room_map: state.appleRoomDraft,
+          }),
         },
       );
+      state.appleRoomSaved = { ...state.appleRoomDraft };
       if (result.plan) renderAppleHomePlan(result.plan);
-      status("Correspondances de pièces Apple Maison enregistrées.", "good");
+      status(t("apple.savedDone"), "good");
     } catch (e) {
       status(e.message, "bad");
     }
   }
+
+  $("languageSelect").addEventListener("change", () => {
+    applyLanguage($("languageSelect").value);
+  });
+  applyLanguage(state.language);
 
   $("migrationTab").addEventListener("click", () => showView("migration"));
   $("managementTab").addEventListener("click", () => showView("management"));
@@ -1415,6 +1724,9 @@
 
   $("managementBridge").addEventListener("change", () => {
     state.appleHomePlan = null;
+    state.appleRoomDraft = {};
+    state.appleRoomSaved = {};
+    state.applePreviewSeq += 1;
     $("appleHomeSummary").replaceChildren();
     $("appleHomeRoomMap").replaceChildren();
     $("appleHomeMoves").replaceChildren();
@@ -1430,6 +1742,7 @@
     resumeSelectedSnapshot().catch(e => status(e.message, "bad"));
   });
 
+  showView("management");
   Promise.all([loadBridges(), loadBackups(), loadSnapshots(), loadAppleHomeStatus()]).catch(
     e => status(e.message, "bad")
   );
