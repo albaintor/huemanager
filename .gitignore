@@ -13,3 +13,6 @@ ios/**/*.xcworkspace/
 ios/**/*.xcodeproj/
 *.xcuserstate
 xcuserdata/
+
+# Generated iOS AppIcon (created by XcodeGen preGenCommand)
+ios/HueManagerHomeSync/Sources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png
