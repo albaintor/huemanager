@@ -25,9 +25,21 @@ struct ContentView: View {
                 .keyboardType(.URL)
                 .autocorrectionDisabled()
 
-            TextField("Profil Bridge Hue", text: $model.bridgeProfile)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
+            Picker("Bridge Hue", selection: $model.bridgeProfile) {
+                if model.bridges.isEmpty {
+                    Text("Aucun Bridge configuré").tag("")
+                }
+                ForEach(model.bridges) { bridge in
+                    Text("\(bridge.name) · \(bridge.host)")
+                        .tag(bridge.name)
+                }
+            }
+
+            if model.bridges.isEmpty {
+                Button("Charger les Bridges HueManager") {
+                    Task { await model.loadBridges() }
+                }
+            }
 
             Picker("Maison Apple", selection: $model.selectedHomeID) {
                 if model.homes.isEmpty {
@@ -67,7 +79,7 @@ struct ContentView: View {
                 Task { await model.publishInventory() }
             }
 
-            Button("Analyser Hue ↔ Maison") {
+            Button("Analyser et afficher le détail") {
                 Task { await model.loadPlan() }
             }
 
