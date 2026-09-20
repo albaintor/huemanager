@@ -87,9 +87,15 @@ huemanager snapshot old -r "Bureau" -r "Salon" -o bureau-salon.json
 
 The snapshot records selected devices, scenes, bridge rules, virtual CLIP dependencies, resource links and cross-room references.
 
-### 3. Pair/reset physical devices onto the destination Bridge
+### 3. Release selected devices from the source Bridge
 
-The web UI can start Bridge searches for lamps and accessories. Physical reset/pairing is still required where Hue hardware requires it.
+The web workflow can now delete only the physical CLIP v2 devices contained in the persistent snapshot. Deletion is performed once per device (not once per service), and it is idempotent: retrying the step reports devices that are already absent instead of treating them as failures.
+
+The snapshot and migration session are stored under the HueManager configuration directory, so closing the browser or restarting the container does not lose the migration state.
+
+### 4. Pair/reset physical devices onto the destination Bridge
+
+The web UI can start Bridge searches for lamps and accessories as many times as required. If automatic discovery is incomplete, power-cycle or reset the missing devices, then retry the search later.
 
 CLI:
 
@@ -98,22 +104,26 @@ huemanager scan pro --kind lights
 huemanager scan pro --kind sensors
 ```
 
-### 4. Verify mapping
+### 5. Verify mapping
 
 ```bash
 huemanager plan bureau-salon.json pro
 ```
 
-Physical lights/sensors are matched by their Zigbee `uniqueid`. `ready: true` means all physical resources needed by the selection are present on the destination.
+Physical lights/sensors are matched by their Zigbee `uniqueid`. `ready: true` means all physical resources needed by the selection are present on the destination. A partial result is persisted in the web migration session and can be checked again later.
 
-### 5. Dry-run, then migrate
+### 6. Restore
 
 ```bash
 huemanager apply bureau-salon.json pro
 huemanager apply bureau-salon.json pro --execute
 ```
 
-By default, out-of-scope rule links are pruned and reported. To use strict behavior (skip a rule instead of pruning external references):
+The normal web restore remains blocked while required physical resources are missing because destination IDs do not exist yet.
+
+The web UI also provides an explicit **forced partial restore** for devices that are permanently gone or cannot be re-associated. In that mode HueManager never invents destination IDs: unavailable scene actions are pruned, empty scenes are skipped, rules/behavior graphs are pruned or skipped when their missing references make them invalid, and schedules/Entertainment/resource links with unresolved targets are reported.
+
+By default, out-of-scope rule links are pruned and reported. To use strict CLI behavior (skip a rule instead of pruning external references):
 
 ```bash
 huemanager apply bureau-salon.json pro --execute --keep-external-strict
@@ -121,7 +131,7 @@ huemanager apply bureau-salon.json pro --execute --keep-external-strict
 
 ## What is preserved
 
-Current v0.4 scope:
+Current v0.6 scope:
 
 - selected rooms and device membership;
 - Hue v2 scenes and scene actions;
@@ -139,7 +149,7 @@ Current v0.4 scope:
 - A destination Bridge can reject a recreated `behavior_instance` if its installed behavior script/schema differs from the source. HueManager reports and skips that automation instead of aborting the whole migration.
 - Generic v2 graph pruning is conservative: if removing an external reference empties a required branch (`where`, `what`, `actions`, `slots`, `items`), the branch or automation is dropped rather than broadened.
 - Entertainment areas, Matter/HomeKit bindings and third-party cloud account configuration are not migrated.
-- A Zigbee device still has to join the destination Bridge network; HueManager does not use an undocumented forced-transfer mechanism.
+- A Zigbee device still has to join the destination Bridge network before it can receive a real destination resource ID. The forced partial restore only skips/prunes resources tied to missing devices; it does not fabricate IDs or transfer Zigbee credentials.
 - full-bridge restore recreates CLIP v1 schedules after rules; cyclic rule↔schedule dependencies or schedules referencing unsupported resources are skipped and reported rather than restored with stale IDs.
 - Hue v2 `smart_scene` resources are preserved in the raw backup archive but are not recreated automatically yet.
 - Recreating a third-party application's resource-link metadata does not guarantee that the third-party app will claim or display those resources as if it had created them itself.
