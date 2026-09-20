@@ -986,6 +986,64 @@ def test_apple_home_device_matching_rejects_room_prefix_false_positive_and_class
     assert room_accessories["denon"]["origin"] == "other"
 
 
+def test_apple_home_matching_never_reuses_the_same_apple_accessory():
+    hue_tree = {
+        "rooms": [
+            {
+                "id": "hue-room",
+                "name": "Cinéma",
+                "devices": [
+                    {
+                        "id": "hue-1",
+                        "name": "Sous-sol principal bureau",
+                        "identifiers": {
+                            "zigbee_macs": [],
+                            "v1_uniqueids": [],
+                            "pairing_fields": [],
+                        },
+                    },
+                    {
+                        "id": "hue-2",
+                        "name": "Sous-sol principal bureau",
+                        "identifiers": {
+                            "zigbee_macs": [],
+                            "v1_uniqueids": [],
+                            "pairing_fields": [],
+                        },
+                    },
+                ],
+            }
+        ]
+    }
+    inventory = {
+        "home": {"id": "home-1", "name": "Maison"},
+        "rooms": [{"id": "apple-room", "name": "Sous-sol principal"}],
+        "accessories": [
+            {
+                "id": "apple-bureau",
+                "name": "Sous-sol principal bureau",
+                "manufacturer": "Signify Netherlands B.V.",
+                "model": "Hue light",
+                "serial_number": None,
+                "room_id": "apple-room",
+                "room_name": "Sous-sol principal",
+            }
+        ],
+    }
+
+    plan = build_apple_home_sync_plan(
+        hue_tree,
+        inventory,
+        room_map={"hue-room": "apple-room"},
+    )
+
+    matched = [
+        row for row in plan["devices"] if row.get("apple_accessory_id") == "apple-bureau"
+    ]
+    assert len(matched) == 1
+    assert plan["summary"]["unmatched_accessories"] == 1
+
+
 def test_apple_home_accessory_matching_prefers_serial_then_fuzzy_name():
     hue_tree = {
         "rooms": [
