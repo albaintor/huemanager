@@ -110,6 +110,13 @@
         <button id="discover">Découvrir</button>
       </div>
       <div id="discovered" class="muted" style="margin-top:10px"></div>
+      <label for="snapshotSelect" style="margin-top:14px">Migration enregistrée</label>
+      <div class="row">
+        <div class="grow"><select id="snapshotSelect"></select></div>
+        <button id="resumeSnapshot" disabled>Reprendre</button>
+        <button id="refreshSnapshots">Rafraîchir</button>
+      </div>
+      <div id="sessionInfo" class="muted" style="margin-top:8px"></div>
     </div>
 
     <div class="card span-8">
@@ -142,7 +149,7 @@
       <div class="steps">
         <div class="step">
           <b>1. Capturer la sélection</b>
-          <p class="muted">À faire avant de réinitialiser ou déplacer les appareils. Le snapshot contient pièces, scènes, règles et variables CLIP nécessaires.</p>
+          <p class="muted">À faire avant toute suppression. Le snapshot persistant contient les identifiants source, pièces, scènes, règles, automatisations et dépendances nécessaires à une reprise ultérieure.</p>
           <button id="snapshotButton" class="primary" disabled>Créer le snapshot</button>
           <div id="snapshotInfo" class="muted"></div>
         </div>
@@ -151,22 +158,31 @@
           <div id="dependencies"><p class="muted">Aucune analyse effectuée.</p></div>
         </div>
         <div class="step">
-          <b>3. Appairer les appareils au Bridge Pro</b>
+          <b>3. Libérer les appareils du Bridge source</b>
+          <p class="muted">Opération destructive. HueManager supprime uniquement les appareils physiques de la sélection, après sauvegarde du snapshot. L’opération peut être relancée : les appareils déjà absents sont ignorés.</p>
+          <button id="releaseSource" class="danger" disabled>Supprimer du Bridge source</button>
+          <div id="releaseInfo" class="muted"></div>
+        </div>
+        <div class="step">
+          <b>4. Détecter sur le Bridge destination</b>
           <div class="row">
             <button id="scanLights" disabled>Rechercher les lampes</button>
             <button id="scanSensors" disabled>Rechercher les accessoires</button>
           </div>
-          <p class="muted">Les accessoires doivent toujours être mis en mode appairage/réinitialisés physiquement si Hue l’exige.</p>
+          <p class="muted">Si certains appareils ne remontent pas, tu peux les éteindre/rallumer ou les réinitialiser puis relancer la recherche. Le snapshot reste conservé.</p>
         </div>
         <div class="step">
-          <b>4. Vérifier le remapping</b>
+          <b>5. Vérifier le remapping</b>
           <button id="planButton" disabled>Vérifier la destination</button>
           <pre id="planResult" class="hidden"></pre>
         </div>
         <div class="step">
-          <b>5. Migrer</b>
-          <p class="muted">Les actions/conditions vers des ressources non sélectionnées sont coupées et signalées. Si une règle ne contient plus aucune action ou condition utile, elle est ignorée.</p>
-          <button id="applyButton" class="danger" disabled>Migrer vers le Bridge Pro</button>
+          <b>6. Restaurer la configuration</b>
+          <p class="muted">Le restore normal n’est autorisé que lorsque tous les appareils requis sont remappés. Le restore forcé ignore les appareils définitivement absents et élague les scènes/règles/automatisations qui les référencent ; aucun identifiant cible n’est inventé.</p>
+          <div class="row">
+            <button id="applyButton" class="primary" disabled>Restaurer</button>
+            <button id="forceApplyButton" class="danger" disabled>Forcer sans les appareils manquants</button>
+          </div>
           <pre id="applyResult" class="hidden"></pre>
         </div>
       </div>
@@ -237,7 +253,9 @@
     tree: null,
     selected: new Set(),
     snapshotId: null,
+    snapshots: [],
     planReady: false,
+    planChecked: false,
     backupId: null,
     restoreReady: false,
     audit: null,
@@ -521,12 +539,17 @@
   function clearSnapshot() {
     state.snapshotId = null;
     state.planReady = false;
+    state.planChecked = false;
     $("snapshotInfo").textContent = "";
+    $("sessionInfo").textContent = "";
+    $("releaseInfo").textContent = "";
     $("dependencies").innerHTML = '<p class="muted">La sélection a changé : recrée le snapshot.</p>';
+    $("releaseSource").disabled = true;
     $("scanLights").disabled = true;
     $("scanSensors").disabled = true;
     $("planButton").disabled = true;
     $("applyButton").disabled = true;
+    $("forceApplyButton").disabled = true;
     $("planResult").classList.add("hidden");
     $("applyResult").classList.add("hidden");
   }
