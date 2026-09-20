@@ -13,6 +13,3 @@ ios/**/*.xcworkspace/
 ios/**/*.xcodeproj/
 *.xcuserstate
 xcuserdata/
-
-# Generated iOS app icon
-ios/HueManagerHomeSync/Sources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png
