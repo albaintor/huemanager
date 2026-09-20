@@ -8,6 +8,7 @@ struct ContentView: View {
             Form {
                 connectionSection
                 syncSection
+                roomAssociationsSection
                 proposedMovesSection
             }
             .navigationTitle("HueManager Home Sync")
@@ -100,6 +101,172 @@ struct ContentView: View {
                     "Correspondances ambiguës",
                     value: "\(summary.ambiguousAccessories)"
                 )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var roomAssociationsSection: some View {
+        if !model.roomPlans.isEmpty {
+            Section("Associations de pièces et impact") {
+                ForEach(model.roomPlans) { room in
+                    roomAssociationView(room)
+                }
+            }
+        }
+    }
+
+    private func roomAssociationView(_ room: SyncRoomPlan) -> some View {
+        let hueDevices = room.hueDevices ?? []
+        let appleAccessories = room.appleAccessories ?? []
+        let plannedMoves = room.plannedMoves ?? []
+
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Hue · \(room.hueRoomName)")
+                        .font(.headline)
+                    Text("\(hueDevices.count) accessoire(s)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+                Image(systemName: "arrow.left.arrow.right")
+                    .foregroundStyle(.secondary)
+                Spacer()
+
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("Maison · \(room.appleRoomName ?? "Non associée")")
+                        .font(.headline)
+                    Text("\(appleAccessories.count) actuellement")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if let method = room.method {
+                Text(
+                    "Association \(method)" +
+                    confidenceText(room.confidence) +
+                    " · \(plannedMoves.count) déplacement(s)"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            GroupBox {
+                VStack(alignment: .leading, spacing: 8) {
+                    if hueDevices.isEmpty {
+                        Text("Aucun accessoire Hue dans cette pièce.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(hueDevices) { device in
+                            hueDeviceRow(device, targetRoomName: room.appleRoomName)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } label: {
+                Label(
+                    "Présents côté Philips Hue",
+                    systemImage: "lightbulb.2"
+                )
+            }
+
+            GroupBox {
+                VStack(alignment: .leading, spacing: 8) {
+                    if room.appleRoomName == nil {
+                        Text("Aucune pièce Apple associée.")
+                            .foregroundStyle(.secondary)
+                    } else if appleAccessories.isEmpty {
+                        Text("Aucun accessoire actuellement dans cette pièce Apple.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(appleAccessories) { accessory in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(accessory.name)
+                                if let hueName = accessory.matchedHueDeviceName {
+                                    Text("↔ Hue : \(hueName)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Text("Non associé à un appareil Hue de cette analyse")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } label: {
+                Label(
+                    "Présents côté Apple Maison avant synchro",
+                    systemImage: "house"
+                )
+            }
+
+            if !plannedMoves.isEmpty {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(plannedMoves) { move in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(move.accessoryName)
+                                    .fontWeight(.medium)
+                                Text(
+                                    "\(move.fromRoomName ?? "Sans pièce") → " +
+                                    "\(move.toRoomName)"
+                                )
+                                .font(.subheadline)
+                                Text("Correspond à Hue : \(move.hueDeviceName)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } label: {
+                    Label(
+                        "Impact après synchronisation",
+                        systemImage: "arrow.right.circle"
+                    )
+                }
+            }
+        }
+        .padding(.vertical, 6)
+    }
+
+    @ViewBuilder
+    private func hueDeviceRow(
+        _ device: SyncRoomHueDevice,
+        targetRoomName: String?
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(device.name)
+
+            if let appleName = device.appleAccessoryName {
+                HStack(spacing: 4) {
+                    Text("Apple : \(appleName)")
+                    Text("·")
+                    if device.status == "move" {
+                        Text(
+                            "\(device.appleCurrentRoomName ?? "Sans pièce") → " +
+                            "\(targetRoomName ?? "Pièce cible inconnue")"
+                        )
+                    } else if device.status == "already_correct" {
+                        Text(device.appleCurrentRoomName ?? targetRoomName ?? "Pièce inconnue")
+                        Image(systemName: "checkmark.circle.fill")
+                    } else {
+                        Text(device.appleCurrentRoomName ?? "Sans pièce")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            } else {
+                Text("Aucune correspondance trouvée dans Apple Maison")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }
