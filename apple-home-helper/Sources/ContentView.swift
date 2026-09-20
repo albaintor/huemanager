@@ -31,6 +31,11 @@ struct ContentView: View {
                     .disabled(model.pendingMoves == 0)
                 }
 
+                Toggle("Synchronisation automatique sûre", isOn: $model.automaticSyncEnabled)
+                Text("En mode auto, l’application ne déplace que les accessoires dont le matching et la pièce cible dépassent les seuils de confiance. Les cas ambigus restent en attente.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 Text(model.status)
                     .foregroundStyle(model.hasError ? .red : .secondary)
 
