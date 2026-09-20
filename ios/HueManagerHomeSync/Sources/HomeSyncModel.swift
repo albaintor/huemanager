@@ -1,7 +1,6 @@
 import Combine
 import Foundation
 import HomeKit
-import Security
 
 struct SyncMove: Codable, Identifiable {
     let accessoryID: String
@@ -166,18 +165,9 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
 
     var pendingMoves: Int { moves.count }
 
-    var homeKitEntitlementStatus: String {
-        guard let task = SecTaskCreateFromSelf(nil) else { return "Inconnu" }
-        let key = "com.apple.developer.homekit" as CFString
-        let value = SecTaskCopyValueForEntitlement(task, key, nil)
-        return (value as? Bool) == true ? "Présent" : "Absent"
-    }
-
     var homeKitDiagnostic: String {
-        let primary = homeManager.primaryHome?.name ?? "aucune"
-        return "entitlement=\(homeKitEntitlementStatus) auth=\(homeKitAuthorization) " +
-            "raw=\(homeManager.authorizationStatus.rawValue) loaded=\(homeKitLoaded) " +
-            "homes=\(homes.count) primary=\(primary)"
+        return "auth=\(homeKitAuthorization) raw=\(homeManager.authorizationStatus.rawValue) " +
+            "loaded=\(homeKitLoaded) homes=\(homes.count)"
     }
 
     private override init() {
@@ -398,18 +388,6 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         homes.first { $0.uniqueIdentifier.uuidString == selectedHomeID }
     }
 
-    private func characteristicValue(_ accessory: HMAccessory, type: String) -> String? {
-        for service in accessory.services {
-            for characteristic in service.characteristics
-                where characteristic.characteristicType == type {
-                if let value = characteristic.value as? String, !value.isEmpty {
-                    return value
-                }
-            }
-        }
-        return nil
-    }
-
     private func inventory(for home: HMHome) -> HomeInventory {
         HomeInventory(
             home: HomeInfo(
@@ -425,18 +403,9 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
                     name: accessory.name,
                     roomID: accessory.room?.uniqueIdentifier.uuidString,
                     roomName: accessory.room?.name,
-                    manufacturer: characteristicValue(
-                        accessory,
-                        type: HMCharacteristicTypeManufacturer
-                    ),
-                    model: characteristicValue(
-                        accessory,
-                        type: HMCharacteristicTypeModel
-                    ),
-                    serialNumber: characteristicValue(
-                        accessory,
-                        type: HMCharacteristicTypeSerialNumber
-                    )
+                    manufacturer: accessory.manufacturer,
+                    model: accessory.model,
+                    serialNumber: nil
                 )
             }
         )
