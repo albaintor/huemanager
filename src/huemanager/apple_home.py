@@ -250,9 +250,9 @@ def store_room_map(
 ) -> dict:
     result = copy.deepcopy(state)
     result.setdefault("room_maps", {}).setdefault(bridge_profile, {})[home_id] = {
-        str(hue_room_id): str(apple_room_id)
+        str(hue_room_id): str(apple_room_id or "")
         for hue_room_id, apple_room_id in room_map.items()
-        if hue_room_id and apple_room_id
+        if hue_room_id
     }
     return result
 
@@ -324,11 +324,12 @@ def build_apple_home_sync_plan(
             continue
         hue_name = room.get("name") or hue_room_id
 
+        has_explicit_mapping = hue_room_id in room_map
         explicit_id = room_map.get(hue_room_id)
         confidence = None
         suggestions: list[dict] = []
-        if explicit_id and explicit_id in apple_rooms_by_id:
-            desired = apple_rooms_by_id[explicit_id]
+        if has_explicit_mapping:
+            desired = apple_rooms_by_id.get(str(explicit_id)) if explicit_id else None
             method = "manual"
             confidence = 1.0
         else:
