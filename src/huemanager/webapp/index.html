@@ -121,88 +121,88 @@
   <div id="migrationView" class="hidden">
   <section class="grid">
     <div class="card span-4">
-      <h2>Bridges</h2>
-      <label for="sourceBridge">Bridge source</label>
+      <h2 data-i18n="migration.bridges">Bridges</h2>
+      <label for="sourceBridge" data-i18n="migration.source">Bridge source</label>
       <select id="sourceBridge"></select>
-      <label for="destinationBridge">Bridge Pro destination</label>
+      <label for="destinationBridge" data-i18n="migration.destination">Bridge Pro destination</label>
       <select id="destinationBridge"></select>
       <div class="row" style="margin-top:12px">
-        <button id="refreshTree" class="primary">Charger l’arborescence</button>
-        <button id="discover">Découvrir</button>
+        <button id="refreshTree" class="primary" data-i18n="migration.loadTree">Charger l’arborescence</button>
+        <button id="discover" data-i18n="migration.discover">Découvrir</button>
       </div>
       <div id="discovered" class="muted" style="margin-top:10px"></div>
-      <label for="snapshotSelect" style="margin-top:14px">Migration enregistrée</label>
+      <label for="snapshotSelect" style="margin-top:14px" data-i18n="migration.saved">Migration enregistrée</label>
       <div class="row">
         <div class="grow"><select id="snapshotSelect"></select></div>
-        <button id="resumeSnapshot" disabled>Reprendre</button>
-        <button id="refreshSnapshots">Rafraîchir</button>
+        <button id="resumeSnapshot" disabled data-i18n="migration.resume">Reprendre</button>
+        <button id="refreshSnapshots" data-i18n="migration.refresh">Rafraîchir</button>
       </div>
       <div id="sessionInfo" class="muted" style="margin-top:8px"></div>
     </div>
 
     <div class="card span-8">
-      <h2>Appairer un Bridge à HueManager</h2>
+      <h2 data-i18n="migration.pairTitle">Appairer un Bridge à HueManager</h2>
       <p class="muted">Appuie sur le bouton physique du Bridge, puis lance l’appairage ici. Cela crée uniquement une clé API locale HueManager.</p>
       <div class="row">
         <div class="grow">
-          <label for="pairName">Nom local</label>
+          <label for="pairName" data-i18n="migration.localName">Nom local</label>
           <input id="pairName" placeholder="old ou pro">
         </div>
         <div class="grow">
-          <label for="pairHost">Adresse IP / nom</label>
+          <label for="pairHost" data-i18n="migration.address">Adresse IP / nom</label>
           <input id="pairHost" placeholder="192.168.1.50">
         </div>
-        <div style="align-self:end"><button id="pairButton" class="primary">Appairer</button></div>
+        <div style="align-self:end"><button id="pairButton" class="primary" data-i18n="migration.pair">Appairer</button></div>
       </div>
       <div id="pairStatus" class="muted" style="margin-top:8px"></div>
     </div>
 
     <div class="card span-7">
       <div class="row" style="justify-content:space-between">
-        <h2>Pièces et dépendances</h2>
+        <h2 data-i18n="migration.roomsDeps">Pièces et dépendances</h2>
         <span id="selectionCount" class="pill">0 pièce</span>
       </div>
       <div id="tree" class="tree"><p class="muted">Charge le Bridge source.</p></div>
     </div>
 
     <div class="card span-5">
-      <h2>Préparer la migration</h2>
+      <h2 data-i18n="migration.prepare">Préparer la migration</h2>
       <div class="steps">
         <div class="step">
-          <b>1. Capturer la sélection</b>
+          <b data-i18n="migration.capture">1. Capturer la sélection</b>
           <p class="muted">À faire avant toute suppression. Le snapshot persistant contient les identifiants source, pièces, scènes, règles, automatisations et dépendances nécessaires à une reprise ultérieure.</p>
-          <button id="snapshotButton" class="primary" disabled>Créer le snapshot</button>
+          <button id="snapshotButton" class="primary" disabled data-i18n="migration.createSnapshot">Créer le snapshot</button>
           <div id="snapshotInfo" class="muted"></div>
         </div>
         <div class="step">
-          <b>2. Dépendances hors périmètre</b>
+          <b data-i18n="migration.externalDeps">2. Dépendances hors périmètre</b>
           <div id="dependencies"><p class="muted">Aucune analyse effectuée.</p></div>
         </div>
         <div class="step">
-          <b>3. Libérer les appareils du Bridge source</b>
+          <b data-i18n="migration.release">3. Libérer les appareils du Bridge source</b>
           <p class="muted">Opération destructive. HueManager supprime uniquement les appareils physiques de la sélection, après sauvegarde du snapshot. L’opération peut être relancée : les appareils déjà absents sont ignorés.</p>
-          <button id="releaseSource" class="danger" disabled>Supprimer du Bridge source</button>
+          <button id="releaseSource" class="danger" disabled data-i18n="migration.deleteSource">Supprimer du Bridge source</button>
           <div id="releaseInfo" class="muted"></div>
         </div>
         <div class="step">
-          <b>4. Détecter sur le Bridge destination</b>
+          <b data-i18n="migration.detect">4. Détecter sur le Bridge destination</b>
           <div class="row">
-            <button id="scanLights" disabled>Rechercher les lampes</button>
-            <button id="scanSensors" disabled>Rechercher les accessoires</button>
+            <button id="scanLights" disabled data-i18n="migration.searchLights">Rechercher les lampes</button>
+            <button id="scanSensors" disabled data-i18n="migration.searchAccessories">Rechercher les accessoires</button>
           </div>
           <p class="muted">Si certains appareils ne remontent pas, tu peux les éteindre/rallumer ou les réinitialiser puis relancer la recherche. Le snapshot reste conservé.</p>
         </div>
         <div class="step">
-          <b>5. Vérifier le remapping</b>
-          <button id="planButton" disabled>Vérifier la destination</button>
+          <b data-i18n="migration.remap">5. Vérifier le remapping</b>
+          <button id="planButton" disabled data-i18n="migration.checkDestination">Vérifier la destination</button>
           <pre id="planResult" class="hidden"></pre>
         </div>
         <div class="step">
-          <b>6. Restaurer la configuration</b>
+          <b data-i18n="migration.restoreStep">6. Restaurer la configuration</b>
           <p class="muted">Le restore normal n’est autorisé que lorsque tous les appareils requis sont remappés. Le restore forcé ignore les appareils définitivement absents et élague les scènes/règles/automatisations qui les référencent ; aucun identifiant cible n’est inventé.</p>
           <div class="row">
-            <button id="applyButton" class="primary" disabled>Restaurer</button>
-            <button id="forceApplyButton" class="danger" disabled>Forcer sans les appareils manquants</button>
+            <button id="applyButton" class="primary" disabled data-i18n="migration.restore">Restaurer</button>
+            <button id="forceApplyButton" class="danger" disabled data-i18n="migration.forceRestore">Forcer sans les appareils manquants</button>
           </div>
           <pre id="applyResult" class="hidden"></pre>
         </div>
@@ -210,19 +210,19 @@
     </div>
 
     <div class="card span-12">
-      <h2>Backup / restore du Bridge</h2>
+      <h2 data-i18n="backup.title">Backup / restore du Bridge</h2>
       <p class="muted">Le backup conserve un dump CLIP v1/v2 complet (clés API retirées) et une représentation restaurable. Le réseau Zigbee, sa clé et les appairages physiques ne sont pas exportables par l’API : les appareils doivent être réappairés avant le restore.</p>
       <div class="row">
-        <button id="createBackup" class="primary">Backuper le Bridge source</button>
-        <button id="refreshBackups">Rafraîchir les backups</button>
+        <button id="createBackup" class="primary" data-i18n="backup.create">Backuper le Bridge source</button>
+        <button id="refreshBackups" data-i18n="backup.refresh">Rafraîchir les backups</button>
         <div class="grow">
           <select id="backupSelect" aria-label="Backup à restaurer"></select>
         </div>
-        <a id="downloadBackup" class="button-link" href="#" download>Télécharger</a>
+        <a id="downloadBackup" class="button-link" href="#" download data-i18n="backup.download">Télécharger</a>
         <input id="backupFile" type="file" accept="application/json,.json" style="max-width:280px">
-        <button id="importBackup">Importer</button>
-        <button id="planRestore">Analyser le restore</button>
-        <button id="restoreBackup" class="danger" disabled>Restaurer vers la destination</button>
+        <button id="importBackup" data-i18n="backup.import">Importer</button>
+        <button id="planRestore" data-i18n="backup.plan">Analyser le restore</button>
+        <button id="restoreBackup" class="danger" disabled data-i18n="backup.restore">Restaurer vers la destination</button>
       </div>
       <div id="backupInfo" class="muted" style="margin-top:10px"></div>
       <pre id="restoreResult" class="hidden"></pre>
@@ -300,6 +300,40 @@
       "management.cleanupTitle": "Incohérences et nettoyage",
       "management.selectAll": "Tout sélectionner",
       "management.selectNone": "Tout désélectionner",
+      "migration.bridges": "Bridges",
+      "migration.source": "Bridge source",
+      "migration.destination": "Bridge Pro destination",
+      "migration.loadTree": "Charger l’arborescence",
+      "migration.discover": "Découvrir",
+      "migration.saved": "Migration enregistrée",
+      "migration.resume": "Reprendre",
+      "migration.refresh": "Rafraîchir",
+      "migration.pairTitle": "Appairer un Bridge à HueManager",
+      "migration.localName": "Nom local",
+      "migration.address": "Adresse IP / nom",
+      "migration.pair": "Appairer",
+      "migration.roomsDeps": "Pièces et dépendances",
+      "migration.prepare": "Préparer la migration",
+      "migration.capture": "1. Capturer la sélection",
+      "migration.createSnapshot": "Créer le snapshot",
+      "migration.externalDeps": "2. Dépendances hors périmètre",
+      "migration.release": "3. Libérer les appareils du Bridge source",
+      "migration.deleteSource": "Supprimer du Bridge source",
+      "migration.detect": "4. Détecter sur le Bridge destination",
+      "migration.searchLights": "Rechercher les lampes",
+      "migration.searchAccessories": "Rechercher les accessoires",
+      "migration.remap": "5. Vérifier le remapping",
+      "migration.checkDestination": "Vérifier la destination",
+      "migration.restoreStep": "6. Restaurer la configuration",
+      "migration.restore": "Restaurer",
+      "migration.forceRestore": "Forcer sans les appareils manquants",
+      "backup.title": "Backup / restore du Bridge",
+      "backup.create": "Backuper le Bridge source",
+      "backup.refresh": "Rafraîchir les backups",
+      "backup.download": "Télécharger",
+      "backup.import": "Importer",
+      "backup.plan": "Analyser le restore",
+      "backup.restore": "Restaurer vers la destination",
       "apple.title": "Apple Maison — synchronisation des pièces Hue",
       "apple.description": "Sélectionne une pièce Apple pour chaque pièce Hue : l’impact est recalculé immédiatement sans enregistrer. Enregistre seulement après avoir vérifié les accessoires présents et les déplacements proposés.",
       "apple.refresh": "Actualiser l’état Maison",
@@ -344,6 +378,40 @@
       "management.cleanupTitle": "Inconsistencies and cleanup",
       "management.selectAll": "Select all",
       "management.selectNone": "Deselect all",
+      "migration.bridges": "Bridges",
+      "migration.source": "Source Bridge",
+      "migration.destination": "Destination Hue Bridge Pro",
+      "migration.loadTree": "Load hierarchy",
+      "migration.discover": "Discover",
+      "migration.saved": "Saved migration",
+      "migration.resume": "Resume",
+      "migration.refresh": "Refresh",
+      "migration.pairTitle": "Pair a Bridge with HueManager",
+      "migration.localName": "Local name",
+      "migration.address": "IP address / hostname",
+      "migration.pair": "Pair",
+      "migration.roomsDeps": "Rooms and dependencies",
+      "migration.prepare": "Prepare migration",
+      "migration.capture": "1. Capture selection",
+      "migration.createSnapshot": "Create snapshot",
+      "migration.externalDeps": "2. Out-of-scope dependencies",
+      "migration.release": "3. Release devices from source Bridge",
+      "migration.deleteSource": "Remove from source Bridge",
+      "migration.detect": "4. Detect on destination Bridge",
+      "migration.searchLights": "Search lights",
+      "migration.searchAccessories": "Search accessories",
+      "migration.remap": "5. Verify remapping",
+      "migration.checkDestination": "Verify destination",
+      "migration.restoreStep": "6. Restore configuration",
+      "migration.restore": "Restore",
+      "migration.forceRestore": "Force without missing devices",
+      "backup.title": "Bridge backup / restore",
+      "backup.create": "Back up source Bridge",
+      "backup.refresh": "Refresh backups",
+      "backup.download": "Download",
+      "backup.import": "Import",
+      "backup.plan": "Analyze restore",
+      "backup.restore": "Restore to destination",
       "apple.title": "Apple Home — Hue room synchronization",
       "apple.description": "Select an Apple Home room for each Hue room: the impact is recalculated immediately without saving. Save only after checking the current accessories and proposed moves.",
       "apple.refresh": "Refresh Apple Home status",
