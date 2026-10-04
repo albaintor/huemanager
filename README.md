@@ -383,6 +383,27 @@ Un contrôleur HAP/HomeKit tiers exécuté dans Docker ne peut pas remplacer ce 
 fonction : les pièces Apple appartiennent à la base HomeKit du contrôleur Apple et ne sont pas
 des propriétés stockées dans les accessoires Hue.
 
+### Sauvegarde avant réassociation Apple Home / Matter
+
+Avant de supprimer puis recréer la liaison Apple Home d'un Bridge Hue, l'application iOS peut
+enregistrer une **sauvegarde de réassociation**. Cette sauvegarde conserve, pour chaque accessoire
+du Bridge sélectionné, sa pièce Apple et plusieurs empreintes d'identité : UUID actuel, numéro de
+série disponible, identifiant HomeKit historique, AID HAP lorsqu'il est exposé, modèle, services,
+et position de l'accessoire derrière le Bridge.
+
+Cette sauvegarde ne suppose pas que les UUID Apple restent stables. Après la réassociation :
+
+1. republier l'inventaire Apple Maison depuis l'application iOS ;
+2. lancer **Après réassociation : analyser la restauration** ;
+3. vérifier le nombre d'accessoires reconnus et non reconnus ;
+4. lancer **Restaurer les pièces Apple**.
+
+Le matching est strictement un-à-un et procède des identifiants les plus forts vers des empreintes
+plus faibles mais uniques. Un accessoire ambigu n'est jamais déplacé automatiquement. Les pièces
+sont retrouvées d'abord par leur UUID Apple existant, puis par leur nom exact si nécessaire. La
+suppression/réassociation d'un Bridge ne supprime normalement pas les objets HMRoom du domicile,
+ce qui permet de conserver directement leurs identifiants.
+
 
 ### Application iOS
 
