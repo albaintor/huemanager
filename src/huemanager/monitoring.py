@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from statistics import median
 from typing import Any
 
-from .client import HueBridgeClient
+from .client import HueApiError, HueBridgeClient
 from .diagnostics import collect_monitor_sample
 
 
@@ -236,7 +236,7 @@ class DiagnosticMonitor:
 
                 try:
                     sample = collect_monitor_sample(self.client)
-                except Exception as exc:
+                except (HueApiError, OSError, ValueError, KeyError, IndexError) as exc:
                     with self._lock:
                         self.error = str(exc)
                     if not self.samples:
