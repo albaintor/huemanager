@@ -7,6 +7,7 @@ struct ContentView: View {
         NavigationStack {
             Form {
                 connectionSection
+                serverActivitySection
                 syncSection
                 roomAssociationsSection
                 proposedMovesSection
@@ -129,6 +130,71 @@ struct ContentView: View {
             .disabled(model.connectionTesting)
 
             LabeledContent("Connexion HueManager", value: model.connectionStatus)
+        }
+    }
+
+    private var serverActivitySection: some View {
+        Section("Activité serveur") {
+            LabeledContent("État") {
+                HStack(spacing: 8) {
+                    if model.serverActivityInProgress {
+                        ProgressView()
+                    } else {
+                        Image(
+                            systemName: model.serverActivityState == "Erreur"
+                                ? "exclamationmark.triangle.fill"
+                                : (
+                                    model.serverActivityState == "Terminé"
+                                        ? "checkmark.circle.fill"
+                                        : "circle"
+                                )
+                        )
+                        .foregroundStyle(
+                            model.serverActivityState == "Erreur"
+                                ? .red
+                                : (
+                                    model.serverActivityState == "Terminé"
+                                        ? .green
+                                        : .secondary
+                                )
+                        )
+                    }
+                    Text(model.serverActivityState)
+                }
+            }
+
+            Text(model.serverActivityDetail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+
+            DisclosureGroup(
+                "Journal des échanges (\(model.serverActivityLog.count))"
+            ) {
+                if model.serverActivityLog.isEmpty {
+                    Text("Aucune activité enregistrée.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(
+                        Array(
+                            model.serverActivityLog
+                                .suffix(30)
+                                .reversed()
+                                .enumerated()
+                        ),
+                        id: \.offset
+                    ) { _, entry in
+                        Text(entry)
+                            .font(.caption2.monospaced())
+                            .textSelection(.enabled)
+                    }
+
+                    Button("Effacer le journal", role: .destructive) {
+                        model.clearServerActivityLog()
+                    }
+                }
+            }
         }
     }
 

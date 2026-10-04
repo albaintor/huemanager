@@ -258,6 +258,7 @@ private struct AccessoryInfo: Codable {
     let bridgeReportedIdentifierIndex: Int?
     let bridgeLegacyIdentifierIndex: Int?
     let serviceTypes: [String]
+    let reachable: Bool
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -279,6 +280,7 @@ private struct AccessoryInfo: Codable {
         case bridgeReportedIdentifierIndex = "bridge_reported_identifier_index"
         case bridgeLegacyIdentifierIndex = "bridge_legacy_identifier_index"
         case serviceTypes = "service_types"
+        case reachable
     }
 }
 
@@ -391,6 +393,10 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     @Published private(set) var connectionStatus = "Non testé"
     @Published private(set) var connectionTesting = false
     @Published private(set) var inventoryPublishing = false
+    @Published private(set) var serverActivityState = "Au repos"
+    @Published private(set) var serverActivityDetail = "Aucun échange serveur."
+    @Published private(set) var serverActivityLog: [String] = []
+    @Published private(set) var serverActivityInProgress = false
     @Published private(set) var lastPublishedInventoryAt: String?
 
     @Published var automaticSyncEnabled: Bool {
@@ -406,6 +412,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     private var homeManager: HMHomeManager?
     private var automaticTimer: Timer?
     private var automaticSyncRunning = false
+    private var activeServerRequests = 0
     private var started = false
 
     var selectedMoves: [SyncMove] {
@@ -949,7 +956,8 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
                     bridgeChildIndex: bridgeChildIndex,
                     bridgeReportedIdentifierIndex: bridgeReportedIdentifierIndex,
                     bridgeLegacyIdentifierIndex: bridgeLegacyIdentifierIndex,
-                    serviceTypes: accessory.services.map { $0.serviceType }
+                    serviceTypes: accessory.services.map { $0.serviceType },
+                    reachable: accessory.isReachable
                 )
             )
         }
@@ -984,17 +992,102 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         return url
     }
 
-    private func responseData(for request: URLRequest) async throws -> Data {
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, 200..<300 ~= http.statusCode else {
-            let detail = String(data: data, encoding: .utf8) ?? "Erreur HueManager"
-            throw NSError(
-                domain: "HueManagerHomeSync",
-                code: 11,
-                userInfo: [NSLocalizedDescriptionKey: detail]
-            )
+    private func serverActivityTimestamp() -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "fr_FR")
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter.string(from: Date())
+    }
+
+    private func appendServerActivity(_ message: String) {
+        serverActivityLog.append("[\(serverActivityTimestamp())] \(message)")
+        if serverActivityLog.count > 80 {
+            serverActivityLog.removeFirst(serverActivityLog.count - 80)
         }
-        return data
+    }
+
+    private func beginServerActivity(_ request: URLRequest) {
+        activeServerRequests += 1
+        serverActivityInProgress = true
+        serverActivityState = "En cours"
+        let method = request.httpMethod ?? "GET"
+        let path = request.url?.path ?? request.url?.absoluteString ?? "?"
+        serverActivityDetail = "\(method) \(path)"
+        appendServerActivity("→ \(method) \(path)")
+    }
+
+    private func finishServerActivity(
+        _ request: URLRequest,
+        success: Bool,
+        detail: String
+    ) {
+        activeServerRequests = max(0, activeServerRequests - 1)
+        let method = request.httpMethod ?? "GET"
+        let path = request.url?.path ?? request.url?.absoluteString ?? "?"
+        appendServerActivity(
+            "\(success ? "✓" : "✕") \(method) \(path) · \(detail)"
+        )
+        if activeServerRequests > 0 {
+            serverActivityInProgress = true
+            serverActivityState = "En cours"
+            serverActivityDetail = "\(activeServerRequests) échange(s) en cours"
+        } else {
+            serverActivityInProgress = false
+            serverActivityState = success ? "Terminé" : "Erreur"
+            serverActivityDetail = detail
+        }
+    }
+
+    func clearServerActivityLog() {
+        serverActivityLog.removeAll()
+        if !serverActivityInProgress {
+            serverActivityState = "Au repos"
+            serverActivityDetail = "Aucun échange serveur."
+        }
+    }
+
+    private func responseData(for request: URLRequest) async throws -> Data {
+        beginServerActivity(request)
+        var activityFinished = false
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  200..<300 ~= http.statusCode
+            else {
+                let detail = String(data: data, encoding: .utf8)
+                    ?? "Erreur HueManager"
+                let code = (response as? HTTPURLResponse)?.statusCode
+                let activityDetail = code.map { "HTTP \($0) · \(detail)" }
+                    ?? detail
+                finishServerActivity(
+                    request,
+                    success: false,
+                    detail: activityDetail
+                )
+                activityFinished = true
+                throw NSError(
+                    domain: "HueManagerHomeSync",
+                    code: 11,
+                    userInfo: [NSLocalizedDescriptionKey: detail]
+                )
+            }
+            finishServerActivity(
+                request,
+                success: true,
+                detail: "HTTP \(http.statusCode) · \(data.count) octets"
+            )
+            activityFinished = true
+            return data
+        } catch {
+            if !activityFinished {
+                finishServerActivity(
+                    request,
+                    success: false,
+                    detail: error.localizedDescription
+                )
+            }
+            throw error
+        }
     }
 
     private func send<T: Encodable>(

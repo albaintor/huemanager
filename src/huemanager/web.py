@@ -26,6 +26,7 @@ from .apple_home import (
     store_room_map,
     store_room_selection,
 )
+from .apple_audit import build_apple_home_multi_bridge_audit
 from .backup import (
     analyse_bridge_restore,
     backup_summary,
@@ -306,6 +307,53 @@ def apple_home_status() -> dict:
         "inventory": inventory,
         "last_sync": state.get("last_sync"),
     }
+
+
+@app.get("/api/apple-home/audit")
+def apple_home_multi_bridge_audit() -> dict:
+    try:
+        state = _load_apple_home()
+        inventory = state.get("inventory")
+        if not inventory:
+            raise MigrationError(
+                "No Apple Home inventory available. Open HueManager Home Sync "
+                "on an Apple device first."
+            )
+
+        store = _store()
+        home_id = str((inventory.get("home") or {}).get("id") or "")
+        trees: dict[str, dict] = {}
+        bridge_errors: dict[str, str] = {}
+        accessory_maps: dict[str, dict[str, str]] = {}
+        ignored_devices: dict[str, set[str]] = {}
+
+        for profile in store.list_bridges():
+            try:
+                trees[profile] = inventory_tree(_client(profile))
+            except Exception as exc:
+                bridge_errors[profile] = str(exc)
+            accessory_maps[profile] = get_accessory_map(
+                state,
+                profile,
+                home_id,
+            )
+            ignored_devices[profile] = (
+                store.get_diagnostic_ignored_devices(profile)
+            )
+
+        report = build_apple_home_multi_bridge_audit(
+            trees,
+            inventory,
+            accessory_maps_by_bridge=accessory_maps,
+            ignored_devices_by_bridge=ignored_devices,
+        )
+        report["bridge_errors"] = bridge_errors
+        report.setdefault("summary", {})["bridge_errors"] = len(
+            bridge_errors
+        )
+        return report
+    except Exception as exc:
+        raise _api_error(exc) from exc
 
 
 @app.post("/api/apple-home/inventory")

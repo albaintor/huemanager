@@ -119,6 +119,18 @@
     .room-impact-actions { margin-top: 10px; padding: 10px; border-left: 3px solid var(--accent); background: rgba(122, 162, 255, .08); }
     .room-impact-actions.warn { border-left-color: var(--warn); background: rgba(241, 189, 99, .08); }
     .draft-note { margin-top: 10px; padding: 9px 11px; border: 1px dashed var(--warn); border-radius: 8px; color: var(--warn); }
+    .apple-audit-toolbar { display:flex; gap:10px; flex-wrap:wrap; align-items:end; margin:12px 0; }
+    .apple-audit-toolbar .grow { min-width:220px; }
+    .apple-audit-table-wrap { overflow-x:auto; margin-top:12px; }
+    .apple-audit-table { width:100%; border-collapse:collapse; min-width:1050px; }
+    .apple-audit-table th, .apple-audit-table td { text-align:left; vertical-align:top; padding:9px 10px; border-bottom:1px solid var(--border); }
+    .apple-audit-table th { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+    .apple-audit-row-warning { background:rgba(241,189,99,.055); }
+    .bridge-badge { display:inline-flex; align-items:center; gap:7px; padding:4px 8px; border:1px solid var(--border); border-radius:999px; white-space:nowrap; }
+    .bridge-dot { width:9px; height:9px; border-radius:50%; display:inline-block; flex:0 0 9px; }
+    .bridge-legend { display:flex; gap:10px; flex-wrap:wrap; margin:10px 0; }
+    .apple-audit-main { font-weight:600; }
+    .apple-audit-sub { color:var(--muted); font-size:12px; margin-top:3px; }
     code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
     pre { white-space: pre-wrap; word-break: break-word; background: #090b10; border: 1px solid var(--border); border-radius: 8px; padding: 10px; max-height: 320px; overflow: auto; }
     .hidden { display: none !important; }
@@ -152,6 +164,7 @@
   <div id="globalStatus" class="status">Chargement des Bridges…</div>
   <div class="tabs" role="tablist">
     <button id="managementTab" class="active" type="button" data-i18n="tab.management">Gestion</button>
+    <button id="appleAuditTab" type="button" data-i18n="tab.appleAudit">Apple Maison</button>
     <button id="migrationTab" type="button" data-i18n="tab.migration">Migration</button>
   </div>
 
@@ -265,6 +278,73 @@
       <pre id="restoreResult" class="hidden"></pre>
     </div>
   </section>
+  </div>
+
+  <div id="appleAuditView" class="hidden">
+    <section class="grid">
+      <div class="card span-12">
+        <h2 data-i18n="appleAudit.title">Audit Apple Maison multi-Bridges</h2>
+        <p class="muted" data-i18n="appleAudit.description">
+          Vue globale de tous les Bridges Hue connus de HueManager face au dernier inventaire Apple Maison publié.
+        </p>
+        <div class="apple-audit-toolbar">
+          <div>
+            <label>&nbsp;</label>
+            <button id="runAppleAudit" class="primary" data-i18n="appleAudit.run">Analyser tous les Bridges</button>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="reloadAppleAudit" data-i18n="appleAudit.reload">Relire l’inventaire reçu</button>
+          </div>
+          <div class="grow">
+            <label for="appleAuditSearch" data-i18n="appleAudit.search">Rechercher</label>
+            <input id="appleAuditSearch" placeholder="nom, pièce, modèle, bridge">
+          </div>
+          <div>
+            <label for="appleAuditFilter" data-i18n="appleAudit.filter">Filtre</label>
+            <select id="appleAuditFilter">
+              <option value="all" data-i18n="appleAudit.filterAll">Tous</option>
+              <option value="warnings" data-i18n="appleAudit.filterWarnings">Warnings</option>
+              <option value="migration" data-i18n="appleAudit.filterMigration">Migration probable</option>
+              <option value="duplicate" data-i18n="appleAudit.filterDuplicate">Doublons</option>
+              <option value="offline" data-i18n="appleAudit.filterOffline">Sans réponse</option>
+              <option value="orphan" data-i18n="appleAudit.filterOrphan">Orphelins</option>
+              <option value="ok" data-i18n="appleAudit.filterOk">Cohérents</option>
+            </select>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="copyAppleAudit" disabled data-i18n="appleAudit.copy">Copier le JSON</button>
+          </div>
+        </div>
+        <div id="appleAuditInventoryStatus" class="muted">
+          <span data-i18n="appleAudit.noData">Aucun audit lancé.</span>
+        </div>
+        <div id="appleAuditLegend" class="bridge-legend"></div>
+        <div id="appleAuditSummary" class="audit-summary"></div>
+        <div class="apple-audit-table-wrap">
+          <table class="apple-audit-table">
+            <thead>
+              <tr>
+                <th data-i18n="appleAudit.colAccessory">Accessoire Apple</th>
+                <th data-i18n="appleAudit.colRoom">Pièce</th>
+                <th data-i18n="appleAudit.colAppleBridge">Bridge Apple</th>
+                <th data-i18n="appleAudit.colHueBridge">Bridge Hue attendu</th>
+                <th data-i18n="appleAudit.colReachability">Joignable</th>
+                <th data-i18n="appleAudit.colStatus">État</th>
+                <th data-i18n="appleAudit.colDiagnostic">Diagnostic</th>
+              </tr>
+            </thead>
+            <tbody id="appleAuditRows">
+              <tr>
+                <td colspan="7" class="muted">Lance l’audit multi-Bridges.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <pre id="appleAuditResult" class="hidden"></pre>
+      </div>
+    </section>
   </div>
 
   <div id="managementView">
@@ -442,6 +522,7 @@
       "brand.subtitle": "Migration, audit et nettoyage de Bridges Hue.",
       "language.label": "Langue",
       "tab.management": "Gestion",
+      "tab.appleAudit": "Apple Maison",
       "tab.migration": "Migration",
       "management.title": "Gestion du Bridge",
       "management.bridge": "Bridge à analyser",
@@ -502,6 +583,38 @@
       "backup.import": "Importer",
       "backup.plan": "Analyser le restore",
       "backup.restore": "Restaurer vers la destination",
+      "appleAudit.title": "Audit Apple Maison multi-Bridges",
+      "appleAudit.description": "Vue globale de tous les Bridges Hue connus de HueManager face au dernier inventaire Apple Maison publié. Les pastilles indiquent le Bridge associé et les migrations/doublons probables.",
+      "appleAudit.run": "Analyser tous les Bridges",
+      "appleAudit.reload": "Relire l’inventaire reçu",
+      "appleAudit.search": "Rechercher",
+      "appleAudit.filter": "Filtre",
+      "appleAudit.filterAll": "Tous",
+      "appleAudit.filterWarnings": "Warnings",
+      "appleAudit.filterMigration": "Migration probable",
+      "appleAudit.filterDuplicate": "Doublons",
+      "appleAudit.filterOffline": "Sans réponse",
+      "appleAudit.filterOrphan": "Orphelins",
+      "appleAudit.filterOk": "Cohérents",
+      "appleAudit.copy": "Copier le JSON",
+      "appleAudit.noData": "Aucun audit lancé.",
+      "appleAudit.colAccessory": "Accessoire Apple",
+      "appleAudit.colRoom": "Pièce",
+      "appleAudit.colAppleBridge": "Bridge Apple",
+      "appleAudit.colHueBridge": "Bridge Hue attendu",
+      "appleAudit.colReachability": "Joignable",
+      "appleAudit.colStatus": "État",
+      "appleAudit.colDiagnostic": "Diagnostic",
+      "appleAudit.statusOk": "Cohérent",
+      "appleAudit.statusExpectedOffline": "Hors tension attendu",
+      "appleAudit.statusUnreachable": "Aucune réponse",
+      "appleAudit.statusMigrated": "Migration probable",
+      "appleAudit.statusStale": "Ancienne entrée après migration",
+      "appleAudit.statusDuplicate": "Doublon probable",
+      "appleAudit.statusOrphan": "Orphelin Apple",
+      "appleAudit.statusAmbiguous": "Correspondance ambiguë",
+      "appleAudit.statusUnmapped": "Bridge Apple non associé",
+      "appleAudit.statusUnresolved": "À identifier",
       "apple.title": "Apple Maison — synchronisation des pièces Hue",
       "apple.description": "L’inventaire Apple Maison est publié par l’app iOS HueManager Home Sync. Ici, tu peux relire le dernier inventaire reçu, puis sélectionner une pièce Apple pour chaque pièce Hue et vérifier l’impact avant enregistrement.",
       "apple.refresh": "Relire l’inventaire reçu",
@@ -565,6 +678,7 @@
       "brand.subtitle": "Migration, audit and cleanup for Hue Bridges.",
       "language.label": "Language",
       "tab.management": "Management",
+      "tab.appleAudit": "Apple Home",
       "tab.migration": "Migration",
       "management.title": "Bridge management",
       "management.bridge": "Bridge to analyze",
@@ -625,6 +739,38 @@
       "backup.import": "Import",
       "backup.plan": "Analyze restore",
       "backup.restore": "Restore to destination",
+      "appleAudit.title": "Multi-bridge Apple Home audit",
+      "appleAudit.description": "Global view of all Hue bridges known to HueManager against the latest Apple Home inventory. Colored dots show the associated bridge and highlight likely migrations or duplicates.",
+      "appleAudit.run": "Analyze all bridges",
+      "appleAudit.reload": "Reload received inventory",
+      "appleAudit.search": "Search",
+      "appleAudit.filter": "Filter",
+      "appleAudit.filterAll": "All",
+      "appleAudit.filterWarnings": "Warnings",
+      "appleAudit.filterMigration": "Likely migration",
+      "appleAudit.filterDuplicate": "Duplicates",
+      "appleAudit.filterOffline": "Unreachable",
+      "appleAudit.filterOrphan": "Orphans",
+      "appleAudit.filterOk": "Healthy",
+      "appleAudit.copy": "Copy JSON",
+      "appleAudit.noData": "No audit has been run.",
+      "appleAudit.colAccessory": "Apple accessory",
+      "appleAudit.colRoom": "Room",
+      "appleAudit.colAppleBridge": "Apple bridge",
+      "appleAudit.colHueBridge": "Expected Hue bridge",
+      "appleAudit.colReachability": "Reachable",
+      "appleAudit.colStatus": "Status",
+      "appleAudit.colDiagnostic": "Diagnostic",
+      "appleAudit.statusOk": "Healthy",
+      "appleAudit.statusExpectedOffline": "Expected offline",
+      "appleAudit.statusUnreachable": "No response",
+      "appleAudit.statusMigrated": "Likely migration",
+      "appleAudit.statusStale": "Old entry after migration",
+      "appleAudit.statusDuplicate": "Likely duplicate",
+      "appleAudit.statusOrphan": "Apple orphan",
+      "appleAudit.statusAmbiguous": "Ambiguous match",
+      "appleAudit.statusUnmapped": "Unmapped Apple bridge",
+      "appleAudit.statusUnresolved": "Needs identification",
       "apple.title": "Apple Home — Hue room synchronization",
       "apple.description": "The Apple Home inventory is published by the iOS HueManager Home Sync app. Here you can reload the last inventory received, then select an Apple Home room for each Hue room and review the impact before saving.",
       "apple.refresh": "Reload received inventory",
@@ -702,6 +848,7 @@
     monitor: null,
     monitorPollTimer: null,
     appleHome: null,
+    appleAudit: null,
     appleHomePlan: null,
     appleIdentityDiagnostics: null,
     appleSelectedRoomIds: new Set(),
@@ -733,6 +880,9 @@
     }
     if (state.monitor) {
       renderMonitor(state.monitor);
+    }
+    if (state.appleAudit) {
+      renderAppleAudit(state.appleAudit);
     }
     if (state.appleHomePlan) {
       renderAppleHomePlan(state.appleHomePlan);
@@ -877,10 +1027,14 @@
 
   function showView(name) {
     const migration = name === "migration";
+    const appleAudit = name === "appleAudit";
+    const management = !migration && !appleAudit;
     $("migrationView").classList.toggle("hidden", !migration);
-    $("managementView").classList.toggle("hidden", migration);
+    $("appleAuditView").classList.toggle("hidden", !appleAudit);
+    $("managementView").classList.toggle("hidden", !management);
     $("migrationTab").classList.toggle("active", migration);
-    $("managementTab").classList.toggle("active", !migration);
+    $("appleAuditTab").classList.toggle("active", appleAudit);
+    $("managementTab").classList.toggle("active", management);
   }
 
   function auditCleanupIssues() {
@@ -1455,6 +1609,339 @@
     status("Rapport de surveillance copié dans le presse-papiers.", "good");
   }
 
+
+  const APPLE_AUDIT_BRIDGE_COLORS = [
+    "#4f8cff", "#e18d3b", "#8f6be8", "#2dbd7f",
+    "#d95f9f", "#53a7a0", "#cfb13f", "#e06b5f"
+  ];
+
+  function appleAuditBridgeColor(profile) {
+    if (!profile || !state.appleAudit) return "#697386";
+    const profiles = (state.appleAudit.bridges || []).map(item => item.profile);
+    const position = profiles.indexOf(profile);
+    return position >= 0
+      ? APPLE_AUDIT_BRIDGE_COLORS[
+          position % APPLE_AUDIT_BRIDGE_COLORS.length
+        ]
+      : "#697386";
+  }
+
+  function appleAuditBridgeBadge(profile, label, model = "") {
+    const badge = document.createElement("span");
+    badge.className = "bridge-badge";
+    const dot = document.createElement("span");
+    dot.className = "bridge-dot";
+    dot.style.backgroundColor = appleAuditBridgeColor(profile);
+    const text = document.createElement("span");
+    text.textContent = label || profile || "Non associé";
+    badge.append(dot, text);
+    if (model) badge.title = model;
+    return badge;
+  }
+
+  function appleAuditStatusLabel(value) {
+    const keys = {
+      ok: "appleAudit.statusOk",
+      expected_offline: "appleAudit.statusExpectedOffline",
+      unreachable: "appleAudit.statusUnreachable",
+      migrated: "appleAudit.statusMigrated",
+      stale_after_migration: "appleAudit.statusStale",
+      duplicate: "appleAudit.statusDuplicate",
+      orphan: "appleAudit.statusOrphan",
+      ambiguous: "appleAudit.statusAmbiguous",
+      unmapped_bridge: "appleAudit.statusUnmapped",
+      unresolved: "appleAudit.statusUnresolved",
+    };
+    return t(keys[value] || "appleAudit.statusUnresolved");
+  }
+
+  function appleAuditReason(item) {
+    const appleBridge =
+      item.apple_bridge_profile || item.apple_bridge_name || "inconnu";
+    const expectedBridge = item.expected_bridge_profile || "inconnu";
+    if (item.status === "stale_after_migration") {
+      return `Apple le conserve via « ${appleBridge} », mais l’appareil Hue exact est maintenant sur « ${expectedBridge} ». Une seconde représentation Apple existe : ancienne entrée très probable après migration.`;
+    }
+    if (item.status === "migrated") {
+      return `Apple le voit encore via « ${appleBridge} », alors que l’appareil Hue exact est actuellement sur « ${expectedBridge} ». Migration de Bridge probable.`;
+    }
+    if (item.status === "duplicate") {
+      return `${item.duplicate_count || 2} représentations Apple ont le même nom, modèle et pièce. Vérifie l’ancienne avant toute suppression.`;
+    }
+    if (item.status === "orphan") {
+      return "Cet accessoire existe encore dans Apple Maison, mais aucun appareil Hue de même nom et modèle n’existe sur les Bridges configurés.";
+    }
+    if (item.status === "ambiguous") {
+      return "Plusieurs appareils Hue peuvent correspondre. HueManager ne choisit pas automatiquement.";
+    }
+    if (item.status === "unmapped_bridge") {
+      return "Le Bridge parent vu dans Apple Maison n’a pas pu être associé sans ambiguïté à un profil HueManager.";
+    }
+    if (item.status === "expected_offline") {
+      return "Apple le signale non joignable, mais l’appareil Hue correspondant est déjà marqué comme volontairement coupé.";
+    }
+    if (item.status === "unreachable") {
+      return "Apple Maison signale l’accessoire non joignable. Vérifie d’abord son alimentation avant de conclure à un résidu de migration.";
+    }
+    if (item.status === "unresolved") {
+      return "Apple ne fournit pas assez de métadonnées pour une association sûre. Aucun nettoyage automatique n’est proposé.";
+    }
+    return item.match_source === "persistent"
+      ? "Correspondance Hue ↔ Apple mémorisée et Bridge cohérent."
+      : "Nom, modèle, pièce et Bridge sont cohérents avec l’inventaire Hue actuel.";
+  }
+
+  function appleAuditFilterMatches(item) {
+    const filter = $("appleAuditFilter").value;
+    if (filter === "warnings" && item.severity !== "warning") return false;
+    if (
+      filter === "migration" &&
+      !(item.flags || []).includes("migrated")
+    ) return false;
+    if (
+      filter === "duplicate" &&
+      !(item.flags || []).includes("duplicate")
+    ) return false;
+    if (
+      filter === "offline" &&
+      !(item.flags || []).includes("unreachable")
+    ) return false;
+    if (filter === "orphan" && item.status !== "orphan") return false;
+    if (
+      filter === "ok" &&
+      !["ok", "expected_offline"].includes(item.status)
+    ) return false;
+
+    const query = $("appleAuditSearch").value.trim().toLowerCase();
+    if (!query) return true;
+    const haystack = [
+      item.name,
+      item.model,
+      item.room_name,
+      item.apple_bridge_name,
+      item.apple_bridge_profile,
+      item.expected_bridge_profile,
+      appleAuditStatusLabel(item.status),
+    ].filter(Boolean).join(" ").toLowerCase();
+    return haystack.includes(query);
+  }
+
+  function renderAppleAuditRows() {
+    const root = $("appleAuditRows");
+    root.replaceChildren();
+    const items = (state.appleAudit?.items || []).filter(
+      appleAuditFilterMatches
+    );
+    if (!items.length) {
+      const row = document.createElement("tr");
+      const cell = document.createElement("td");
+      cell.colSpan = 7;
+      cell.className = "muted";
+      cell.textContent = "Aucun accessoire pour ce filtre.";
+      row.append(cell);
+      root.append(row);
+      return;
+    }
+
+    for (const item of items) {
+      const row = document.createElement("tr");
+      if (item.severity === "warning") {
+        row.className = "apple-audit-row-warning";
+      }
+
+      const accessoryCell = document.createElement("td");
+      const name = document.createElement("div");
+      name.className = "apple-audit-main";
+      name.textContent = item.name || item.apple_accessory_id || "?";
+      const meta = document.createElement("div");
+      meta.className = "apple-audit-sub";
+      meta.textContent = item.model || "modèle inconnu";
+      accessoryCell.append(name, meta);
+
+      const roomCell = document.createElement("td");
+      roomCell.textContent = item.room_name || "Sans pièce";
+
+      const appleBridgeCell = document.createElement("td");
+      appleBridgeCell.append(
+        appleAuditBridgeBadge(
+          item.apple_bridge_profile,
+          item.apple_bridge_profile ||
+            item.apple_bridge_name ||
+            "Non associé",
+          item.apple_bridge_model || "",
+        )
+      );
+      if (item.apple_bridge_name && item.apple_bridge_profile) {
+        const detail = document.createElement("div");
+        detail.className = "apple-audit-sub";
+        detail.textContent = item.apple_bridge_name;
+        appleBridgeCell.append(detail);
+      }
+
+      const expectedCell = document.createElement("td");
+      if (item.expected_bridge_profile) {
+        expectedCell.append(
+          appleAuditBridgeBadge(
+            item.expected_bridge_profile,
+            item.expected_bridge_profile,
+            item.expected_hue_device?.model || "",
+          )
+        );
+        const expectedDevice = document.createElement("div");
+        expectedDevice.className = "apple-audit-sub";
+        expectedDevice.textContent =
+          `${item.expected_hue_device?.name || "?"} · ` +
+          `${item.expected_hue_device?.room_name || "sans pièce"}`;
+        expectedCell.append(expectedDevice);
+      } else {
+        expectedCell.textContent = "—";
+      }
+
+      const reachableCell = document.createElement("td");
+      const reachable = document.createElement("span");
+      reachable.className = `pill ${
+        item.reachable === false
+          ? "warn"
+          : (item.reachable === true ? "good" : "")
+      }`.trim();
+      reachable.textContent = item.reachable === false
+        ? "Non"
+        : (item.reachable === true ? "Oui" : "Inconnu");
+      reachableCell.append(reachable);
+
+      const statusCell = document.createElement("td");
+      const statusPill = document.createElement("span");
+      statusPill.className = `pill ${
+        item.severity === "good"
+          ? "good"
+          : (item.severity === "warning" ? "warn" : "")
+      }`.trim();
+      statusPill.textContent = appleAuditStatusLabel(item.status);
+      statusCell.append(statusPill);
+
+      const reasonCell = document.createElement("td");
+      reasonCell.textContent = appleAuditReason(item);
+
+      row.append(
+        accessoryCell,
+        roomCell,
+        appleBridgeCell,
+        expectedCell,
+        reachableCell,
+        statusCell,
+        reasonCell,
+      );
+      root.append(row);
+    }
+  }
+
+  function renderAppleAudit(data) {
+    state.appleAudit = data;
+    const summary = data.summary || {};
+    $("appleAuditInventoryStatus").textContent =
+      `Maison « ${data.home?.name || "?"} » · inventaire ${
+        data.inventory_received_at || "reçu"
+      }`;
+
+    const legend = $("appleAuditLegend");
+    legend.replaceChildren();
+    for (const bridge of data.bridges || []) {
+      const wrap = document.createElement("span");
+      wrap.append(
+        appleAuditBridgeBadge(
+          bridge.profile,
+          bridge.profile,
+          bridge.hue_model || "",
+        )
+      );
+      const suffix = document.createElement("span");
+      suffix.className = "apple-audit-sub";
+      suffix.textContent = bridge.apple_bridge_name
+        ? `Apple: ${bridge.apple_bridge_name}`
+        : (
+            bridge.status === "ambiguous"
+              ? "Apple: ambigu"
+              : "Apple: non trouvé"
+          );
+      wrap.append(suffix);
+      legend.append(wrap);
+    }
+
+    const summaryRoot = $("appleAuditSummary");
+    summaryRoot.replaceChildren();
+    const chips = [
+      [`${summary.apple_hue_accessories || 0} accessoires Hue Apple`, ""],
+      [`${summary.healthy || 0} cohérents`, "good"],
+      [
+        `${summary.probable_migrations || 0} migration(s) probable(s)`,
+        summary.probable_migrations ? "warn" : ""
+      ],
+      [
+        `${summary.duplicates || 0} doublon(s)`,
+        summary.duplicates ? "warn" : ""
+      ],
+      [
+        `${summary.unreachable || 0} sans réponse`,
+        summary.unreachable ? "warn" : ""
+      ],
+      [
+        `${summary.expected_offline || 0} hors tension attendu(s)`,
+        ""
+      ],
+      [
+        `${summary.orphans || 0} orphelin(s)`,
+        summary.orphans ? "warn" : ""
+      ],
+      [
+        `${summary.bridge_errors || 0} Bridge(s) inaccessible(s)`,
+        summary.bridge_errors ? "warn" : ""
+      ],
+    ];
+    for (const [label, cls] of chips) {
+      const chip = document.createElement("span");
+      chip.className = `pill ${cls}`.trim();
+      chip.textContent = label;
+      summaryRoot.append(chip);
+    }
+
+    $("appleAuditResult").textContent = JSON.stringify(data, null, 2);
+    $("copyAppleAudit").disabled = false;
+    renderAppleAuditRows();
+  }
+
+  async function runAppleAudit() {
+    status("Audit Apple Maison multi-Bridges en cours…");
+    $("runAppleAudit").disabled = true;
+    try {
+      const data = await api("/api/apple-home/audit");
+      renderAppleAudit(data);
+      status("Audit Apple Maison multi-Bridges terminé.", "good");
+    } finally {
+      $("runAppleAudit").disabled = false;
+    }
+  }
+
+  async function copyAppleAudit() {
+    if (!state.appleAudit) return;
+    const payload = JSON.stringify(state.appleAudit, null, 2);
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(payload);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = payload;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.append(textarea);
+      textarea.focus();
+      textarea.select();
+      if (!document.execCommand("copy")) {
+        textarea.remove();
+        throw new Error("Copie automatique indisponible.");
+      }
+      textarea.remove();
+    }
+    status("Audit Apple Maison copié dans le presse-papiers.", "good");
+  }
 
   function renderAppleHomeStatus(data) {
     state.appleHome = data;
@@ -2232,6 +2719,12 @@
   applyLanguage(state.language);
 
   $("migrationTab").addEventListener("click", () => showView("migration"));
+  $("appleAuditTab").addEventListener("click", () => {
+    showView("appleAudit");
+    if (!state.appleAudit) {
+      runAppleAudit().catch(e => status(e.message, "bad"));
+    }
+  });
   $("managementTab").addEventListener("click", () => showView("management"));
   $("auditBridge").addEventListener("click", () => {
     runAudit().catch(e => status(e.message, "bad"));
@@ -2838,6 +3331,20 @@
     $("forceApplyButton").disabled = true;
     $("restoreBackup").disabled = true;
   });
+
+  $("runAppleAudit").addEventListener("click", () => {
+    runAppleAudit().catch(e => status(e.message, "bad"));
+  });
+  $("reloadAppleAudit").addEventListener("click", () => {
+    loadAppleHomeStatus()
+      .then(() => runAppleAudit())
+      .catch(e => status(e.message, "bad"));
+  });
+  $("copyAppleAudit").addEventListener("click", () => {
+    copyAppleAudit().catch(e => status(e.message, "bad"));
+  });
+  $("appleAuditSearch").addEventListener("input", renderAppleAuditRows);
+  $("appleAuditFilter").addEventListener("change", renderAppleAuditRows);
 
   $("refreshAppleHome").addEventListener("click", () => {
     loadAppleHomeStatus()
