@@ -9,20 +9,31 @@ from huemanager import web
 
 
 class FakeHueClient:
-    def __init__(self, fabrics: list[dict]) -> None:
+    def __init__(self, fabrics: list[dict], matters: list[dict] | None = None) -> None:
         self.fabrics = list(fabrics)
+        self.matters = list(matters or [])
         self.deleted: list[tuple[str, str]] = []
+        self.puts: list[tuple[str, str, dict]] = []
 
     def v2_get(self, resource_type: str, resource_id: str | None = None) -> list[dict]:
-        assert resource_type == "matter_fabric"
+        rows = self.fabrics if resource_type == "matter_fabric" else self.matters
+        if resource_type not in {"matter_fabric", "matter"}:
+            raise AssertionError(resource_type)
         if resource_id is not None:
-            return [row for row in self.fabrics if row.get("id") == resource_id]
-        return list(self.fabrics)
+            return [row for row in rows if row.get("id") == resource_id]
+        return list(rows)
 
     def v2_delete(self, resource_type: str, resource_id: str) -> list[dict]:
         assert resource_type == "matter_fabric"
         self.deleted.append((resource_type, resource_id))
         self.fabrics = [row for row in self.fabrics if row.get("id") != resource_id]
+        return []
+
+    def v2_put(self, resource_type: str, resource_id: str, body: dict) -> list[dict]:
+        assert resource_type == "matter"
+        self.puts.append((resource_type, resource_id, body))
+        if body == {"action": "matter_reset"}:
+            self.fabrics = []
         return []
 
 
@@ -111,3 +122,54 @@ def test_delete_matter_fabric_rejects_unknown_id(
 
     assert exc_info.value.status_code == 404
     assert client.deleted == []
+
+
+def test_matter_fabric_summary_identifies_apple_keychain() -> None:
+    row = web._matter_fabric_summary(
+        _fabric(
+            fabric_id=str(uuid.uuid4()),
+            label="",
+            vendor_id=0x1384,
+        )
+    )
+
+    assert row["vendor_id"] == 4996
+    assert row["vendor_name"] == "Apple Keychain"
+    assert row["is_apple"] is True
+
+
+def test_reset_matter_feature_uses_matter_reset_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    matter_id = str(uuid.uuid4())
+    client = FakeHueClient(
+        [
+            _fabric(
+                fabric_id=str(uuid.uuid4()),
+                label="Maison",
+                vendor_id=0x1349,
+            ),
+            _fabric(
+                fabric_id=str(uuid.uuid4()),
+                label="",
+                vendor_id=0x1384,
+            ),
+        ],
+        matters=[
+            {
+                "id": matter_id,
+                "type": "matter",
+                "has_qr_code": True,
+                "max_fabrics": 16,
+            }
+        ],
+    )
+    monkeypatch.setattr(web, "_client", lambda _: client)
+
+    result = web.reset_matter_feature("Bridge Pro")
+
+    assert client.puts == [
+        ("matter", matter_id, {"action": "matter_reset"})
+    ]
+    assert result["removed_fabrics"] == 2
+    assert client.fabrics == []
