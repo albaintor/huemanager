@@ -55,6 +55,7 @@ GENERIC_DEVICE_WORDS = {
 }
 
 HUE_ACCESSORY_HINTS = ("hue", "philips", "signify")
+UNUSABLE_SERIAL_VALUES = {"unknown", "n/a", "na", "none", "null", "-"}
 FUZZY_MATCHABLE_HUE_SERVICE_TYPES = {
     "light",
     "motion",
@@ -175,6 +176,15 @@ def _normalise(value: str | None) -> str:
 
 def _normalise_identifier(value: str | None) -> str:
     return re.sub(r"[^a-f0-9]+", "", (value or "").lower())
+
+
+def _usable_serial_number(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in UNUSABLE_SERIAL_VALUES:
+        return None
+    return text
 
 
 def _hue_identifier_candidates(device: dict) -> set[str]:
@@ -434,6 +444,122 @@ def record_sync_result(state: dict, result: dict) -> dict:
     return updated
 
 
+def build_learnable_apple_home_accessory_map(
+    hue_tree: dict,
+    inventory: dict,
+    *,
+    room_map: dict[str, str] | None = None,
+    accessory_map: dict[str, str] | None = None,
+) -> dict:
+    """Return strict one-to-one Hue/HomeKit pairs that can be persisted safely.
+
+    A pair is learnable only when the Hue room is mapped explicitly or by an
+    exact room-name match, and both accessory name and model match exactly and
+    uniquely inside that room. Heuristic room matches, missing models and
+    ambiguous names are deliberately excluded.
+    """
+    room_map = room_map or {}
+    accessory_map = accessory_map or {}
+    learnable = build_learnable_apple_home_accessory_map(
+        hue_tree,
+        inventory,
+        room_map=room_map,
+        accessory_map=accessory_map,
+    )
+    plan = build_apple_home_sync_plan(
+        hue_tree,
+        inventory,
+        room_map=room_map,
+        accessory_map=accessory_map,
+    )
+    room_plan_by_hue_id = {
+        str(room.get("hue_room_id")): room
+        for room in plan.get("rooms", [])
+        if room.get("hue_room_id")
+    }
+
+    accessories = [
+        accessory
+        for accessory in inventory.get("accessories", [])
+        if accessory.get("id")
+    ]
+    candidates = _apple_accessories_for_hue_bridge(hue_tree, accessories)
+    used_apple_ids = {
+        str(accessory_id)
+        for accessory_id in accessory_map.values()
+        if str(accessory_id)
+    }
+
+    apple_buckets: dict[tuple[str, str, str], list[dict]] = {}
+    for accessory in candidates:
+        accessory_id = str(accessory.get("id") or "")
+        if not accessory_id or accessory_id in used_apple_ids:
+            continue
+        room_id = str(accessory.get("room_id") or "")
+        name_key = _normalise(accessory.get("name"))
+        model_key = _normalise(accessory.get("model"))
+        if not room_id or not name_key or not model_key:
+            continue
+        apple_buckets.setdefault((room_id, name_key, model_key), []).append(accessory)
+
+    hue_buckets: dict[tuple[str, str, str], list[dict]] = {}
+    for room in hue_tree.get("rooms", []):
+        hue_room_id = str(room.get("id") or "")
+        room_plan = room_plan_by_hue_id.get(hue_room_id)
+        if not room_plan or not room_plan.get("apple_room_id"):
+            continue
+        if room_plan.get("method") not in {"manual", "name"}:
+            continue
+        if float(room_plan.get("confidence") or 0) < 1.0:
+            continue
+
+        apple_room_id = str(room_plan.get("apple_room_id") or "")
+        for device in room.get("devices", []):
+            device_id = str(device.get("id") or "")
+            if not device_id or device_id in accessory_map:
+                continue
+            name_key = _normalise(device.get("name"))
+            model_key = _normalise(device.get("model"))
+            if not name_key or not model_key:
+                continue
+            hue_buckets.setdefault(
+                (apple_room_id, name_key, model_key),
+                [],
+            ).append(device)
+
+    learned: dict[str, str] = {}
+    mappings: list[dict] = []
+    for key, hue_devices in hue_buckets.items():
+        apple_matches = apple_buckets.get(key, [])
+        if len(hue_devices) != 1 or len(apple_matches) != 1:
+            continue
+        hue_device = hue_devices[0]
+        apple_accessory = apple_matches[0]
+        hue_device_id = str(hue_device.get("id") or "")
+        apple_accessory_id = str(apple_accessory.get("id") or "")
+        learned[hue_device_id] = apple_accessory_id
+        mappings.append(
+            {
+                "hue_device_id": hue_device_id,
+                "hue_name": hue_device.get("name"),
+                "hue_model": hue_device.get("model"),
+                "apple_accessory_id": apple_accessory_id,
+                "apple_name": apple_accessory.get("name"),
+                "apple_model": apple_accessory.get("model"),
+                "apple_room_id": key[0],
+                "apple_room_name": apple_accessory.get("room_name"),
+                "source": "exact_room_name_model",
+                "confidence": 1.0,
+            }
+        )
+
+    return {
+        "count": len(learned),
+        "accessory_map": learned,
+        "mappings": mappings,
+    }
+
+
 def _unique_index(items: list[dict], key_getter) -> dict[str, dict]:
     buckets: dict[str, list[dict]] = {}
     for item in items:
@@ -517,7 +643,7 @@ def build_apple_home_identity_diagnostics(
         identifiers = hue_device.get("identifiers", {})
         hue_identifier_values = _hue_identifier_candidates(hue_device)
         apple_serial = _normalise_identifier(
-            apple_accessory.get("serial_number")
+            _usable_serial_number(apple_accessory.get("serial_number"))
         )
         apple_uuid = _normalise_identifier(apple_accessory_id)
         apple_legacy_uuid = _normalise_identifier(
@@ -706,7 +832,7 @@ def build_apple_home_identity_diagnostics(
         for device in hue_devices.values()
     )
     apple_with_serial = sum(
-        bool(accessory.get("serial_number"))
+        _usable_serial_number(accessory.get("serial_number")) is not None
         for accessory in hue_apple_accessories
     )
     apple_with_hap_aid = sum(
@@ -793,7 +919,7 @@ def build_apple_home_identity_diagnostics(
             "bridge_model": accessory.get("bridge_model"),
         }
         for accessory in hue_apple_accessories
-        if accessory.get("serial_number")
+        if _usable_serial_number(accessory.get("serial_number")) is not None
     ][:100]
 
     return {
@@ -812,9 +938,11 @@ def build_apple_home_identity_diagnostics(
             "legacy_uuid_matches_on_anchors": legacy_exact,
             "hap_aid_equals_v1_on_anchors": hap_equals_v1,
             "manual_mappings": len(accessory_map),
+            "learnable_identity_mappings": learnable["count"],
         },
         "bridge_identity": bridge_identifier_checks,
         "apple_selected_bridge_serial_samples": serial_samples,
+        "learnable_mappings_preview": learnable["mappings"][:20],
         "candidate_hap_v1_offsets": common_offsets,
         "anchors": anchors[:100],
         "findings": findings,
@@ -870,7 +998,9 @@ def build_apple_home_sync_plan(
 
     accessories_by_serial: dict[str, list[dict]] = {}
     for accessory in candidate_accessories:
-        serial = _normalise_identifier(accessory.get("serial_number"))
+        serial = _normalise_identifier(
+            _usable_serial_number(accessory.get("serial_number"))
+        )
         if serial:
             accessories_by_serial.setdefault(serial, []).append(accessory)
 

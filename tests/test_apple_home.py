@@ -3,6 +3,7 @@ from __future__ import annotations
 from huemanager.apple_home import (
     build_apple_home_identity_diagnostics,
     build_apple_home_sync_plan,
+    build_learnable_apple_home_accessory_map,
     get_accessory_map,
     get_room_selection,
     store_accessory_map,
@@ -493,3 +494,150 @@ def test_identity_diagnostic_compares_legacy_homekit_identifier() -> None:
         ]
         is True
     )
+
+
+
+def test_learnable_mapping_requires_exact_unique_room_name_and_model() -> None:
+    hue_tree = {
+        "bridge": {"name": "Principal", "modelid": "BSB003"},
+        "rooms": [
+            {
+                "id": "hue-room",
+                "name": "Salon",
+                "devices": [
+                    {
+                        "id": "hue-light",
+                        "name": "Salon lampe",
+                        "model": "LCA001",
+                        "services": [{"type": "light"}],
+                        "identifiers": {
+                            "zigbee_macs": ["00:17:88:01:02:03:04:05"],
+                            "v1_uniqueids": [],
+                            "v1_resource_ids": ["lights:7"],
+                            "v1_numeric_ids": [7],
+                            "pairing_fields": [],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    inventory = {
+        "home": {"id": "home-1", "name": "Maison"},
+        "rooms": [{"id": "apple-room", "name": "Salon"}],
+        "accessories": [
+            {
+                "id": "apple-light",
+                "name": "Salon lampe",
+                "room_id": "apple-room",
+                "room_name": "Salon",
+                "manufacturer": "Signify",
+                "model": "LCA001",
+                "serial_number": None,
+                "is_bridged": True,
+                "bridge_name": "Hue Bridge Pro",
+                "bridge_manufacturer": "Signify",
+                "bridge_model": "BSB003",
+            }
+        ],
+    }
+
+    result = build_learnable_apple_home_accessory_map(hue_tree, inventory)
+
+    assert result["count"] == 1
+    assert result["accessory_map"] == {"hue-light": "apple-light"}
+    assert result["mappings"][0]["confidence"] == 1.0
+
+
+def test_learnable_mapping_rejects_heuristic_room_and_ambiguous_accessory() -> None:
+    hue_tree = {
+        "bridge": {"name": "Principal", "modelid": "BSB003"},
+        "rooms": [
+            {
+                "id": "hue-room",
+                "name": "Living",
+                "devices": [
+                    {
+                        "id": "hue-light",
+                        "name": "Lampe",
+                        "model": "LCA001",
+                        "services": [{"type": "light"}],
+                        "identifiers": {
+                            "zigbee_macs": ["00:17:88:01:02:03:04:05"],
+                            "v1_uniqueids": [],
+                            "pairing_fields": [],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    inventory = {
+        "home": {"id": "home-1", "name": "Maison"},
+        "rooms": [{"id": "apple-room", "name": "Salon"}],
+        "accessories": [
+            {
+                "id": "apple-light-1",
+                "name": "Lampe",
+                "room_id": "apple-room",
+                "room_name": "Salon",
+                "manufacturer": "Signify",
+                "model": "LCA001",
+                "serial_number": None,
+                "is_bridged": True,
+                "bridge_name": "Hue Bridge Pro",
+                "bridge_manufacturer": "Signify",
+                "bridge_model": "BSB003",
+            },
+            {
+                "id": "apple-light-2",
+                "name": "Lampe",
+                "room_id": "apple-room",
+                "room_name": "Salon",
+                "manufacturer": "Signify",
+                "model": "LCA001",
+                "serial_number": None,
+                "is_bridged": True,
+                "bridge_name": "Hue Bridge Pro",
+                "bridge_manufacturer": "Signify",
+                "bridge_model": "BSB003",
+            },
+        ],
+    }
+
+    result = build_learnable_apple_home_accessory_map(hue_tree, inventory)
+
+    assert result["count"] == 0
+    assert result["accessory_map"] == {}
+
+
+def test_identity_diagnostic_ignores_unknown_serial_placeholder() -> None:
+    hue_tree = {
+        "bridge": {"name": "Principal", "modelid": "BSB003"},
+        "rooms": [],
+    }
+    inventory = {
+        "home": {"id": "home-1", "name": "Maison"},
+        "rooms": [],
+        "accessories": [
+            {
+                "id": "apple-light",
+                "name": "Lampe",
+                "room_id": None,
+                "room_name": None,
+                "manufacturer": "Signify",
+                "model": "Unknown",
+                "serial_number": "Unknown",
+                "is_bridged": True,
+                "bridge_name": "Hue Bridge Pro",
+                "bridge_manufacturer": "Signify",
+                "bridge_model": "BSB003",
+            }
+        ],
+        "bridges": [],
+    }
+
+    report = build_apple_home_identity_diagnostics(hue_tree, inventory)
+
+    assert report["summary"]["apple_hue_with_serial"] == 0
+    assert report["apple_selected_bridge_serial_samples"] == []

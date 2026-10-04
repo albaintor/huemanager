@@ -829,7 +829,10 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     private func serialString(from characteristic: HMCharacteristic) -> String? {
         guard let value = characteristic.value as? String else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        guard !trimmed.isEmpty else { return nil }
+        let normalized = trimmed.lowercased()
+        let unusable = ["unknown", "n/a", "na", "none", "null", "-"]
+        return unusable.contains(normalized) ? nil : trimmed
     }
 
     private func homeKitSerialNumber(for accessory: HMAccessory) async -> String? {

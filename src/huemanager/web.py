@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from .apple_home import (
     build_apple_home_identity_diagnostics,
     build_apple_home_sync_plan,
+    build_learnable_apple_home_accessory_map,
     get_accessory_map,
     get_room_map,
     get_room_selection,
@@ -350,6 +351,50 @@ def apple_home_identity_diagnostics(bridge_name: str) -> dict:
             room_map=get_room_map(state, bridge_name, home_id),
             accessory_map=get_accessory_map(state, bridge_name, home_id),
         )
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@app.post("/api/bridges/{bridge_name}/apple-home/learn-identities")
+def learn_apple_home_identities(bridge_name: str) -> dict:
+    """Persist strict one-to-one identity anchors after explicit user action."""
+    try:
+        state = _load_apple_home()
+        inventory = state.get("inventory")
+        if not inventory:
+            raise MigrationError(
+                "No Apple Home inventory available. Open HueManager Home Sync on an Apple device first."
+            )
+        home_id = str((inventory.get("home") or {}).get("id") or "")
+        if not home_id:
+            raise MigrationError("Apple Home inventory has no home id.")
+
+        existing = get_accessory_map(state, bridge_name, home_id)
+        learnable = build_learnable_apple_home_accessory_map(
+            inventory_tree(_client(bridge_name)),
+            inventory,
+            room_map=get_room_map(state, bridge_name, home_id),
+            accessory_map=existing,
+        )
+        merged = {**learnable["accessory_map"], **existing}
+        if len(set(merged.values())) != len(merged):
+            raise MigrationError(
+                "Learned Apple Home associations conflict with existing persistent mappings."
+            )
+
+        state = store_accessory_map(
+            state,
+            bridge_name,
+            home_id,
+            merged,
+        )
+        _save_apple_home(state)
+        return {
+            "ok": True,
+            "learned": learnable["count"],
+            "total_persistent_mappings": len(merged),
+            "mappings": learnable["mappings"],
+        }
     except Exception as exc:
         raise _api_error(exc) from exc
 

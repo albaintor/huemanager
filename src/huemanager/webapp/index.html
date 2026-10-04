@@ -418,6 +418,7 @@
           <button id="refreshAppleHome" data-i18n="apple.refresh">Relire l’inventaire reçu</button>
           <button id="planAppleHome" class="primary" disabled data-i18n="apple.analyze">Analyser Hue ↔ Maison</button>
           <button id="diagnoseAppleIdentity" disabled data-i18n="apple.identityAnalyze">Diagnostiquer les identifiants</button>
+          <button id="learnAppleIdentity" disabled data-i18n="apple.identityLearn">Mémoriser les correspondances sûres</button>
           <button id="copyAppleIdentity" disabled data-i18n="apple.identityCopy">Copier le diagnostic</button>
           <button id="saveAppleRoomMap" disabled data-i18n="apple.save">Enregistrer la configuration</button>
         </div>
@@ -507,6 +508,9 @@
       "apple.analyze": "Analyser Hue ↔ Maison",
       "apple.identityAnalyze": "Diagnostiquer les identifiants",
       "apple.identityCopy": "Copier le diagnostic",
+      "apple.identityLearn": "Mémoriser les correspondances sûres",
+      "apple.identityLearnDone": "correspondance(s) sûre(s) mémorisée(s)",
+      "apple.identityLearnNone": "Aucune nouvelle correspondance sûre à mémoriser.",
       "apple.identityHap": "AID HAP accessibles",
       "apple.identitySerial": "Séries Hue/HomeKit",
       "apple.identityAnchors": "Paires de contrôle",
@@ -627,6 +631,9 @@
       "apple.analyze": "Analyze Hue ↔ Home",
       "apple.identityAnalyze": "Diagnose identifiers",
       "apple.identityCopy": "Copy identity diagnostic",
+      "apple.identityLearn": "Remember safe matches",
+      "apple.identityLearnDone": "safe match(es) remembered",
+      "apple.identityLearnNone": "No new safe match is available to remember.",
       "apple.identityHap": "HAP AIDs available",
       "apple.identitySerial": "Hue/HomeKit serials",
       "apple.identityAnchors": "Control pairs",
@@ -1456,6 +1463,7 @@
       $("appleHomeStatus").textContent = t("apple.noInventoryHelp");
       $("planAppleHome").disabled = true;
       $("diagnoseAppleIdentity").disabled = true;
+      $("learnAppleIdentity").disabled = true;
       $("copyAppleIdentity").disabled = true;
       $("saveAppleRoomMap").disabled = true;
       return;
@@ -1463,7 +1471,10 @@
     const home = inventory.home || {};
     const lastSync = data.last_sync;
     const accessories = inventory.accessories || [];
-    const serialCount = accessories.filter(item => item.serial_number).length;
+    const serialCount = accessories.filter(item => {
+      const value = String(item.serial_number || "").trim().toLowerCase();
+      return value && !["unknown", "n/a", "na", "none", "null", "-"].includes(value);
+    }).length;
     $("appleHomeStatus").textContent =
       `Maison « ${home.name || "?"} » · ${inventory.rooms?.length || 0} pièce(s) · ` +
       `${accessories.length} accessoire(s) · ${serialCount} identifiant(s) série HomeKit · ` +
@@ -1492,6 +1503,8 @@
       [`${summary.apple_hue_with_hap_aid || 0}/${summary.apple_hue_accessories || 0} ${t("apple.identityHap")}`,
         summary.apple_hue_with_hap_aid ? "good" : "warn"],
       [`${summary.anchors || 0} ${t("apple.identityAnchors")}`, ""],
+      [`${summary.learnable_identity_mappings || 0} correspondance(s) sûre(s)`,
+        summary.learnable_identity_mappings ? "good" : ""],
       [`${summary.exact_serial_matches_on_anchors || 0} série(s) exacte(s)`,
         summary.exact_serial_matches_on_anchors ? "good" : "warn"],
       [`${summary.hap_aid_equals_v1_on_anchors || 0} AID=v1`,
@@ -1521,6 +1534,11 @@
     pre.textContent = JSON.stringify(data, null, 2);
     pre.classList.remove("hidden");
     $("copyAppleIdentity").disabled = false;
+    const learnableCount = summary.learnable_identity_mappings || 0;
+    $("learnAppleIdentity").disabled = learnableCount === 0;
+    $("learnAppleIdentity").textContent = learnableCount
+      ? `${t("apple.identityLearn")} (${learnableCount})`
+      : t("apple.identityLearn");
   }
 
   async function runAppleIdentityDiagnostics() {
@@ -1536,6 +1554,33 @@
       status("Diagnostic des identifiants terminé.", "good");
     } finally {
       $("diagnoseAppleIdentity").disabled = !state.appleHome?.inventory;
+    }
+  }
+
+  async function learnAppleIdentityMappings() {
+    const bridge = $("managementBridge").value;
+    if (!bridge) return;
+    $("learnAppleIdentity").disabled = true;
+    status("Mémorisation des correspondances Apple/Hue sûres…");
+    try {
+      const result = await api(
+        `/api/bridges/${encodeURIComponent(bridge)}/apple-home/learn-identities`,
+        { method: "POST" },
+      );
+      const plan = await api(
+        `/api/bridges/${encodeURIComponent(bridge)}/apple-home/plan`
+      );
+      renderAppleHomePlan(plan, { resetDraft: true });
+      await runAppleIdentityDiagnostics();
+      status(
+        result.learned
+          ? `${result.learned} ${t("apple.identityLearnDone")}.`
+          : t("apple.identityLearnNone"),
+        result.learned ? "good" : "warn",
+      );
+    } catch (e) {
+      $("learnAppleIdentity").disabled = false;
+      throw e;
     }
   }
 
@@ -2803,6 +2848,9 @@
   $("diagnoseAppleIdentity").addEventListener("click", () => {
     runAppleIdentityDiagnostics().catch(e => status(e.message, "bad"));
   });
+  $("learnAppleIdentity").addEventListener("click", () => {
+    learnAppleIdentityMappings().catch(e => status(e.message, "bad"));
+  });
   $("copyAppleIdentity").addEventListener("click", () => {
     copyAppleIdentityDiagnostics().catch(e => status(e.message, "bad"));
   });
@@ -2847,6 +2895,8 @@
     $("appleIdentityFindings").replaceChildren();
     $("appleIdentityResult").textContent = "";
     $("appleIdentityResult").classList.add("hidden");
+    $("learnAppleIdentity").disabled = true;
+    $("learnAppleIdentity").textContent = t("apple.identityLearn");
     $("copyAppleIdentity").disabled = true;
     $("appleHomeRoomMap").replaceChildren();
     $("appleHomeMoves").replaceChildren();
