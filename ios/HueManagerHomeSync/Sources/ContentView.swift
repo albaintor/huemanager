@@ -149,15 +149,7 @@ struct ContentView: View {
                                         : "circle"
                                 )
                         )
-                        .foregroundStyle(
-                            model.serverActivityState == "Erreur"
-                                ? .red
-                                : (
-                                    model.serverActivityState == "Terminé"
-                                        ? .green
-                                        : .secondary
-                                )
-                        )
+                        .foregroundStyle(serverActivityColor)
                     }
                     Text(model.serverActivityState)
                 }
@@ -195,6 +187,17 @@ struct ContentView: View {
                     }
                 }
             }
+        }
+    }
+
+    private var serverActivityColor: Color {
+        switch model.serverActivityState {
+        case "Erreur":
+            return .red
+        case "Terminé":
+            return .green
+        default:
+            return .secondary
         }
     }
 

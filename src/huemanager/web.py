@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
+from .apple_audit import build_apple_home_multi_bridge_audit
 from .apple_home import (
     build_apple_home_identity_diagnostics,
     build_apple_home_sync_plan,
@@ -26,7 +27,6 @@ from .apple_home import (
     store_room_map,
     store_room_selection,
 )
-from .apple_audit import build_apple_home_multi_bridge_audit
 from .backup import (
     analyse_bridge_restore,
     backup_summary,
@@ -330,7 +330,7 @@ def apple_home_multi_bridge_audit() -> dict:
         for profile in store.list_bridges():
             try:
                 trees[profile] = inventory_tree(_client(profile))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - keep auditing other bridges
                 bridge_errors[profile] = str(exc)
             accessory_maps[profile] = get_accessory_map(
                 state,
