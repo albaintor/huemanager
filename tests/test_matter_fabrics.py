@@ -68,7 +68,7 @@ def test_matter_fabric_summary_identifies_apple() -> None:
     assert row["label"] == "Maison"
     assert row["vendor_id"] == 4937
     assert row["vendor_hex"] == "0x1349"
-    assert row["vendor_name"] == "Apple"
+    assert row["vendor_name"] == "Apple Home"
     assert row["is_apple"] is True
 
 
