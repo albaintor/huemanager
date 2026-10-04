@@ -155,7 +155,14 @@ struct ContentView: View {
             if let summary = model.planSummary {
                 LabeledContent("Pièces Hue", value: "\(summary.hueRooms)")
                 LabeledContent("Pièces associées", value: "\(summary.mappedRooms)")
-                LabeledContent("Déplacements", value: "\(summary.moves)")
+                LabeledContent(
+                    "Pièces sélectionnées",
+                    value: "\(model.selectedRoomCount)/\(model.roomPlans.count)"
+                )
+                LabeledContent(
+                    "Déplacements sélectionnés",
+                    value: "\(model.pendingMoves)/\(summary.moves)"
+                )
                 LabeledContent("Déjà corrects", value: "\(summary.alreadyCorrect)")
                 LabeledContent(
                     "Accessoires non reconnus",
@@ -173,6 +180,23 @@ struct ContentView: View {
     private var roomAssociationsSection: some View {
         if !model.roomPlans.isEmpty {
             Section("Associations de pièces et impact") {
+                HStack {
+                    Button("Tout sélectionner") {
+                        model.selectAllRooms()
+                    }
+                    Spacer()
+                    Button("Aucune") {
+                        model.deselectAllRooms()
+                    }
+                }
+
+                Text(
+                    "Seules les pièces cochées seront modifiées dans Apple Maison. " +
+                    "La sélection est mémorisée pour ce Bridge et cette Maison."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
                 ForEach(model.roomPlans) { room in
                     roomAssociationView(room)
                 }
@@ -186,6 +210,14 @@ struct ContentView: View {
         let plannedMoves = room.plannedMoves ?? []
 
         return VStack(alignment: .leading, spacing: 12) {
+            Toggle(
+                "Synchroniser cette pièce",
+                isOn: Binding(
+                    get: { model.isRoomSelected(room.hueRoomID) },
+                    set: { model.setRoomSelected(room.hueRoomID, selected: $0) }
+                )
+            )
+
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Hue · \(room.hueRoomName)")
@@ -298,6 +330,7 @@ struct ContentView: View {
                 }
             }
         }
+        .opacity(model.isRoomSelected(room.hueRoomID) ? 1 : 0.55)
         .padding(.vertical, 6)
     }
 
@@ -337,9 +370,9 @@ struct ContentView: View {
 
     @ViewBuilder
     private var proposedMovesSection: some View {
-        if !model.moves.isEmpty {
-            Section("Déplacements proposés") {
-                ForEach(model.moves) { move in
+        if !model.selectedMoves.isEmpty {
+            Section("Déplacements des pièces sélectionnées") {
+                ForEach(model.selectedMoves) { move in
                     VStack(alignment: .leading, spacing: 4) {
                         Text(move.accessoryName)
                             .font(.headline)
