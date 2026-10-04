@@ -71,6 +71,10 @@ from .session import (
 app = FastAPI(title="HueManager", version="0.7.0")
 SNAPSHOT_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 BACKUP_ID_RE = re.compile(r"^[a-f0-9]{32}$")
+APPLE_MATTER_VENDOR_ID = 0x1349
+MATTER_VENDOR_NAMES = {
+    APPLE_MATTER_VENDOR_ID: "Apple",
+}
 diagnostic_monitors = DiagnosticMonitorManager()
 
 
@@ -701,6 +705,92 @@ def update_apple_home_room_selection(
             "home_id": request.home_id,
             "hue_room_ids": get_room_selection(state, bridge_name, request.home_id) or [],
         }
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+def _matter_fabric_summary(fabric: dict[str, Any]) -> dict[str, Any]:
+    fabric_data = fabric.get("fabric_data") or {}
+    vendor_id = fabric_data.get("vendor_id")
+    try:
+        numeric_vendor_id = int(vendor_id) if vendor_id is not None else None
+    except (TypeError, ValueError):
+        numeric_vendor_id = None
+
+    return {
+        "id": str(fabric.get("id") or ""),
+        "type": fabric.get("type") or "matter_fabric",
+        "status": fabric.get("status"),
+        "creation_time": fabric.get("creation_time"),
+        "label": fabric_data.get("label"),
+        "vendor_id": numeric_vendor_id,
+        "vendor_hex": (
+            f"0x{numeric_vendor_id:04X}" if numeric_vendor_id is not None else None
+        ),
+        "vendor_name": MATTER_VENDOR_NAMES.get(numeric_vendor_id),
+        "is_apple": numeric_vendor_id == APPLE_MATTER_VENDOR_ID,
+    }
+
+
+@app.get("/api/bridges/{bridge_name}/matter-fabrics")
+def list_matter_fabrics(bridge_name: str) -> dict:
+    try:
+        rows = _client(bridge_name).v2_get("matter_fabric")
+        fabrics = [
+            _matter_fabric_summary(row)
+            for row in rows
+            if row.get("id")
+        ]
+        fabrics.sort(
+            key=lambda item: (
+                not bool(item.get("is_apple")),
+                str(item.get("label") or "").casefold(),
+                str(item.get("id") or ""),
+            )
+        )
+        return {
+            "bridge": bridge_name,
+            "count": len(fabrics),
+            "apple_vendor_id": APPLE_MATTER_VENDOR_ID,
+            "fabrics": fabrics,
+        }
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@app.delete("/api/bridges/{bridge_name}/matter-fabrics/{fabric_id}")
+def delete_matter_fabric(bridge_name: str, fabric_id: str) -> dict:
+    try:
+        try:
+            uuid.UUID(fabric_id)
+        except ValueError as exc:
+            raise MigrationError("Invalid Matter fabric identifier.") from exc
+
+        client = _client(bridge_name)
+        rows = client.v2_get("matter_fabric")
+        current = next(
+            (row for row in rows if str(row.get("id") or "") == fabric_id),
+            None,
+        )
+        if current is None:
+            raise HTTPException(status_code=404, detail="Matter fabric not found.")
+
+        deleted = _matter_fabric_summary(current)
+        client.v2_delete("matter_fabric", fabric_id)
+
+        remaining = [
+            _matter_fabric_summary(row)
+            for row in client.v2_get("matter_fabric")
+            if row.get("id")
+        ]
+        return {
+            "ok": True,
+            "bridge": bridge_name,
+            "deleted": deleted,
+            "remaining": len(remaining),
+        }
+    except HTTPException:
+        raise
     except Exception as exc:
         raise _api_error(exc) from exc
 
