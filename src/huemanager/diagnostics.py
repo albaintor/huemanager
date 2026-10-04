@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from statistics import median
 from time import perf_counter
-from typing import Any, Callable
+from typing import Any
 
 from .client import HueBridgeClient
 
