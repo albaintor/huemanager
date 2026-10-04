@@ -554,7 +554,7 @@ def _reassociation_match_key(accessory: dict, method: str) -> str:
     services = _reassociation_service_signature(accessory)
 
     if method == "serial":
-        return _normalise_identifier(
+        return _normalise(
             _usable_serial_number(accessory.get("serial_number"))
         )
     if method == "legacy_identifier":
