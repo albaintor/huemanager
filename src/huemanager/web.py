@@ -31,6 +31,7 @@ from .backup import (
 from .client import HueApiError, HueBridgeClient
 from .config import BridgeProfile, ConfigStore
 from .diagnostics import diagnose_bridge
+from .monitoring import DiagnosticMonitorManager
 from .migration import (
     MigrationError,
     analyse,
@@ -60,6 +61,7 @@ from .session import (
 app = FastAPI(title="HueManager", version="0.7.0")
 SNAPSHOT_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 BACKUP_ID_RE = re.compile(r"^[a-f0-9]{32}$")
+diagnostic_monitors = DiagnosticMonitorManager()
 
 
 class PairRequest(BaseModel):
@@ -101,6 +103,15 @@ class RestoreRequest(DestinationRequest):
 class AuditCleanupRequest(BaseModel):
     issue_ids: list[str] = Field(min_length=1, max_length=200)
     force_risky: bool = False
+
+
+class DiagnosticIgnoredDevicesRequest(BaseModel):
+    device_ids: list[str] = Field(default_factory=list, max_length=500)
+
+
+class DiagnosticMonitorRequest(BaseModel):
+    duration_seconds: int = Field(default=300, ge=30, le=3600)
+    interval_seconds: int = Field(default=10, ge=5, le=60)
 
 
 class AppleHomeInventoryRequest(BaseModel):
@@ -415,6 +426,75 @@ def bridge_diagnostics(
         KeyError,
         IndexError,
     ) as exc:
+        raise _api_error(exc) from exc
+
+
+@app.get("/api/bridges/{bridge_name}/diagnostics/ignored")
+def diagnostic_ignored_devices(bridge_name: str) -> dict:
+    try:
+        store = _store()
+        store.get_bridge(bridge_name)
+        return {
+            "bridge": bridge_name,
+            "device_ids": sorted(store.get_diagnostic_ignored_devices(bridge_name)),
+        }
+    except (KeyError, OSError, ValueError) as exc:
+        raise _api_error(exc) from exc
+
+
+@app.put("/api/bridges/{bridge_name}/diagnostics/ignored")
+def update_diagnostic_ignored_devices(
+    bridge_name: str,
+    request: DiagnosticIgnoredDevicesRequest,
+) -> dict:
+    try:
+        store = _store()
+        store.get_bridge(bridge_name)
+        device_ids = {
+            value.strip()
+            for value in request.device_ids
+            if isinstance(value, str) and value.strip()
+        }
+        store.save_diagnostic_ignored_devices(bridge_name, device_ids)
+        return {
+            "bridge": bridge_name,
+            "device_ids": sorted(device_ids),
+        }
+    except (KeyError, OSError, ValueError) as exc:
+        raise _api_error(exc) from exc
+
+
+@app.post("/api/bridges/{bridge_name}/diagnostics/monitor")
+def start_diagnostic_monitor(
+    bridge_name: str,
+    request: DiagnosticMonitorRequest,
+) -> dict:
+    try:
+        ignored = _store().get_diagnostic_ignored_devices(bridge_name)
+        return diagnostic_monitors.start(
+            bridge_name,
+            _client(bridge_name),
+            duration_seconds=request.duration_seconds,
+            interval_seconds=request.interval_seconds,
+            ignored_device_ids=ignored,
+        )
+    except (HueApiError, OSError, ValueError, KeyError) as exc:
+        raise _api_error(exc) from exc
+
+
+@app.get("/api/bridges/{bridge_name}/diagnostics/monitor")
+def get_diagnostic_monitor(bridge_name: str) -> dict:
+    result = diagnostic_monitors.get(bridge_name)
+    if result is None:
+        return {"bridge": bridge_name, "status": "idle"}
+    return result
+
+
+@app.post("/api/bridges/{bridge_name}/diagnostics/monitor/stop")
+def stop_diagnostic_monitor(bridge_name: str) -> dict:
+    try:
+        return diagnostic_monitors.stop(bridge_name)
+    except KeyError as exc:
         raise _api_error(exc) from exc
 
 
