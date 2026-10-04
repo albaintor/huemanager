@@ -1732,13 +1732,37 @@
   function serviceMonitorLogText(data) {
     return (data?.events || []).map(event => {
       if (event.type === "down") {
-        return `${event.at || "?"} | DOWN | ${event.error || "Hue API unavailable"}`;
+        const fields = [
+          event.at || "?",
+          "DOWN",
+          event.classification || "UNKNOWN_ERROR",
+          event.layer ? `layer=${event.layer}` : null,
+          event.http_status ? `http_status=${event.http_status}` : null,
+          event.summary || null,
+          event.endpoint ? `endpoint=${event.endpoint}` : null,
+          event.error ? `raw_error=${event.error}` : null,
+        ].filter(Boolean);
+        return fields.join(" | ");
       }
       if (event.type === "restored") {
-        const duration = event.downtime_seconds == null
-          ? ""
-          : ` | downtime ${event.downtime_seconds} s`;
-        return `${event.at || "?"} | RESTORED${duration}`;
+        const fields = [
+          event.at || "?",
+          "RESTORED",
+          event.downtime_seconds == null
+            ? null
+            : `downtime=${event.downtime_seconds}s`,
+          event.failed_checks == null
+            ? null
+            : `failed_checks=${event.failed_checks}`,
+          (event.classifications || []).length
+            ? `classifications=${event.classifications.join(",")}`
+            : null,
+          event.outage_started_at
+            ? `outage_started_at=${event.outage_started_at}`
+            : null,
+          event.endpoint ? `endpoint=${event.endpoint}` : null,
+        ].filter(Boolean);
+        return fields.join(" | ");
       }
       return `${event.at || "?"} | ${event.type || "event"}`;
     }).join("\n");
@@ -1789,17 +1813,37 @@
       box.className = event.type === "down" ? "audit-issue warning" : "audit-issue";
       const title = document.createElement("h3");
       title.textContent = event.type === "down"
-        ? "Coupure du service API Hue"
-        : "Service API Hue rétabli";
+        ? "Hue API service DOWN"
+        : "Hue API service RESTORED";
       const detail = document.createElement("p");
       if (event.type === "down") {
+        const classification = event.classification || "UNKNOWN_ERROR";
+        const layer = event.layer ? ` · layer=${event.layer}` : "";
+        const statusCode = event.http_status ? ` · HTTP ${event.http_status}` : "";
         detail.textContent =
-          `${event.at || "?"} · ${event.error || "API Hue indisponible"}`;
+          `${event.at || "?"} · ${classification}${layer}${statusCode}`
+          + (event.summary ? ` · ${event.summary}` : "")
+          + (event.endpoint ? ` · ${event.endpoint}` : "");
+        if (event.error) {
+          const raw = document.createElement("pre");
+          raw.textContent = event.error;
+          box.append(title, detail, raw);
+          eventsRoot.append(box);
+          continue;
+        }
       } else {
         const duration = event.downtime_seconds == null
-          ? "durée inconnue"
-          : `coupure ~${event.downtime_seconds} s`;
-        detail.textContent = `${event.at || "?"} · ${duration}`;
+          ? "downtime unknown"
+          : `downtime ~${event.downtime_seconds} s`;
+        const failedChecks = event.failed_checks == null
+          ? ""
+          : ` · failed checks=${event.failed_checks}`;
+        const classifications = (event.classifications || []).length
+          ? ` · classifications=${event.classifications.join(", ")}`
+          : "";
+        detail.textContent =
+          `${event.at || "?"} · ${duration}${failedChecks}${classifications}`
+          + (event.outage_started_at ? ` · outage started ${event.outage_started_at}` : "");
       }
       box.append(title, detail);
       eventsRoot.append(box);

@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import pytest
+from requests import exceptions as requests_exceptions
 
 from huemanager.client import HueApiError
-from huemanager.monitoring import ServiceConnectivityMonitor, summarize_monitor_samples
+from huemanager.monitoring import (
+    ServiceConnectivityMonitor,
+    classify_service_failure,
+    summarize_monitor_samples,
+)
 
 
 def _sample(
@@ -98,13 +103,27 @@ def test_service_monitor_logs_only_outage_and_restoration_transitions() -> None:
         available=False,
         checked_at="2026-10-04T18:00:10+00:00",
         monotonic_now=10.0,
-        error="timeout",
+        error="connection refused",
+        failure={
+            "classification": "CONNECTION_REFUSED",
+            "layer": "tcp",
+            "summary": "The Bridge host actively refused the HTTPS connection on port 443.",
+            "http_status": None,
+            "error": "connection refused",
+        },
     )
     monitor._record_probe(
         available=False,
         checked_at="2026-10-04T18:00:20+00:00",
         monotonic_now=20.0,
-        error="still unavailable",
+        error="read timed out",
+        failure={
+            "classification": "READ_TIMEOUT",
+            "layer": "http",
+            "summary": "The Hue API connection was established but no response arrived before timeout.",
+            "http_status": None,
+            "error": "read timed out",
+        },
     )
     monitor._record_probe(
         available=True,
@@ -116,18 +135,27 @@ def test_service_monitor_logs_only_outage_and_restoration_transitions() -> None:
     assert monitor.successful_checks == 2
     assert monitor.failed_checks == 2
     assert monitor.current_state == "up"
-    assert monitor.events == [
-        {
-            "type": "down",
-            "at": "2026-10-04T18:00:10+00:00",
-            "error": "timeout",
-        },
-        {
-            "type": "restored",
-            "at": "2026-10-04T18:00:30+00:00",
-            "downtime_seconds": 20.0,
-        },
-    ]
+    assert len(monitor.events) == 2
+    assert monitor.events[0] == {
+        "type": "down",
+        "at": "2026-10-04T18:00:10+00:00",
+        "classification": "CONNECTION_REFUSED",
+        "layer": "tcp",
+        "summary": "The Bridge host actively refused the HTTPS connection on port 443.",
+        "http_status": None,
+        "endpoint": "/clip/v2/resource/bridge",
+        "error": "connection refused",
+    }
+    assert monitor.events[1] == {
+        "type": "restored",
+        "at": "2026-10-04T18:00:30+00:00",
+        "outage_started_at": "2026-10-04T18:00:10+00:00",
+        "downtime_seconds": 20.0,
+        "failed_checks": 2,
+        "classifications": ["CONNECTION_REFUSED", "READ_TIMEOUT"],
+        "last_error": "read timed out",
+        "endpoint": "/clip/v2/resource/bridge",
+    }
 
 
 def test_service_monitor_probe_uses_lightweight_authenticated_bridge_resource() -> None:
@@ -152,3 +180,62 @@ def test_service_monitor_probe_rejects_empty_bridge_resource() -> None:
 
     with pytest.raises(HueApiError, match="no bridge resource"):
         monitor._probe()
+
+
+
+@pytest.mark.parametrize(
+    ("exc", "classification", "layer"),
+    [
+        (
+            requests_exceptions.ConnectionError(
+                "HTTPSConnectionPool(host='192.168.1.40', port=443): "
+                "Failed to establish a new connection: [Errno 111] Connection refused"
+            ),
+            "CONNECTION_REFUSED",
+            "tcp",
+        ),
+        (
+            requests_exceptions.ConnectTimeout("connect timed out"),
+            "CONNECT_TIMEOUT",
+            "tcp",
+        ),
+        (
+            requests_exceptions.ReadTimeout("read timed out"),
+            "READ_TIMEOUT",
+            "http",
+        ),
+        (
+            requests_exceptions.SSLError("certificate verify failed"),
+            "TLS_ERROR",
+            "tls",
+        ),
+        (
+            HueApiError("Hue API 500 GET /bridge: Internal Server Error"),
+            "HTTP_5XX",
+            "http",
+        ),
+        (
+            HueApiError("Hue API 429 GET /bridge: Too Many Requests"),
+            "HTTP_429_RATE_LIMITED",
+            "http",
+        ),
+    ],
+)
+def test_classify_service_failure(
+    exc: Exception,
+    classification: str,
+    layer: str,
+) -> None:
+    result = classify_service_failure(exc)
+
+    assert result["classification"] == classification
+    assert result["layer"] == layer
+
+
+def test_classify_connection_refused_has_explanatory_summary() -> None:
+    result = classify_service_failure(
+        requests_exceptions.ConnectionError("[Errno 111] Connection refused")
+    )
+
+    assert result["classification"] == "CONNECTION_REFUSED"
+    assert "actively refused" in result["summary"]
