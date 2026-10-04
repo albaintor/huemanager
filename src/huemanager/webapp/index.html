@@ -383,6 +383,22 @@
       </div>
 
       <div class="card span-12">
+        <h2 data-i18n="matter.title">Associations Matter du Bridge</h2>
+        <p class="muted" data-i18n="matter.description">
+          Liste les fabrics Matter enregistrés directement dans le Bridge sélectionné.
+          Supprimer un fabric retire uniquement cette association Matter ; les lampes,
+          pièces Hue, scènes et accessoires Zigbee ne sont pas supprimés.
+        </p>
+        <div class="row">
+          <button id="refreshMatterFabrics" class="primary" data-i18n="matter.refresh">
+            Relire les associations Matter
+          </button>
+        </div>
+        <div id="matterFabricStatus" class="muted" style="margin-top:10px"></div>
+        <div id="matterFabricList"></div>
+      </div>
+
+      <div class="card span-12">
         <h2 data-i18n="diagnostics.title">Diagnostic réseau Hue</h2>
         <p class="muted" data-i18n="diagnostics.description">
           Diagnostic en lecture seule : état Zigbee exposé par le Bridge, ressources injoignables,
@@ -530,6 +546,12 @@
       "management.cleanupTitle": "Incohérences et nettoyage",
       "management.selectAll": "Tout sélectionner",
       "management.selectNone": "Tout désélectionner",
+      "matter.title": "Associations Matter du Bridge",
+      "matter.description": "Liste les fabrics Matter enregistrés directement dans le Bridge sélectionné. Supprimer un fabric retire uniquement cette association Matter ; les lampes, pièces Hue, scènes et accessoires Zigbee ne sont pas supprimés.",
+      "matter.refresh": "Relire les associations Matter",
+      "matter.none": "Aucune association Matter enregistrée sur ce Bridge.",
+      "matter.delete": "Supprimer cette association",
+      "matter.apple": "Apple",
       "diagnostics.title": "Diagnostic réseau Hue",
       "diagnostics.description": "Diagnostic en lecture seule : état Zigbee exposé par le Bridge, ressources injoignables, temps de réponse des API locales et estimation de coexistence avec le Wi-Fi 2,4 GHz.",
       "diagnostics.wifiChannel": "Canal Wi-Fi 2,4 GHz",
@@ -686,6 +708,12 @@
       "management.cleanupTitle": "Inconsistencies and cleanup",
       "management.selectAll": "Select all",
       "management.selectNone": "Deselect all",
+      "matter.title": "Bridge Matter associations",
+      "matter.description": "Lists Matter fabrics stored directly on the selected Bridge. Deleting a fabric removes only that Matter association; Hue lights, rooms, scenes and Zigbee accessories are not deleted.",
+      "matter.refresh": "Reload Matter associations",
+      "matter.none": "No Matter association is stored on this Bridge.",
+      "matter.delete": "Delete this association",
+      "matter.apple": "Apple",
       "diagnostics.title": "Hue network diagnostics",
       "diagnostics.description": "Read-only diagnostics: Zigbee state exposed by the Bridge, unreachable resources, local API response times and estimated coexistence with 2.4 GHz Wi-Fi.",
       "diagnostics.wifiChannel": "2.4 GHz Wi-Fi channel",
@@ -847,6 +875,7 @@
     ignoredDeviceIds: new Set(),
     monitor: null,
     monitorPollTimer: null,
+    matterFabrics: null,
     appleHome: null,
     appleAudit: null,
     appleHomePlan: null,
@@ -1251,6 +1280,110 @@
     const data = await api(`/api/bridges/${encodeURIComponent(bridge)}/audit`);
     renderAudit(data);
     status(`Analyse de ${bridge} terminée.`, "good");
+  }
+
+
+  function renderMatterFabrics(data) {
+    state.matterFabrics = data;
+    const root = $("matterFabricList");
+    root.replaceChildren();
+    const fabrics = data?.fabrics || [];
+    $("matterFabricStatus").textContent = fabrics.length
+      ? `${fabrics.length} association(s) Matter sur ${data.bridge || "ce Bridge"}.`
+      : t("matter.none");
+
+    for (const fabric of fabrics) {
+      const box = document.createElement("div");
+      box.className = "audit-issue";
+
+      const title = document.createElement("h3");
+      const label = fabric.label || "Matter fabric";
+      title.textContent = label;
+      box.append(title);
+
+      const meta = document.createElement("div");
+      meta.className = "row";
+
+      if (fabric.is_apple) {
+        const apple = document.createElement("span");
+        apple.className = "pill good";
+        apple.textContent = t("matter.apple");
+        meta.append(apple);
+      }
+
+      const statusChip = document.createElement("span");
+      statusChip.className = `pill ${fabric.status === "paired" ? "good" : "warn"}`;
+      statusChip.textContent = fabric.status || "état inconnu";
+      meta.append(statusChip);
+
+      const vendor = document.createElement("span");
+      vendor.className = "pill";
+      vendor.textContent = fabric.vendor_id == null
+        ? "Vendor inconnu"
+        : `${fabric.vendor_name || "Vendor"} ${fabric.vendor_id} (${fabric.vendor_hex || "?"})`;
+      meta.append(vendor);
+      box.append(meta);
+
+      const details = document.createElement("p");
+      details.className = "muted";
+      const parts = [`ID : ${fabric.id}`];
+      if (fabric.creation_time) parts.push(`créé : ${fabric.creation_time}`);
+      details.textContent = parts.join(" · ");
+      box.append(details);
+
+      const button = document.createElement("button");
+      button.className = "danger";
+      button.textContent = t("matter.delete");
+      button.addEventListener("click", async () => {
+        const vendorLabel = fabric.vendor_name
+          ? `${fabric.vendor_name} (${fabric.vendor_id})`
+          : (fabric.vendor_id == null ? "vendor inconnu" : `vendor ${fabric.vendor_id}`);
+        const warning =
+          `Supprimer l'association Matter « ${label} » ?\n\n` +
+          `Bridge : ${data.bridge}\n` +
+          `Vendor : ${vendorLabel}\n` +
+          `État : ${fabric.status || "inconnu"}\n` +
+          `ID : ${fabric.id}\n\n` +
+          "Cette opération retire uniquement ce fabric Matter du Bridge. " +
+          "Elle ne supprime pas les lampes ni les pièces Hue.";
+        if (!window.confirm(warning)) return;
+
+        button.disabled = true;
+        try {
+          status(`Suppression du fabric Matter ${label}…`);
+          await api(
+            `/api/bridges/${encodeURIComponent(data.bridge)}/matter-fabrics/${encodeURIComponent(fabric.id)}`,
+            { method: "DELETE" },
+          );
+          await loadMatterFabrics();
+          status(`Association Matter « ${label} » supprimée.`, "good");
+        } catch (e) {
+          button.disabled = false;
+          status(e.message, "bad");
+        }
+      });
+      box.append(button);
+      root.append(box);
+    }
+  }
+
+  async function loadMatterFabrics() {
+    const bridge = $("managementBridge").value;
+    if (!bridge) {
+      $("matterFabricStatus").textContent = "";
+      $("matterFabricList").replaceChildren();
+      return;
+    }
+    $("refreshMatterFabrics").disabled = true;
+    $("matterFabricStatus").textContent = "Lecture des associations Matter…";
+    try {
+      const data = await api(
+        `/api/bridges/${encodeURIComponent(bridge)}/matter-fabrics`
+      );
+      renderMatterFabrics(data);
+    } finally {
+      $("refreshMatterFabrics").disabled = false;
+    }
   }
 
 
@@ -3363,8 +3496,16 @@
   });
   $("saveAppleRoomMap").addEventListener("click", saveAppleRoomMap);
 
+  $("refreshMatterFabrics").addEventListener("click", () => {
+    loadMatterFabrics().catch(e => status(e.message, "bad"));
+  });
+
   $("managementBridge").addEventListener("change", () => {
     stopMonitorPolling();
+    state.matterFabrics = null;
+    $("matterFabricStatus").textContent = "";
+    $("matterFabricList").replaceChildren();
+    loadMatterFabrics().catch(e => status(e.message, "bad"));
     state.diagnostics = null;
     state.ignoredDeviceIds = new Set();
     state.monitor = null;
@@ -3421,7 +3562,11 @@
 
   showView("management");
   Promise.all([loadBridges(), loadBackups(), loadSnapshots(), loadAppleHomeStatus()])
-    .then(() => Promise.all([loadIgnoredDiagnostics(), refreshMonitor()]))
+    .then(() => Promise.all([
+      loadIgnoredDiagnostics(),
+      refreshMonitor(),
+      loadMatterFabrics(),
+    ]))
     .catch(e => status(e.message, "bad"));
 })();
 </script>
