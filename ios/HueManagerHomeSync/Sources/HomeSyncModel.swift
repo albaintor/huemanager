@@ -246,6 +246,7 @@ private struct AccessoryInfo: Codable {
     let manufacturer: String?
     let model: String?
     let serialNumber: String?
+    let legacyIdentifier: String?
     let isBridged: Bool
     let bridgeID: String?
     let bridgeName: String?
@@ -255,6 +256,7 @@ private struct AccessoryInfo: Codable {
     let vendorAccessory: Bool?
     let bridgeChildIndex: Int?
     let bridgeReportedIdentifierIndex: Int?
+    let bridgeLegacyIdentifierIndex: Int?
     let serviceTypes: [String]
 
     enum CodingKeys: String, CodingKey {
@@ -265,6 +267,7 @@ private struct AccessoryInfo: Codable {
         case manufacturer
         case model
         case serialNumber = "serial_number"
+        case legacyIdentifier = "legacy_identifier"
         case isBridged = "is_bridged"
         case bridgeID = "bridge_id"
         case bridgeName = "bridge_name"
@@ -274,6 +277,7 @@ private struct AccessoryInfo: Codable {
         case vendorAccessory = "vendor_accessory"
         case bridgeChildIndex = "bridge_child_index"
         case bridgeReportedIdentifierIndex = "bridge_reported_identifier_index"
+        case bridgeLegacyIdentifierIndex = "bridge_legacy_identifier_index"
         case serviceTypes = "service_types"
     }
 }
@@ -286,7 +290,9 @@ private struct BridgeIdentityInfo: Codable {
     let hapInstanceID: UInt64?
     let vendorAccessory: Bool?
     let bridgedAccessoryIDs: [String]
+    let bridgedAccessoryLegacyIDs: [String]
     let uniqueIdentifiersForBridgedAccessories: [String]
+    let identifiersForBridgedAccessories: [String]
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -296,8 +302,11 @@ private struct BridgeIdentityInfo: Codable {
         case hapInstanceID = "hap_instance_id"
         case vendorAccessory = "vendor_accessory"
         case bridgedAccessoryIDs = "bridged_accessory_ids"
+        case bridgedAccessoryLegacyIDs = "bridged_accessory_legacy_ids"
         case uniqueIdentifiersForBridgedAccessories =
             "unique_identifiers_for_bridged_accessories"
+        case identifiersForBridgedAccessories =
+            "identifiers_for_bridged_accessories"
     }
 }
 
@@ -871,7 +880,9 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         let bridgeRows: [BridgeIdentityInfo] = home.accessories.compactMap { bridge in
             let bridged = bridge.bridgedAccessories
             let reported = bridge.uniqueIdentifiersForBridgedAccessories ?? []
-            guard !bridged.isEmpty || !reported.isEmpty else { return nil }
+            let legacyReported = bridge.identifiersForBridgedAccessories ?? []
+            guard !bridged.isEmpty || !reported.isEmpty || !legacyReported.isEmpty
+            else { return nil }
             let identity = vendorHAPIdentity(for: bridge)
             return BridgeIdentityInfo(
                 id: bridge.uniqueIdentifier.uuidString,
@@ -883,7 +894,13 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
                 bridgedAccessoryIDs: bridged.map {
                     $0.uniqueIdentifier.uuidString
                 },
+                bridgedAccessoryLegacyIDs: bridged.map {
+                    $0.identifier.uuidString
+                },
                 uniqueIdentifiersForBridgedAccessories: reported.map {
+                    $0.uuidString
+                },
+                identifiersForBridgedAccessories: legacyReported.map {
                     $0.uuidString
                 }
             )
@@ -895,6 +912,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
             let accessoryID = accessory.uniqueIdentifier.uuidString
             let bridge = parentBridgeByAccessoryID[accessoryID]
             let serialNumber = await homeKitSerialNumber(for: accessory)
+            let legacyIdentifier = accessory.identifier.uuidString
             let identity = vendorHAPIdentity(for: accessory)
             let bridgeChildIndex = bridge?.bridgedAccessories.firstIndex {
                 $0.uniqueIdentifier == accessory.uniqueIdentifier
@@ -902,6 +920,10 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
             let bridgeReportedIdentifierIndex =
                 bridge?.uniqueIdentifiersForBridgedAccessories?.firstIndex {
                     $0 == accessory.uniqueIdentifier
+                }
+            let bridgeLegacyIdentifierIndex =
+                bridge?.identifiersForBridgedAccessories?.firstIndex {
+                    $0 == accessory.identifier
                 }
 
             accessoryRows.append(
@@ -913,6 +935,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
                     manufacturer: accessory.manufacturer,
                     model: accessory.model,
                     serialNumber: serialNumber,
+                    legacyIdentifier: legacyIdentifier,
                     isBridged: accessory.isBridged,
                     bridgeID: bridge?.uniqueIdentifier.uuidString,
                     bridgeName: bridge?.name,
@@ -922,6 +945,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
                     vendorAccessory: identity.vendorAccess,
                     bridgeChildIndex: bridgeChildIndex,
                     bridgeReportedIdentifierIndex: bridgeReportedIdentifierIndex,
+                    bridgeLegacyIdentifierIndex: bridgeLegacyIdentifierIndex,
                     serviceTypes: accessory.services.map { $0.serviceType }
                 )
             )

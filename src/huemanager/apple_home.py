@@ -219,6 +219,55 @@ def _hue_device_allows_fuzzy_match(device: dict) -> bool:
     return bool(service_types & FUZZY_MATCHABLE_HUE_SERVICE_TYPES)
 
 
+def _apple_accessories_for_hue_bridge(
+    hue_tree: dict,
+    accessories: list[dict],
+) -> list[dict]:
+    """Return Apple accessories that belong to the Hue bridge currently analysed.
+
+    Prefer the bridge model (BSB003, BSB002, ...), then bridge name. Only fall
+    back to generic Hue-origin classification when the inventory does not expose
+    enough bridge metadata. This prevents devices from two Hue bridges from being
+    mixed into the same synchronization plan.
+    """
+    bridge = hue_tree.get("bridge") or {}
+    model_key = _normalise(bridge.get("modelid"))
+    name_key = _normalise(bridge.get("name"))
+
+    hue_like = [
+        accessory
+        for accessory in accessories
+        if _apple_accessory_origin(accessory) == "hue"
+    ]
+
+    if model_key:
+        by_model = [
+            accessory
+            for accessory in hue_like
+            if _normalise(accessory.get("bridge_model")) == model_key
+        ]
+        if by_model:
+            return by_model
+
+    if name_key:
+        by_name = [
+            accessory
+            for accessory in hue_like
+            if _normalise(accessory.get("bridge_name")) == name_key
+        ]
+        if by_name:
+            return by_name
+
+    if hue_like:
+        return hue_like
+
+    return [
+        accessory
+        for accessory in accessories
+        if _apple_accessory_origin(accessory) == "unknown"
+    ]
+
+
 def _apple_accessory_origin(accessory: dict) -> str:
     """Classify an Apple Home accessory for Hue-focused previews.
 
@@ -434,11 +483,10 @@ def build_apple_home_identity_diagnostics(
         str(accessory["id"]): accessory
         for accessory in apple_accessories
     }
-    hue_apple_accessories = [
-        accessory
-        for accessory in apple_accessories
-        if _apple_accessory_origin(accessory) == "hue"
-    ]
+    hue_apple_accessories = _apple_accessories_for_hue_bridge(
+        hue_tree,
+        apple_accessories,
+    )
 
     room_plan_by_hue_id = {
         str(room.get("hue_room_id")): room
@@ -472,6 +520,9 @@ def build_apple_home_identity_diagnostics(
             apple_accessory.get("serial_number")
         )
         apple_uuid = _normalise_identifier(apple_accessory_id)
+        apple_legacy_uuid = _normalise_identifier(
+            apple_accessory.get("legacy_identifier")
+        )
         hap_instance_id = apple_accessory.get("hap_instance_id")
         v1_numeric_ids = [
             int(value)
@@ -485,6 +536,10 @@ def build_apple_home_identity_diagnostics(
             ),
             "apple_uuid_equals_hue_identifier": bool(
                 apple_uuid and apple_uuid in hue_identifier_values
+            ),
+            "apple_legacy_uuid_equals_hue_identifier": bool(
+                apple_legacy_uuid
+                and apple_legacy_uuid in hue_identifier_values
             ),
             "hap_aid_equals_v1_numeric_id": bool(
                 hap_instance_id is not None
@@ -516,6 +571,7 @@ def build_apple_home_identity_diagnostics(
                     "room_name": apple_accessory.get("room_name"),
                     "model": apple_accessory.get("model"),
                     "serial_number": apple_accessory.get("serial_number"),
+                    "legacy_identifier": apple_accessory.get("legacy_identifier"),
                     "hap_instance_id": hap_instance_id,
                     "vendor_accessory": apple_accessory.get("vendor_accessory"),
                     "bridge_id": apple_accessory.get("bridge_id"),
@@ -523,6 +579,9 @@ def build_apple_home_identity_diagnostics(
                     "bridge_child_index": apple_accessory.get("bridge_child_index"),
                     "bridge_reported_identifier_index": apple_accessory.get(
                         "bridge_reported_identifier_index"
+                    ),
+                    "bridge_legacy_identifier_index": apple_accessory.get(
+                        "bridge_legacy_identifier_index"
                     ),
                 },
                 "comparisons": comparisons,
@@ -595,10 +654,22 @@ def build_apple_home_identity_diagnostics(
             for value in bridge.get("bridged_accessory_ids", [])
             if value
         }
+        actual_legacy = {
+            _normalise_identifier(value)
+            for value in bridge.get("bridged_accessory_legacy_ids", [])
+            if value
+        }
         reported = {
             _normalise_identifier(value)
             for value in bridge.get(
                 "unique_identifiers_for_bridged_accessories", []
+            )
+            if value
+        }
+        legacy_reported = {
+            _normalise_identifier(value)
+            for value in bridge.get(
+                "identifiers_for_bridged_accessories", []
             )
             if value
         }
@@ -616,6 +687,17 @@ def build_apple_home_identity_diagnostics(
                     bool(actual) and actual == reported
                 ),
                 "overlap": len(actual & reported),
+                "legacy_bridged_accessories": len(actual_legacy),
+                "legacy_reported_bridged_identifiers": len(legacy_reported),
+                "legacy_reported_ids_equal_child_ids": (
+                    bool(actual_legacy) and actual_legacy == legacy_reported
+                ),
+                "legacy_overlap": len(actual_legacy & legacy_reported),
+                "legacy_equals_unique_identifiers": (
+                    bool(actual)
+                    and bool(actual_legacy)
+                    and actual == actual_legacy
+                ),
             }
         )
 
@@ -641,6 +723,11 @@ def build_apple_home_identity_diagnostics(
     )
     hap_equals_v1 = sum(
         anchor["comparisons"]["hap_aid_equals_v1_numeric_id"]
+        for anchor in anchors
+    )
+
+    legacy_exact = sum(
+        anchor["comparisons"]["apple_legacy_uuid_equals_hue_identifier"]
         for anchor in anchors
     )
 
@@ -692,8 +779,26 @@ def build_apple_home_identity_diagnostics(
             }
         )
 
+    selected_bridge = hue_tree.get("bridge") or {}
+    serial_samples = [
+        {
+            "id": accessory.get("id"),
+            "legacy_identifier": accessory.get("legacy_identifier"),
+            "name": accessory.get("name"),
+            "room_name": accessory.get("room_name"),
+            "model": accessory.get("model"),
+            "serial_number": accessory.get("serial_number"),
+            "bridge_id": accessory.get("bridge_id"),
+            "bridge_name": accessory.get("bridge_name"),
+            "bridge_model": accessory.get("bridge_model"),
+        }
+        for accessory in hue_apple_accessories
+        if accessory.get("serial_number")
+    ][:100]
+
     return {
         "inventory_received_at": inventory.get("received_at"),
+        "selected_hue_bridge": copy.deepcopy(selected_bridge),
         "summary": {
             "hue_devices": len(hue_devices),
             "hue_devices_with_identifiers": hue_with_identifiers,
@@ -704,10 +809,12 @@ def build_apple_home_identity_diagnostics(
             "apple_hue_with_vendor_access": apple_with_vendor_access,
             "anchors": len(anchors),
             "exact_serial_matches_on_anchors": serial_exact,
+            "legacy_uuid_matches_on_anchors": legacy_exact,
             "hap_aid_equals_v1_on_anchors": hap_equals_v1,
             "manual_mappings": len(accessory_map),
         },
         "bridge_identity": bridge_identifier_checks,
+        "apple_selected_bridge_serial_samples": serial_samples,
         "candidate_hap_v1_offsets": common_offsets,
         "anchors": anchors[:100],
         "findings": findings,
@@ -756,11 +863,10 @@ def build_apple_home_sync_plan(
         str(accessory["id"]): accessory
         for accessory in accessories
     }
-    candidate_accessories = [
-        accessory
-        for accessory in accessories
-        if _apple_accessory_origin(accessory) in {"hue", "unknown"}
-    ]
+    candidate_accessories = _apple_accessories_for_hue_bridge(
+        hue_tree,
+        accessories,
+    )
 
     accessories_by_serial: dict[str, list[dict]] = {}
     for accessory in candidate_accessories:

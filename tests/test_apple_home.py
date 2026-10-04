@@ -370,3 +370,126 @@ def test_identity_diagnostic_reports_bridge_identifier_overlap() -> None:
     bridge = report["bridge_identity"][0]
     assert bridge["reported_ids_equal_child_uuids"] is True
     assert bridge["overlap"] == 1
+
+
+def test_sync_plan_scopes_apple_candidates_to_selected_hue_bridge_model() -> None:
+    hue_tree = {
+        "bridge": {"name": "Hue Bridge Pro", "modelid": "BSB003"},
+        "rooms": [
+            {
+                "id": "hue-room",
+                "name": "Salon",
+                "devices": [
+                    {
+                        "id": "hue-light",
+                        "name": "Lampe",
+                        "services": [{"type": "light"}],
+                        "identifiers": {
+                            "zigbee_macs": ["00:17:88:01:02:03:04:05"],
+                            "v1_uniqueids": [],
+                            "v1_resource_ids": [],
+                            "v1_numeric_ids": [],
+                            "pairing_fields": [],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    inventory = {
+        "home": {"id": "home-1", "name": "Maison"},
+        "rooms": [{"id": "apple-room", "name": "Salon"}],
+        "accessories": [
+            {
+                "id": "pro-light",
+                "name": "Lampe Pro",
+                "room_id": "apple-room",
+                "room_name": "Salon",
+                "manufacturer": "Signify",
+                "model": "LCA001",
+                "serial_number": "PRO-SERIAL",
+                "is_bridged": True,
+                "bridge_name": "Hue Bridge Pro",
+                "bridge_manufacturer": "Signify",
+                "bridge_model": "BSB003",
+            },
+            {
+                "id": "old-light",
+                "name": "Lampe Jardin",
+                "room_id": "apple-room",
+                "room_name": "Salon",
+                "manufacturer": "Signify",
+                "model": "LCA001",
+                "serial_number": "OLD-SERIAL",
+                "is_bridged": True,
+                "bridge_name": "Jardin",
+                "bridge_manufacturer": "Signify",
+                "bridge_model": "BSB002",
+            },
+        ],
+        "bridges": [],
+    }
+
+    report = build_apple_home_identity_diagnostics(hue_tree, inventory)
+
+    assert report["summary"]["apple_hue_accessories"] == 1
+    assert report["apple_selected_bridge_serial_samples"][0]["id"] == "pro-light"
+
+
+def test_identity_diagnostic_compares_legacy_homekit_identifier() -> None:
+    hue_tree = {
+        "bridge": {"name": "Hue Bridge Pro", "modelid": "BSB003"},
+        "rooms": [
+            {
+                "id": "hue-room",
+                "name": "Salon",
+                "devices": [
+                    {
+                        "id": "hue-device",
+                        "name": "Lampe",
+                        "model": "LCA001",
+                        "services": [{"type": "light"}],
+                        "identifiers": {
+                            "zigbee_macs": ["00:17:88:01:02:03:04:05"],
+                            "v1_uniqueids": [],
+                            "v1_resource_ids": [],
+                            "v1_numeric_ids": [],
+                            "pairing_fields": [],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    inventory = {
+        "home": {"id": "home-1", "name": "Maison"},
+        "rooms": [{"id": "apple-room", "name": "Salon"}],
+        "accessories": [
+            {
+                "id": "apple-light",
+                "legacy_identifier": "0017880102030405",
+                "name": "Lampe",
+                "room_id": "apple-room",
+                "room_name": "Salon",
+                "manufacturer": "Signify",
+                "model": "LCA001",
+                "serial_number": None,
+                "is_bridged": True,
+                "bridge_name": "Hue Bridge Pro",
+                "bridge_manufacturer": "Signify",
+                "bridge_model": "BSB003",
+            }
+        ],
+        "bridges": [],
+    }
+
+    report = build_apple_home_identity_diagnostics(hue_tree, inventory)
+
+    assert report["summary"]["anchors"] == 1
+    assert report["summary"]["legacy_uuid_matches_on_anchors"] == 1
+    assert (
+        report["anchors"][0]["comparisons"][
+            "apple_legacy_uuid_equals_hue_identifier"
+        ]
+        is True
+    )
