@@ -630,24 +630,37 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         defer { automaticSyncRunning = false }
 
         await loadPlan()
-        guard !hasError, let summary = planSummary else { return }
+        guard !hasError else { return }
 
+        let selectedPlans = roomPlans.filter {
+            selectedHueRoomIDs.contains($0.hueRoomID)
+        }
+        let blockingStatuses: Set<String> = [
+            "unmatched_accessory",
+            "ambiguous_accessory",
+            "missing_home_room",
+        ]
+        let selectedPlanHasBlockingIssue = selectedPlans.contains { room in
+            room.status != "mapped" ||
+                (room.hueDevices ?? []).contains { blockingStatuses.contains($0.status) }
+        }
+        let movesToApply = selectedMoves
         let safePlan =
-            summary.unmatchedAccessories == 0 &&
-            summary.ambiguousAccessories == 0 &&
-            summary.missingHomeRooms == 0 &&
-            moves.allSatisfy { accessoryMatchIsSafe($0) && roomMatchIsSafe($0) }
+            !selectedPlanHasBlockingIssue &&
+            movesToApply.allSatisfy {
+                accessoryMatchIsSafe($0) && roomMatchIsSafe($0)
+            }
 
         guard safePlan else {
-            if !moves.isEmpty {
+            if !movesToApply.isEmpty || selectedPlanHasBlockingIssue {
                 status =
-                    "Synchronisation automatique suspendue : correspondance ambiguë " +
-                    "ou confiance insuffisante."
+                    "Synchronisation automatique suspendue pour les pièces sélectionnées : " +
+                    "correspondance ambiguë ou confiance insuffisante."
             }
             return
         }
 
-        if !moves.isEmpty {
+        if !movesToApply.isEmpty {
             await applyPlan()
         }
     }
@@ -945,10 +958,15 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
                 devices: plan.devices ?? [],
                 moves: plan.actions
             )
+            restoreRoomSelection(for: roomPlans)
             planSummary = plan.summary
-            status = plan.actions.isEmpty
-                ? "Aucun déplacement nécessaire."
-                : "\(plan.actions.count) déplacement(s) proposé(s)."
+            if plan.actions.isEmpty {
+                status = "Aucun déplacement nécessaire."
+            } else {
+                status =
+                    "\(plan.actions.count) déplacement(s) proposé(s), " +
+                    "\(pendingMoves) dans les pièces sélectionnées."
+            }
             hasError = false
         } catch {
             status = error.localizedDescription
@@ -974,8 +992,11 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
             hasError = true
             return
         }
-        guard !moves.isEmpty else {
-            status = "Aucun déplacement à appliquer."
+        let movesToApply = selectedMoves
+        guard !movesToApply.isEmpty else {
+            status = selectedHueRoomIDs.isEmpty
+                ? "Aucune pièce sélectionnée."
+                : "Aucun déplacement à appliquer dans les pièces sélectionnées."
             return
         }
 
@@ -994,7 +1015,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         var failures: [[String: String]] = []
         status = "Application des affectations dans Apple Maison…"
 
-        for move in moves {
+        for move in movesToApply {
             guard let accessory = accessories[move.accessoryID],
                   let room = rooms[move.toRoomID] else {
                 failures.append([
