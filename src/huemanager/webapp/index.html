@@ -395,11 +395,11 @@
       <div class="card span-12">
         <h2 data-i18n="apple.title">Apple Maison — synchronisation des pièces Hue</h2>
         <p class="muted" data-i18n="apple.description">
-          Sélectionne une pièce Apple pour chaque pièce Hue : l’impact est recalculé immédiatement
-          sans enregistrer. Enregistre seulement après avoir vérifié les accessoires présents et les déplacements proposés.
+          L’inventaire Apple Maison est publié par l’app iOS HueManager Home Sync.
+          Ici, tu peux relire le dernier inventaire reçu puis vérifier les correspondances de pièces et leur impact.
         </p>
         <div class="row">
-          <button id="refreshAppleHome" data-i18n="apple.refresh">Actualiser l’état Maison</button>
+          <button id="refreshAppleHome" data-i18n="apple.refresh">Relire l’inventaire reçu</button>
           <button id="planAppleHome" class="primary" disabled data-i18n="apple.analyze">Analyser Hue ↔ Maison</button>
           <button id="saveAppleRoomMap" disabled data-i18n="apple.save">Enregistrer les correspondances</button>
         </div>
@@ -481,8 +481,8 @@
       "backup.plan": "Analyser le restore",
       "backup.restore": "Restaurer vers la destination",
       "apple.title": "Apple Maison — synchronisation des pièces Hue",
-      "apple.description": "Sélectionne une pièce Apple pour chaque pièce Hue : l’impact est recalculé immédiatement sans enregistrer. Enregistre seulement après avoir vérifié les accessoires présents et les déplacements proposés.",
-      "apple.refresh": "Actualiser l’état Maison",
+      "apple.description": "L’inventaire Apple Maison est publié par l’app iOS HueManager Home Sync. Ici, tu peux relire le dernier inventaire reçu, puis sélectionner une pièce Apple pour chaque pièce Hue et vérifier l’impact avant enregistrement.",
+      "apple.refresh": "Relire l’inventaire reçu",
       "apple.analyze": "Analyser Hue ↔ Maison",
       "apple.save": "Enregistrer les correspondances",
       "apple.noInventory": "Aucun inventaire Apple Maison reçu.",
@@ -582,8 +582,8 @@
       "backup.plan": "Analyze restore",
       "backup.restore": "Restore to destination",
       "apple.title": "Apple Home — Hue room synchronization",
-      "apple.description": "Select an Apple Home room for each Hue room: the impact is recalculated immediately without saving. Save only after checking the current accessories and proposed moves.",
-      "apple.refresh": "Refresh Apple Home status",
+      "apple.description": "The Apple Home inventory is published by the iOS HueManager Home Sync app. Here you can reload the last inventory received, then select an Apple Home room for each Hue room and review the impact before saving.",
+      "apple.refresh": "Reload received inventory",
       "apple.analyze": "Analyze Hue ↔ Home",
       "apple.save": "Save room mappings",
       "apple.noInventory": "No Apple Home inventory received.",
@@ -2397,7 +2397,7 @@
 
   $("refreshAppleHome").addEventListener("click", () => {
     loadAppleHomeStatus()
-      .then(() => status("État Apple Maison actualisé.", "good"))
+      .then(() => status("Dernier inventaire Apple Maison reçu relu.", "good"))
       .catch(e => status(e.message, "bad"));
   });
   $("planAppleHome").addEventListener("click", runAppleHomePlan);

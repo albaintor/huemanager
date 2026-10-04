@@ -269,6 +269,16 @@ private struct SyncResult: Codable {
     }
 }
 
+private struct InventoryPublishResponse: Codable {
+    let ok: Bool
+    let receivedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case receivedAt = "received_at"
+    }
+}
+
 @MainActor
 final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     static let shared = HomeSyncModel()
@@ -316,6 +326,10 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     @Published private(set) var homeKitAuthorization = "Indéterminée"
     @Published private(set) var homeKitLoaded = false
     @Published private(set) var backgroundRefreshStatus = "Indéterminée"
+    @Published private(set) var connectionStatus = "Non testé"
+    @Published private(set) var connectionTesting = false
+    @Published private(set) var inventoryPublishing = false
+    @Published private(set) var lastPublishedInventoryAt: String?
 
     @Published var automaticSyncEnabled: Bool {
         didSet {
@@ -353,6 +367,20 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         let raw = homeManager?.authorizationStatus.rawValue.description ?? "n/a"
         return "auth=\(homeKitAuthorization) raw=\(raw) " +
             "loaded=\(homeKitLoaded) homes=\(homes.count)"
+    }
+
+    var lastPublishedInventoryDisplay: String {
+        guard let value = lastPublishedInventoryAt else {
+            return "Non publié dans cette session"
+        }
+        let formatter = ISO8601DateFormatter()
+        guard let date = formatter.date(from: value) else { return value }
+
+        let display = DateFormatter()
+        display.locale = Locale(identifier: "fr_FR")
+        display.dateStyle = .medium
+        display.timeStyle = .medium
+        return display.string(from: date)
     }
 
     private override init() {
@@ -816,17 +844,35 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     }
 
     func testConnection() async {
+        guard !connectionTesting else { return }
+
+        connectionTesting = true
+        connectionStatus = "Test en cours…"
+        status = "Connexion à HueManager…"
+        defer { connectionTesting = false }
+
         do {
-            status = "Connexion à HueManager…"
             let data = try await get(path: "/api/health")
             let health = try JSONDecoder().decode(HealthResponse.self, from: data)
+            connectionStatus = "HueManager \(health.version) accessible"
             status = "HueManager \(health.version) accessible."
             hasError = false
             await loadBridges()
         } catch {
+            connectionStatus = "Échec : \(error.localizedDescription)"
             status = error.localizedDescription
             hasError = true
         }
+    }
+
+    func refreshAndPublishInventory() async {
+        reloadHomeKit()
+        guard homeKitLoaded, !homes.isEmpty else {
+            status = "Apple Maison n’est pas encore chargée : inventaire non publié."
+            hasError = true
+            return
+        }
+        await publishInventory()
     }
 
     func publishInventory() async {
@@ -835,15 +881,26 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
             hasError = true
             return
         }
+        guard !inventoryPublishing else { return }
+
+        inventoryPublishing = true
+        defer { inventoryPublishing = false }
 
         do {
             status = "Publication de l’inventaire Apple Maison…"
-            _ = try await send(
+            let data = try await send(
                 path: "/api/apple-home/inventory",
                 method: "POST",
                 body: inventory(for: home)
             )
-            status = "Inventaire Apple Maison publié dans HueManager."
+            let response = try JSONDecoder().decode(
+                InventoryPublishResponse.self,
+                from: data
+            )
+            lastPublishedInventoryAt = response.receivedAt
+            status = response.receivedAt == nil
+                ? "Inventaire Apple Maison publié dans HueManager."
+                : "Inventaire Apple Maison publié à \(lastPublishedInventoryDisplay)."
             hasError = false
         } catch {
             status = error.localizedDescription

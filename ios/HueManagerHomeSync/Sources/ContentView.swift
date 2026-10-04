@@ -94,28 +94,61 @@ struct ContentView: View {
             )
             LabeledContent("Maisons détectées", value: "\(model.homes.count)")
 
-            Button("Actualiser les données Maison") {
-                model.reloadHomeKit()
+            Button {
+                Task { await model.refreshAndPublishInventory() }
+            } label: {
+                HStack {
+                    if model.inventoryPublishing {
+                        ProgressView()
+                    }
+                    Text("Actualiser et publier l’inventaire")
+                }
             }
-            .disabled(!model.homeKitLoaded)
+            .disabled(!model.homeKitLoaded || model.inventoryPublishing)
+
+            LabeledContent(
+                "Dernier inventaire publié",
+                value: model.lastPublishedInventoryDisplay
+            )
 
             Text(model.homeKitDiagnostic)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
 
-            Button("Tester HueManager") {
+            Button {
                 Task { await model.testConnection() }
+            } label: {
+                HStack {
+                    if model.connectionTesting {
+                        ProgressView()
+                    }
+                    Text("Tester HueManager")
+                }
             }
+            .disabled(model.connectionTesting)
+
+            LabeledContent("Connexion HueManager", value: model.connectionStatus)
         }
     }
 
     private var syncSection: some View {
         Section("Synchronisation") {
-            Button("Publier l’inventaire Maison") {
+            Button {
                 Task { await model.publishInventory() }
+            } label: {
+                HStack {
+                    if model.inventoryPublishing {
+                        ProgressView()
+                    }
+                    Text("Publier l’inventaire Maison")
+                }
             }
-            .disabled(!model.homeKitLoaded || model.homes.isEmpty)
+            .disabled(
+                !model.homeKitLoaded ||
+                model.homes.isEmpty ||
+                model.inventoryPublishing
+            )
 
             Button("Analyser et afficher le détail") {
                 Task { await model.loadPlan() }
