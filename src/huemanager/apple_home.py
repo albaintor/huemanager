@@ -262,6 +262,7 @@ def load_apple_home_state(path: Path) -> dict:
             "inventory": None,
             "room_maps": {},
             "room_selections": {},
+            "accessory_maps": {},
             "last_sync": None,
         }
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -272,6 +273,7 @@ def load_apple_home_state(path: Path) -> dict:
     payload.setdefault("inventory", None)
     payload.setdefault("room_maps", {})
     payload.setdefault("room_selections", {})
+    payload.setdefault("accessory_maps", {})
     payload.setdefault("last_sync", None)
     return payload
 
@@ -348,6 +350,31 @@ def get_room_selection(
     ]
 
 
+def store_accessory_map(
+    state: dict,
+    bridge_profile: str,
+    home_id: str,
+    accessory_map: dict[str, str],
+) -> dict:
+    result = copy.deepcopy(state)
+    result.setdefault("accessory_maps", {}).setdefault(bridge_profile, {})[home_id] = {
+        str(hue_device_id): str(apple_accessory_id)
+        for hue_device_id, apple_accessory_id in accessory_map.items()
+        if str(hue_device_id) and str(apple_accessory_id)
+    }
+    return result
+
+
+def get_accessory_map(
+    state: dict,
+    bridge_profile: str,
+    home_id: str,
+) -> dict[str, str]:
+    return copy.deepcopy(
+        state.get("accessory_maps", {}).get(bridge_profile, {}).get(home_id, {})
+    )
+
+
 def record_sync_result(state: dict, result: dict) -> dict:
     updated = copy.deepcopy(state)
     updated["last_sync"] = {
@@ -371,8 +398,10 @@ def build_apple_home_sync_plan(
     inventory: dict,
     *,
     room_map: dict[str, str] | None = None,
+    accessory_map: dict[str, str] | None = None,
 ) -> dict:
     room_map = room_map or {}
+    accessory_map = accessory_map or {}
     home = inventory.get("home") or {}
     home_id = str(home.get("id") or "")
     if not home_id:
@@ -388,6 +417,10 @@ def build_apple_home_sync_plan(
     accessories = [
         accessory for accessory in inventory.get("accessories", []) if accessory.get("id")
     ]
+    accessories_by_id = {
+        str(accessory["id"]): accessory
+        for accessory in accessories
+    }
     candidate_accessories = [
         accessory
         for accessory in accessories
@@ -475,14 +508,28 @@ def build_apple_home_sync_plan(
             candidates: list[dict] = []
             match_method = None
             hue_identifiers = _hue_identifier_candidates(device)
+            manual_accessory_id = str(accessory_map.get(device_id) or "")
 
             serial_matches: dict[str, dict] = {}
-            for identifier in hue_identifiers:
-                for accessory in accessories_by_serial.get(identifier, []):
-                    accessory_id = str(accessory["id"])
-                    if accessory_id not in matched_apple_ids:
-                        serial_matches[accessory_id] = accessory
-            if len(serial_matches) == 1:
+            if manual_accessory_id:
+                manual_accessory = accessories_by_id.get(manual_accessory_id)
+                if manual_accessory is None:
+                    match_method = "manual_missing"
+                elif manual_accessory_id in matched_apple_ids:
+                    match_method = "manual_conflict"
+                else:
+                    candidates = [manual_accessory]
+                    match_method = "manual_accessory"
+            else:
+                for identifier in hue_identifiers:
+                    for accessory in accessories_by_serial.get(identifier, []):
+                        accessory_id = str(accessory["id"])
+                        if accessory_id not in matched_apple_ids:
+                            serial_matches[accessory_id] = accessory
+
+            if manual_accessory_id:
+                pass
+            elif len(serial_matches) == 1:
                 candidates = list(serial_matches.values())
                 match_method = "serial"
             elif not serial_matches and hue_identifiers:
@@ -743,6 +790,7 @@ def build_apple_home_sync_plan(
         "rooms": room_rows,
         "devices": device_rows,
         "actions": moves,
+        "accessory_map": copy.deepcopy(accessory_map),
         "unmatched_apple_accessories": unmatched_apple,
         "summary": {
             "hue_rooms": len(room_rows),

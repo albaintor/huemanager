@@ -13,11 +13,13 @@ from pydantic import BaseModel, Field
 
 from .apple_home import (
     build_apple_home_sync_plan,
+    get_accessory_map,
     get_room_map,
     get_room_selection,
     load_apple_home_state,
     record_sync_result,
     save_apple_home_state,
+    store_accessory_map,
     store_inventory,
     store_room_map,
     store_room_selection,
@@ -125,6 +127,12 @@ class AppleHomeInventoryRequest(BaseModel):
 class AppleHomeRoomMapRequest(BaseModel):
     home_id: str = Field(min_length=1)
     room_map: dict[str, str] = Field(default_factory=dict)
+    accessory_map: dict[str, str] = Field(default_factory=dict)
+
+
+class AppleHomeAccessoryMapRequest(BaseModel):
+    home_id: str = Field(min_length=1)
+    accessory_map: dict[str, str] = Field(default_factory=dict)
 
 
 class AppleHomeRoomSelectionRequest(BaseModel):
@@ -335,10 +343,12 @@ def apple_home_plan(bridge_name: str) -> dict:
             )
         home_id = str((inventory.get("home") or {}).get("id") or "")
         room_map = get_room_map(state, bridge_name, home_id)
+        accessory_map = get_accessory_map(state, bridge_name, home_id)
         plan = build_apple_home_sync_plan(
             inventory_tree(_client(bridge_name)),
             inventory,
             room_map=room_map,
+            accessory_map=accessory_map,
         )
         selected = get_room_selection(state, bridge_name, home_id)
         if selected is None:
@@ -371,6 +381,7 @@ def preview_apple_home_room_map(
             inventory_tree(_client(bridge_name)),
             inventory,
             room_map=request.room_map,
+            accessory_map=request.accessory_map,
         )
         selected = get_room_selection(state, bridge_name, request.home_id)
         if selected is None:
@@ -401,12 +412,67 @@ def update_apple_home_room_map(
             inventory_tree(_client(bridge_name)),
             inventory,
             room_map=get_room_map(state, bridge_name, request.home_id),
+            accessory_map=get_accessory_map(state, bridge_name, request.home_id),
         )
         selected = get_room_selection(state, bridge_name, request.home_id)
         if selected is None:
             selected = [room["hue_room_id"] for room in plan.get("rooms", [])]
         plan["selected_hue_room_ids"] = selected
         return {"ok": True, "room_map": request.room_map, "plan": plan}
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@app.put("/api/bridges/{bridge_name}/apple-home/accessory-map")
+def update_apple_home_accessory_map(
+    bridge_name: str,
+    request: AppleHomeAccessoryMapRequest,
+) -> dict:
+    try:
+        state = _load_apple_home()
+        inventory = state.get("inventory")
+        if not inventory:
+            raise MigrationError(
+                "No Apple Home inventory available. Open HueManager Home Sync on an Apple device first."
+            )
+        inventory_home_id = str((inventory.get("home") or {}).get("id") or "")
+        if inventory_home_id != request.home_id:
+            raise MigrationError(
+                "The Apple Home inventory changed. Refresh the Home inventory before associating accessories."
+            )
+
+        valid_accessory_ids = {
+            str(accessory.get("id"))
+            for accessory in inventory.get("accessories", [])
+            if accessory.get("id")
+        }
+        cleaned = {
+            str(hue_device_id): str(apple_accessory_id)
+            for hue_device_id, apple_accessory_id in request.accessory_map.items()
+            if str(hue_device_id)
+            and str(apple_accessory_id) in valid_accessory_ids
+        }
+        if len(set(cleaned.values())) != len(cleaned):
+            raise MigrationError(
+                "The same Apple Home accessory cannot be associated with multiple Hue devices."
+            )
+
+        state = store_accessory_map(
+            state,
+            bridge_name,
+            request.home_id,
+            cleaned,
+        )
+        _save_apple_home(state)
+        return {
+            "ok": True,
+            "home_id": request.home_id,
+            "accessory_map": get_accessory_map(
+                state,
+                bridge_name,
+                request.home_id,
+            ),
+        }
     except Exception as exc:
         raise _api_error(exc) from exc
 

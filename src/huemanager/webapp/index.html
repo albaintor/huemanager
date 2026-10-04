@@ -524,6 +524,10 @@
       "apple.identifierUnmatched": "Aucune correspondance par identifiant commun Apple/Hue trouvée",
       "apple.identityVerified": "identifiant commun vérifié",
       "apple.nameFallback": "correspondance de secours par nom",
+      "apple.manualAccessory": "Association Apple manuelle",
+      "apple.manualAccessoryNone": "— aucune association manuelle —",
+      "apple.manualAssociation": "association manuelle persistante",
+      "apple.accessoryDraft": "Association(s) d’accessoires modifiée(s) — enregistre la configuration",
       "apple.currentlyIn": "actuellement dans",
       "apple.alreadyCorrect": "déjà dans la bonne pièce",
       "apple.impactTitle": "Impact de cette sélection",
@@ -632,6 +636,10 @@
       "apple.noHomeAccessory": "No accessory currently in this Apple Home room.",
       "apple.noSelectedRoom": "No Apple Home room selected.",
       "apple.unmatched": "No Apple Home match found",
+      "apple.manualAccessory": "Manual Apple association",
+      "apple.manualAccessoryNone": "— no manual association —",
+      "apple.manualAssociation": "persistent manual association",
+      "apple.accessoryDraft": "Accessory association(s) changed — save the configuration",
       "apple.currentlyIn": "currently in",
       "apple.alreadyCorrect": "already in the correct room",
       "apple.impactTitle": "Impact of this selection",
@@ -678,6 +686,8 @@
     appleSelectionInitialized: false,
     appleRoomDraft: {},
     appleRoomSaved: {},
+    appleAccessoryDraft: {},
+    appleAccessorySaved: {},
     applePreviewSeq: 0,
     language: initialLanguage
   };
@@ -1467,10 +1477,26 @@
       canonicalRoomSelection(state.appleSelectedRoomSavedIds);
   }
 
+  function canonicalAccessoryMap(map) {
+    return JSON.stringify(
+      Object.entries(map || {})
+        .filter(([, accessoryId]) => Boolean(accessoryId))
+        .sort(([a], [b]) => a.localeCompare(b))
+    );
+  }
+
+  function appleAccessoryMapDirty() {
+    return canonicalAccessoryMap(state.appleAccessoryDraft) !==
+      canonicalAccessoryMap(state.appleAccessorySaved);
+  }
+
   function updateAppleSaveState() {
     const hasPlan = (state.appleHomePlan?.rooms || []).length > 0;
     $("saveAppleRoomMap").disabled =
-      !hasPlan || (!appleRoomMapDirty() && !appleRoomSelectionDirty());
+      !hasPlan ||
+      (!appleRoomMapDirty() &&
+       !appleRoomSelectionDirty() &&
+       !appleAccessoryMapDirty());
   }
 
   function initializeAppleRoomDraft(plan) {
@@ -1482,6 +1508,50 @@
         state.appleRoomSaved[room.hue_room_id] = room.apple_room_id || "";
       }
     }
+  }
+
+  function initializeAppleAccessoryDraft(plan) {
+    state.appleAccessoryDraft = { ...(plan.accessory_map || {}) };
+    state.appleAccessorySaved = { ...state.appleAccessoryDraft };
+  }
+
+  function appleAccessoryCandidatesFor(deviceId, preferredRoomId) {
+    const accessories = state.appleHome?.inventory?.accessories || [];
+    const usedElsewhere = new Set(
+      Object.entries(state.appleAccessoryDraft)
+        .filter(([hueDeviceId, accessoryId]) =>
+          hueDeviceId !== deviceId && Boolean(accessoryId)
+        )
+        .map(([, accessoryId]) => accessoryId)
+    );
+
+    const isHueLike = accessory => {
+      const fields = [
+        accessory.manufacturer,
+        accessory.bridge_name,
+        accessory.bridge_manufacturer,
+      ].filter(Boolean).join(" ").toLowerCase();
+      return Boolean(accessory.is_bridged) &&
+        (fields.includes("hue") ||
+         fields.includes("signify") ||
+         fields.includes("philips"));
+    };
+
+    return accessories
+      .filter(accessory =>
+        accessory.id &&
+        !usedElsewhere.has(accessory.id) &&
+        isHueLike(accessory)
+      )
+      .sort((a, b) => {
+        const aPreferred = a.room_id === preferredRoomId ? 0 : 1;
+        const bPreferred = b.room_id === preferredRoomId ? 0 : 1;
+        if (aPreferred !== bPreferred) return aPreferred - bPreferred;
+        const roomCompare = String(a.room_name || "")
+          .localeCompare(String(b.room_name || ""));
+        if (roomCompare) return roomCompare;
+        return String(a.name || "").localeCompare(String(b.name || ""));
+      });
   }
 
   function renderHueRoomDevices(room, root) {
@@ -1530,6 +1600,8 @@
           identity.textContent = value
             ? `${t("apple.identityVerified")} · ${value}`
             : t("apple.identityVerified");
+        } else if (device.match_method === "manual_accessory") {
+          identity.textContent = t("apple.manualAssociation");
         } else if (
           device.match_method === "name" ||
           String(device.match_method || "").startsWith("heuristic:")
@@ -1539,6 +1611,37 @@
         if (identity.textContent) item.append(identity);
       }
       item.append(detail);
+
+      const manualLabel = document.createElement("label");
+      manualLabel.textContent = t("apple.manualAccessory");
+      manualLabel.style.marginTop = "8px";
+      const manualSelect = document.createElement("select");
+      const none = document.createElement("option");
+      none.value = "";
+      none.textContent = t("apple.manualAccessoryNone");
+      manualSelect.append(none);
+
+      const currentManual = state.appleAccessoryDraft[device.id] || "";
+      const candidates = appleAccessoryCandidatesFor(device.id, room.apple_room_id);
+      for (const accessory of candidates) {
+        const option = document.createElement("option");
+        option.value = accessory.id;
+        option.textContent =
+          `${accessory.room_name || "Sans pièce"} — ${accessory.name || accessory.id}` +
+          `${accessory.model ? " · " + accessory.model : ""}` +
+          `${accessory.serial_number ? " · SN " + accessory.serial_number : ""}`;
+        manualSelect.append(option);
+      }
+      manualSelect.value = currentManual;
+      manualSelect.addEventListener("change", () => {
+        if (manualSelect.value) {
+          state.appleAccessoryDraft[device.id] = manualSelect.value;
+        } else {
+          delete state.appleAccessoryDraft[device.id];
+        }
+        previewAppleRoomDraft();
+      });
+      item.append(manualLabel, manualSelect);
       root.append(item);
     }
   }
@@ -1719,6 +1822,7 @@
     state.appleHomePlan = plan;
     if (resetDraft) {
       initializeAppleRoomDraft(plan);
+      initializeAppleAccessoryDraft(plan);
       initializeAppleRoomSelection(plan);
     } else if (!state.appleSelectionInitialized) {
       initializeAppleRoomSelection(plan);
@@ -1855,11 +1959,14 @@
     const movesRoot = $("appleHomeMoves");
     movesRoot.replaceChildren();
     const note = document.createElement("div");
-    const configurationDirty = appleRoomMapDirty() || appleRoomSelectionDirty();
+    const configurationDirty =
+      appleRoomMapDirty() || appleRoomSelectionDirty() || appleAccessoryMapDirty();
     note.className = configurationDirty ? "draft-note" : "muted";
-    note.textContent = appleRoomSelectionDirty()
-      ? t("apple.selectionDraft")
-      : (appleRoomMapDirty() ? t("apple.previewDraft") : t("apple.saved"));
+    note.textContent = appleAccessoryMapDirty()
+      ? t("apple.accessoryDraft")
+      : (appleRoomSelectionDirty()
+          ? t("apple.selectionDraft")
+          : (appleRoomMapDirty() ? t("apple.previewDraft") : t("apple.saved")));
     movesRoot.append(note);
 
     const movesTitle = document.createElement("h3");
@@ -1916,6 +2023,7 @@
           body: JSON.stringify({
             home_id: inventory.home.id,
             room_map: state.appleRoomDraft,
+            accessory_map: state.appleAccessoryDraft,
           }),
         },
       );
@@ -1933,9 +2041,8 @@
     const bridge = $("managementBridge").value;
     if (!inventory?.home?.id || !bridge) return;
     try {
-      let result = null;
       if (appleRoomMapDirty()) {
-        result = await api(
+        await api(
           `/api/bridges/${encodeURIComponent(bridge)}/apple-home/room-map`,
           {
             method: "PUT",
@@ -1945,18 +2052,27 @@
             }),
           },
         );
-        state.appleRoomSaved = { ...state.appleRoomDraft };
+      }
+      if (appleAccessoryMapDirty()) {
+        await api(
+          `/api/bridges/${encodeURIComponent(bridge)}/apple-home/accessory-map`,
+          {
+            method: "PUT",
+            body: JSON.stringify({
+              home_id: inventory.home.id,
+              accessory_map: state.appleAccessoryDraft,
+            }),
+          },
+        );
       }
       if (appleRoomSelectionDirty()) {
         await persistAppleRoomSelection();
       }
-      if (result?.plan) {
-        result.plan.selected_hue_room_ids = [...state.appleSelectedRoomIds];
-        renderAppleHomePlan(result.plan);
-      } else if (state.appleHomePlan) {
-        state.appleHomePlan.selected_hue_room_ids = [...state.appleSelectedRoomIds];
-        renderAppleHomePlan(state.appleHomePlan);
-      }
+
+      const plan = await api(
+        `/api/bridges/${encodeURIComponent(bridge)}/apple-home/plan`
+      );
+      renderAppleHomePlan(plan, { resetDraft: true });
       updateAppleSaveState();
       status(t("apple.savedDone"), "good");
     } catch (e) {
@@ -2615,6 +2731,8 @@
     state.appleSelectionInitialized = false;
     state.appleRoomDraft = {};
     state.appleRoomSaved = {};
+    state.appleAccessoryDraft = {};
+    state.appleAccessorySaved = {};
     state.applePreviewSeq += 1;
     $("appleHomeSummary").replaceChildren();
     $("appleHomeRoomMap").replaceChildren();

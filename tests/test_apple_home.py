@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from huemanager.apple_home import (
     build_apple_home_sync_plan,
+    get_accessory_map,
     get_room_selection,
+    store_accessory_map,
     store_room_selection,
 )
 
@@ -194,3 +196,87 @@ def test_identifier_bearing_device_never_falls_back_to_similar_name() -> None:
     assert device["match_method"] == "identifier_unmatched"
     assert device["hue_identifiers"] == ["0017880102030405"]
     assert plan["actions"] == []
+
+
+def test_accessory_map_is_persisted_per_bridge_and_home() -> None:
+    state = {
+        "schema": 1,
+        "inventory": None,
+        "room_maps": {},
+        "room_selections": {},
+        "accessory_maps": {},
+        "last_sync": None,
+    }
+
+    updated = store_accessory_map(
+        state,
+        "Bridge Pro",
+        "home-1",
+        {"hue-device": "apple-accessory"},
+    )
+
+    assert get_accessory_map(updated, "Bridge Pro", "home-1") == {
+        "hue-device": "apple-accessory"
+    }
+    assert get_accessory_map(updated, "Bridge ancien", "home-1") == {}
+
+
+def test_manual_accessory_map_overrides_missing_common_identifier() -> None:
+    hue_tree = {
+        "rooms": [
+            {
+                "id": "hue-room",
+                "name": "Salon",
+                "devices": [
+                    {
+                        "id": "hue-light",
+                        "name": "Nouvelle lumière",
+                        "services": [{"type": "light"}],
+                        "identifiers": {
+                            "zigbee_macs": ["00:17:88:01:02:03:04:05"],
+                            "v1_uniqueids": [],
+                            "pairing_fields": [],
+                        },
+                    }
+                ],
+            }
+        ]
+    }
+    inventory = {
+        "home": {"id": "home-1", "name": "Maison"},
+        "rooms": [
+            {"id": "apple-room", "name": "Salon"},
+            {"id": "other-room", "name": "Bureau"},
+        ],
+        "accessories": [
+            {
+                "id": "apple-light",
+                "name": "Lampe Apple",
+                "serial_number": "SERIAL-NOT-EUI64",
+                "room_id": "other-room",
+                "room_name": "Bureau",
+                "manufacturer": "Signify Netherlands B.V.",
+                "model": "LCA001",
+                "is_bridged": True,
+                "bridge_name": "Hue Bridge Pro",
+                "bridge_manufacturer": "Signify Netherlands B.V.",
+                "bridge_model": "BSB003",
+            }
+        ],
+    }
+
+    no_manual = build_apple_home_sync_plan(hue_tree, inventory)
+    assert no_manual["devices"][0]["match_method"] == "identifier_unmatched"
+    assert no_manual["actions"] == []
+
+    manual = build_apple_home_sync_plan(
+        hue_tree,
+        inventory,
+        accessory_map={"hue-light": "apple-light"},
+    )
+    device = manual["devices"][0]
+    assert device["match_method"] == "manual_accessory"
+    assert device["apple_accessory_id"] == "apple-light"
+    assert device["status"] == "move"
+    assert manual["actions"][0]["from_room_name"] == "Bureau"
+    assert manual["actions"][0]["to_room_name"] == "Salon"
