@@ -4,9 +4,12 @@ from huemanager.apple_home import (
     build_apple_home_identity_diagnostics,
     build_apple_home_sync_plan,
     build_learnable_apple_home_accessory_map,
+    build_reassociation_recovery_plan,
     get_accessory_map,
+    get_reassociation_backup,
     get_room_selection,
     store_accessory_map,
+    store_reassociation_backup,
     store_room_selection,
 )
 
@@ -641,3 +644,249 @@ def test_identity_diagnostic_ignores_unknown_serial_placeholder() -> None:
 
     assert report["summary"]["apple_hue_with_serial"] == 0
     assert report["apple_selected_bridge_serial_samples"] == []
+
+
+def test_reassociation_backup_preserves_apple_room_links() -> None:
+    state = {
+        "schema": 1,
+        "inventory": None,
+        "room_maps": {},
+        "room_selections": {},
+        "accessory_maps": {},
+        "reassociation_backups": {},
+        "last_sync": None,
+    }
+    hue_tree = {
+        "bridge": {"name": "Hue Bridge Pro", "modelid": "BSB003"},
+        "rooms": [],
+    }
+    inventory = {
+        "home": {"id": "home-1", "name": "Maison"},
+        "rooms": [{"id": "room-salon", "name": "Salon"}],
+        "accessories": [
+            {
+                "id": "old-apple-id",
+                "name": "Lampadaire",
+                "room_id": "room-salon",
+                "room_name": "Salon",
+                "manufacturer": "Signify Netherlands B.V.",
+                "model": "LCA001",
+                "serial_number": "ABC123",
+                "legacy_identifier": "legacy-old",
+                "is_bridged": True,
+                "bridge_id": "bridge-old",
+                "bridge_name": "Hue Bridge Pro",
+                "bridge_manufacturer": "Signify",
+                "bridge_model": "BSB003",
+                "bridge_child_index": 4,
+                "service_types": ["light"],
+            }
+        ],
+    }
+
+    updated, backup = store_reassociation_backup(
+        state,
+        "Bridge Pro",
+        "home-1",
+        hue_tree,
+        inventory,
+    )
+
+    assert backup["accessories"][0]["room_id"] == "room-salon"
+    assert backup["accessories"][0]["serial_number"] == "ABC123"
+    stored = get_reassociation_backup(updated, "Bridge Pro", "home-1")
+    assert stored is not None
+    assert stored["accessories"][0]["name"] == "Lampadaire"
+
+
+def test_reassociation_plan_recovers_room_after_apple_uuid_changes() -> None:
+    hue_tree = {
+        "bridge": {"name": "Hue Bridge Pro", "modelid": "BSB003"},
+        "rooms": [],
+    }
+    backup = {
+        "created_at": "2026-10-04T18:00:00+00:00",
+        "home_id": "home-1",
+        "bridge_profile": "Bridge Pro",
+        "accessories": [
+            {
+                "id": "old-uuid",
+                "name": "Lampadaire",
+                "model": "LCA001",
+                "serial_number": "SERIAL-42",
+                "legacy_identifier": "old-legacy",
+                "hap_instance_id": 17,
+                "bridge_child_index": 4,
+                "bridge_reported_identifier_index": 4,
+                "bridge_legacy_identifier_index": 4,
+                "service_types": ["light"],
+                "room_id": "room-salon",
+                "room_name": "Salon",
+            }
+        ],
+    }
+    inventory = {
+        "home": {"id": "home-1", "name": "Maison"},
+        "rooms": [
+            {"id": "room-salon", "name": "Salon"},
+            {"id": "room-default", "name": "Pièce par défaut"},
+        ],
+        "accessories": [
+            {
+                "id": "new-uuid",
+                "name": "Lampadaire",
+                "room_id": "room-default",
+                "room_name": "Pièce par défaut",
+                "manufacturer": "Signify Netherlands B.V.",
+                "model": "LCA001",
+                "serial_number": "SERIAL-42",
+                "legacy_identifier": "new-legacy",
+                "hap_instance_id": 91,
+                "is_bridged": True,
+                "bridge_id": "bridge-new",
+                "bridge_name": "Hue Bridge Pro",
+                "bridge_manufacturer": "Signify",
+                "bridge_model": "BSB003",
+                "bridge_child_index": 4,
+                "service_types": ["light"],
+            }
+        ],
+    }
+
+    plan = build_reassociation_recovery_plan(hue_tree, inventory, backup)
+
+    assert plan["summary"]["matched_accessories"] == 1
+    assert plan["summary"]["moves"] == 1
+    move = plan["actions"][0]
+    assert move["accessory_id"] == "new-uuid"
+    assert move["to_room_id"] == "room-salon"
+    assert move["match_method"] == "reassociation:serial"
+
+
+def test_reassociation_plan_uses_unique_bridge_child_fingerprint_without_serial() -> None:
+    hue_tree = {
+        "bridge": {"name": "Hue Bridge Pro", "modelid": "BSB003"},
+        "rooms": [],
+    }
+    backup = {
+        "created_at": "2026-10-04T18:00:00+00:00",
+        "home_id": "home-1",
+        "bridge_profile": "Bridge Pro",
+        "accessories": [
+            {
+                "id": "old-uuid",
+                "name": "Spot plafond",
+                "model": "LCA001",
+                "serial_number": None,
+                "legacy_identifier": "old-legacy",
+                "hap_instance_id": None,
+                "bridge_child_index": 12,
+                "bridge_reported_identifier_index": 12,
+                "bridge_legacy_identifier_index": 12,
+                "service_types": ["light"],
+                "room_id": "room-cuisine",
+                "room_name": "Cuisine",
+            }
+        ],
+    }
+    inventory = {
+        "home": {"id": "home-1", "name": "Maison"},
+        "rooms": [
+            {"id": "room-cuisine", "name": "Cuisine"},
+            {"id": "room-default", "name": "Pièce par défaut"},
+        ],
+        "accessories": [
+            {
+                "id": "new-uuid",
+                "name": "Spot plafond",
+                "room_id": "room-default",
+                "room_name": "Pièce par défaut",
+                "manufacturer": "Signify",
+                "model": "LCA001",
+                "serial_number": None,
+                "legacy_identifier": "new-legacy",
+                "hap_instance_id": None,
+                "is_bridged": True,
+                "bridge_name": "Hue Bridge Pro",
+                "bridge_manufacturer": "Signify",
+                "bridge_model": "BSB003",
+                "bridge_child_index": 12,
+                "bridge_reported_identifier_index": 12,
+                "bridge_legacy_identifier_index": 12,
+                "service_types": ["light"],
+            }
+        ],
+    }
+
+    plan = build_reassociation_recovery_plan(hue_tree, inventory, backup)
+
+    assert plan["summary"]["matched_accessories"] == 1
+    assert plan["actions"][0]["match_method"] == (
+        "reassociation:bridge_child_index_model_services"
+    )
+
+
+def test_reassociation_plan_does_not_guess_ambiguous_name_model_pairs() -> None:
+    hue_tree = {
+        "bridge": {"name": "Hue Bridge Pro", "modelid": "BSB003"},
+        "rooms": [],
+    }
+    backup = {
+        "home_id": "home-1",
+        "bridge_profile": "Bridge Pro",
+        "accessories": [
+            {
+                "id": "old-1",
+                "name": "Spot",
+                "model": "LCA001",
+                "service_types": ["light"],
+                "room_id": "room-1",
+                "room_name": "Salon",
+            },
+            {
+                "id": "old-2",
+                "name": "Spot",
+                "model": "LCA001",
+                "service_types": ["light"],
+                "room_id": "room-2",
+                "room_name": "Cuisine",
+            },
+        ],
+    }
+    inventory = {
+        "home": {"id": "home-1", "name": "Maison"},
+        "rooms": [
+            {"id": "room-1", "name": "Salon"},
+            {"id": "room-2", "name": "Cuisine"},
+        ],
+        "accessories": [
+            {
+                "id": "new-1",
+                "name": "Spot",
+                "manufacturer": "Signify",
+                "model": "LCA001",
+                "is_bridged": True,
+                "bridge_name": "Hue Bridge Pro",
+                "bridge_manufacturer": "Signify",
+                "bridge_model": "BSB003",
+                "service_types": ["light"],
+            },
+            {
+                "id": "new-2",
+                "name": "Spot",
+                "manufacturer": "Signify",
+                "model": "LCA001",
+                "is_bridged": True,
+                "bridge_name": "Hue Bridge Pro",
+                "bridge_manufacturer": "Signify",
+                "bridge_model": "BSB003",
+                "service_types": ["light"],
+            },
+        ],
+    }
+
+    plan = build_reassociation_recovery_plan(hue_tree, inventory, backup)
+
+    assert plan["summary"]["matched_accessories"] == 0
+    assert plan["summary"]["unmatched_accessories"] == 2
+    assert plan["actions"] == []

@@ -343,6 +343,52 @@ private struct InventoryPublishResponse: Codable {
     }
 }
 
+private struct EmptyRequest: Codable {}
+
+private struct ReassociationBackupResponse: Codable {
+    let ok: Bool
+    let createdAt: String?
+    let accessories: Int
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case createdAt = "created_at"
+        case accessories
+    }
+}
+
+struct ReassociationSummary: Codable {
+    let savedAccessories: Int
+    let currentAccessories: Int
+    let matchedAccessories: Int
+    let moves: Int
+    let alreadyCorrect: Int
+    let unmatchedAccessories: Int
+    let missingRooms: Int
+
+    enum CodingKeys: String, CodingKey {
+        case savedAccessories = "saved_accessories"
+        case currentAccessories = "current_accessories"
+        case matchedAccessories = "matched_accessories"
+        case moves
+        case alreadyCorrect = "already_correct"
+        case unmatchedAccessories = "unmatched_accessories"
+        case missingRooms = "missing_rooms"
+    }
+}
+
+private struct ReassociationPlan: Codable {
+    let backupCreatedAt: String?
+    let actions: [SyncMove]
+    let summary: ReassociationSummary
+
+    enum CodingKeys: String, CodingKey {
+        case backupCreatedAt = "backup_created_at"
+        case actions
+        case summary
+    }
+}
+
 @MainActor
 final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     static let shared = HomeSyncModel()
@@ -399,6 +445,11 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     @Published private(set) var serverActivityInProgress = false
     @Published private(set) var lastPublishedInventoryAt: String?
 
+    @Published private(set) var reassociationMoves: [SyncMove] = []
+    @Published private(set) var reassociationSummary: ReassociationSummary?
+    @Published private(set) var reassociationBackupCount = 0
+    @Published private(set) var reassociationBackupAt: String?
+
     @Published var automaticSyncEnabled: Bool {
         didSet {
             UserDefaults.standard.set(
@@ -423,6 +474,8 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     }
 
     var pendingMoves: Int { selectedMoves.count }
+
+    var reassociationPendingMoves: Int { reassociationMoves.count }
 
     var selectedRoomCount: Int {
         roomPlans.reduce(into: 0) { count, room in
@@ -1280,6 +1333,165 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
                 plannedMoves: plannedMoves,
                 impact: impact
             )
+        }
+    }
+
+    func createReassociationBackup() async {
+        guard !bridgeProfile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            status = "Indique le nom du profil Bridge HueManager."
+            hasError = true
+            return
+        }
+
+        await publishInventory()
+        guard !hasError else { return }
+
+        do {
+            status = "Sauvegarde des associations appareil/pièce Apple Maison…"
+            let encodedBridge =
+                bridgeProfile.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+                ?? bridgeProfile
+            let data = try await send(
+                path: "/api/bridges/\(encodedBridge)/apple-home/reassociation-backup",
+                method: "POST",
+                body: EmptyRequest()
+            )
+            let response = try JSONDecoder().decode(
+                ReassociationBackupResponse.self,
+                from: data
+            )
+            reassociationBackupCount = response.accessories
+            reassociationBackupAt = response.createdAt
+            reassociationMoves = []
+            reassociationSummary = nil
+            status =
+                "Sauvegarde de réassociation créée : " +
+                "\(response.accessories) accessoire(s). Tu peux maintenant supprimer puis recréer le lien Apple Home."
+            hasError = false
+        } catch {
+            status = error.localizedDescription
+            hasError = true
+        }
+    }
+
+    func loadReassociationPlan() async {
+        guard !bridgeProfile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            status = "Indique le nom du profil Bridge HueManager."
+            hasError = true
+            return
+        }
+
+        await publishInventory()
+        guard !hasError else { return }
+
+        do {
+            status = "Comparaison de la nouvelle association Apple avec la sauvegarde…"
+            let encodedBridge =
+                bridgeProfile.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+                ?? bridgeProfile
+            let data = try await get(
+                path: "/api/bridges/\(encodedBridge)/apple-home/reassociation-plan"
+            )
+            let plan = try JSONDecoder().decode(ReassociationPlan.self, from: data)
+            reassociationMoves = plan.actions
+            reassociationSummary = plan.summary
+            reassociationBackupAt = plan.backupCreatedAt
+            reassociationBackupCount = plan.summary.savedAccessories
+
+            if plan.summary.unmatchedAccessories > 0 || plan.summary.missingRooms > 0 {
+                status =
+                    "Réassociation analysée : \(plan.summary.matchedAccessories)/" +
+                    "\(plan.summary.savedAccessories) reconnu(s), " +
+                    "\(plan.actions.count) déplacement(s), " +
+                    "\(plan.summary.unmatchedAccessories) non reconnu(s)."
+                hasError = false
+            } else if plan.actions.isEmpty {
+                status =
+                    "Réassociation analysée : tous les accessoires reconnus et déjà dans leurs pièces."
+                hasError = false
+            } else {
+                status =
+                    "Réassociation analysée : \(plan.actions.count) déplacement(s) prêts à être restaurés."
+                hasError = false
+            }
+        } catch {
+            status = error.localizedDescription
+            hasError = true
+        }
+    }
+
+    func applyReassociationPlan() async {
+        guard let home = selectedHome else {
+            status = "Sélectionne une maison Apple."
+            hasError = true
+            return
+        }
+        guard !reassociationMoves.isEmpty else {
+            status = "Aucun déplacement de réassociation à appliquer."
+            return
+        }
+
+        let accessories = Dictionary(
+            uniqueKeysWithValues: home.accessories.map {
+                ($0.uniqueIdentifier.uuidString, $0)
+            }
+        )
+        let rooms = Dictionary(
+            uniqueKeysWithValues: home.rooms.map {
+                ($0.uniqueIdentifier.uuidString, $0)
+            }
+        )
+
+        var moved = 0
+        var failures: [[String: String]] = []
+        status = "Restauration des pièces Apple Maison après réassociation…"
+
+        for move in reassociationMoves {
+            guard let accessory = accessories[move.accessoryID],
+                  let room = rooms[move.toRoomID] else {
+                failures.append([
+                    "accessory_id": move.accessoryID,
+                    "name": move.accessoryName,
+                    "error": "Accessoire ou pièce introuvable dans HomeKit",
+                ])
+                continue
+            }
+
+            if let error = await assign(accessory, to: room, in: home) {
+                failures.append([
+                    "accessory_id": move.accessoryID,
+                    "name": move.accessoryName,
+                    "error": error.localizedDescription,
+                ])
+            } else {
+                moved += 1
+            }
+        }
+
+        do {
+            _ = try await send(
+                path: "/api/apple-home/sync-result",
+                method: "POST",
+                body: SyncResult(
+                    homeID: home.uniqueIdentifier.uuidString,
+                    bridgeProfile: bridgeProfile,
+                    moved: moved,
+                    failed: failures
+                )
+            )
+            await loadReassociationPlan()
+            if failures.isEmpty {
+                status =
+                    "\(moved) accessoire(s) remis dans leur pièce Apple Maison sauvegardée."
+                hasError = false
+            } else {
+                status =
+                    "\(moved) restauré(s), \(failures.count) échec(s)."
+                hasError = true
+            }
+        } catch {
+            status = error.localizedDescription
+            hasError = true
         }
     }
 

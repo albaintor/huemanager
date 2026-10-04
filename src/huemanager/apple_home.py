@@ -323,6 +323,7 @@ def load_apple_home_state(path: Path) -> dict:
             "room_maps": {},
             "room_selections": {},
             "accessory_maps": {},
+            "reassociation_backups": {},
             "last_sync": None,
         }
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -334,6 +335,7 @@ def load_apple_home_state(path: Path) -> dict:
     payload.setdefault("room_maps", {})
     payload.setdefault("room_selections", {})
     payload.setdefault("accessory_maps", {})
+    payload.setdefault("reassociation_backups", {})
     payload.setdefault("last_sync", None)
     return payload
 
@@ -442,6 +444,339 @@ def record_sync_result(state: dict, result: dict) -> dict:
         **copy.deepcopy(result),
     }
     return updated
+
+
+def _reassociation_service_signature(accessory: dict) -> str:
+    return "|".join(
+        sorted(
+            {
+                _normalise(str(service_type))
+                for service_type in accessory.get("service_types", [])
+                if _normalise(str(service_type))
+            }
+        )
+    )
+
+
+def _reassociation_accessory_snapshot(accessory: dict) -> dict:
+    return {
+        "id": str(accessory.get("id") or ""),
+        "name": accessory.get("name"),
+        "manufacturer": accessory.get("manufacturer"),
+        "model": accessory.get("model"),
+        "serial_number": _usable_serial_number(accessory.get("serial_number")),
+        "legacy_identifier": accessory.get("legacy_identifier"),
+        "hap_instance_id": accessory.get("hap_instance_id"),
+        "bridge_id": accessory.get("bridge_id"),
+        "bridge_name": accessory.get("bridge_name"),
+        "bridge_manufacturer": accessory.get("bridge_manufacturer"),
+        "bridge_model": accessory.get("bridge_model"),
+        "bridge_child_index": accessory.get("bridge_child_index"),
+        "bridge_reported_identifier_index": accessory.get(
+            "bridge_reported_identifier_index"
+        ),
+        "bridge_legacy_identifier_index": accessory.get(
+            "bridge_legacy_identifier_index"
+        ),
+        "service_types": sorted(
+            {
+                str(service_type)
+                for service_type in accessory.get("service_types", [])
+                if str(service_type)
+            }
+        ),
+        "room_id": str(accessory.get("room_id") or "") or None,
+        "room_name": accessory.get("room_name"),
+    }
+
+
+def store_reassociation_backup(
+    state: dict,
+    bridge_profile: str,
+    home_id: str,
+    hue_tree: dict,
+    inventory: dict,
+) -> tuple[dict, dict]:
+    """Capture Apple accessory -> room associations before removing a Hue bridge link.
+
+    The snapshot deliberately stores several HomeKit/Matter identity hints. Apple may
+    recreate HMAccessory UUIDs after re-pairing, so recovery must not depend on the
+    current accessory UUID alone.
+    """
+    inventory_home_id = str((inventory.get("home") or {}).get("id") or "")
+    if not inventory_home_id or inventory_home_id != home_id:
+        raise ValueError("Apple Home inventory does not match the requested home")
+
+    all_accessories = [
+        accessory
+        for accessory in inventory.get("accessories", [])
+        if accessory.get("id")
+    ]
+    candidates = _apple_accessories_for_hue_bridge(hue_tree, all_accessories)
+    bridge = hue_tree.get("bridge") or {}
+
+    backup = {
+        "created_at": _now(),
+        "home_id": home_id,
+        "home_name": (inventory.get("home") or {}).get("name"),
+        "bridge_profile": bridge_profile,
+        "bridge_name": bridge.get("name"),
+        "bridge_model": bridge.get("modelid"),
+        "accessories": [
+            _reassociation_accessory_snapshot(accessory)
+            for accessory in candidates
+        ],
+    }
+
+    result = copy.deepcopy(state)
+    result.setdefault("reassociation_backups", {}).setdefault(
+        bridge_profile, {}
+    )[home_id] = backup
+    return result, copy.deepcopy(backup)
+
+
+def get_reassociation_backup(
+    state: dict,
+    bridge_profile: str,
+    home_id: str,
+) -> dict | None:
+    backup = (
+        state.get("reassociation_backups", {})
+        .get(bridge_profile, {})
+        .get(home_id)
+    )
+    return copy.deepcopy(backup) if backup else None
+
+
+def _reassociation_match_key(accessory: dict, method: str) -> str:
+    model = _normalise(accessory.get("model"))
+    name = _normalise(accessory.get("name"))
+    services = _reassociation_service_signature(accessory)
+
+    if method == "serial":
+        return _normalise(
+            _usable_serial_number(accessory.get("serial_number"))
+        )
+    if method == "legacy_identifier":
+        return _normalise_identifier(accessory.get("legacy_identifier"))
+    if method == "hap_aid_model_services":
+        aid = accessory.get("hap_instance_id")
+        return f"{aid}:{model}:{services}" if aid is not None and model else ""
+    if method == "bridge_child_index_model_services":
+        index = accessory.get("bridge_child_index")
+        return f"{index}:{model}:{services}" if index is not None and model else ""
+    if method == "bridge_reported_index_model_services":
+        index = accessory.get("bridge_reported_identifier_index")
+        return f"{index}:{model}:{services}" if index is not None and model else ""
+    if method == "bridge_legacy_index_model_services":
+        index = accessory.get("bridge_legacy_identifier_index")
+        return f"{index}:{model}:{services}" if index is not None and model else ""
+    if method == "name_model_services":
+        return f"{name}:{model}:{services}" if name and model else ""
+    if method == "name_model":
+        return f"{name}:{model}" if name and model else ""
+    return ""
+
+
+def build_reassociation_recovery_plan(
+    hue_tree: dict,
+    inventory: dict,
+    backup: dict,
+) -> dict:
+    """Match newly-created Apple accessories to a pre-repair snapshot.
+
+    Matching is one-to-one and conservative. Strong identifiers are tried first;
+    weaker fingerprints are accepted only when unique on both sides. Ambiguous
+    accessories are left untouched.
+    """
+    current_home = inventory.get("home") or {}
+    current_home_id = str(current_home.get("id") or "")
+    if not current_home_id:
+        raise ValueError("Apple Home inventory has no home id")
+    if current_home_id != str(backup.get("home_id") or ""):
+        raise ValueError("Apple Home inventory does not match the reassociation backup")
+
+    current_rooms = [
+        room for room in inventory.get("rooms", []) if room.get("id")
+    ]
+    rooms_by_id = {str(room["id"]): room for room in current_rooms}
+    room_name_buckets: dict[str, list[dict]] = {}
+    for room in current_rooms:
+        key = _normalise(room.get("name"))
+        if key:
+            room_name_buckets.setdefault(key, []).append(room)
+
+    current_accessories = _apple_accessories_for_hue_bridge(
+        hue_tree,
+        [
+            accessory
+            for accessory in inventory.get("accessories", [])
+            if accessory.get("id")
+        ],
+    )
+    saved_accessories = [
+        accessory
+        for accessory in backup.get("accessories", [])
+        if accessory.get("id")
+    ]
+
+    methods = [
+        "serial",
+        "legacy_identifier",
+        "hap_aid_model_services",
+        "bridge_child_index_model_services",
+        "bridge_reported_index_model_services",
+        "bridge_legacy_index_model_services",
+        "name_model_services",
+        "name_model",
+    ]
+    unmatched_saved = set(range(len(saved_accessories)))
+    unmatched_current = {
+        str(accessory.get("id"))
+        for accessory in current_accessories
+        if accessory.get("id")
+    }
+    current_by_id = {
+        str(accessory.get("id")): accessory
+        for accessory in current_accessories
+        if accessory.get("id")
+    }
+    matches: dict[int, tuple[str, str]] = {}
+
+    for method in methods:
+        saved_buckets: dict[str, list[int]] = {}
+        current_buckets: dict[str, list[str]] = {}
+
+        for index in unmatched_saved:
+            key = _reassociation_match_key(saved_accessories[index], method)
+            if key:
+                saved_buckets.setdefault(key, []).append(index)
+
+        for accessory_id in unmatched_current:
+            key = _reassociation_match_key(current_by_id[accessory_id], method)
+            if key:
+                current_buckets.setdefault(key, []).append(accessory_id)
+
+        for key, saved_indexes in saved_buckets.items():
+            current_ids = current_buckets.get(key, [])
+            if len(saved_indexes) != 1 or len(current_ids) != 1:
+                continue
+            saved_index = saved_indexes[0]
+            current_id = current_ids[0]
+            matches[saved_index] = (current_id, method)
+            unmatched_saved.discard(saved_index)
+            unmatched_current.discard(current_id)
+
+    actions: list[dict] = []
+    rows: list[dict] = []
+    already_correct = 0
+    missing_rooms = 0
+
+    for index, saved in enumerate(saved_accessories):
+        match = matches.get(index)
+        target_room = None
+        room_method = None
+
+        saved_room_id = str(saved.get("room_id") or "")
+        if saved_room_id and saved_room_id in rooms_by_id:
+            target_room = rooms_by_id[saved_room_id]
+            room_method = "saved_room_id"
+        elif saved.get("room_name"):
+            room_candidates = room_name_buckets.get(
+                _normalise(saved.get("room_name")),
+                [],
+            )
+            if len(room_candidates) == 1:
+                target_room = room_candidates[0]
+                room_method = "saved_room_name"
+
+        if match is None:
+            rows.append(
+                {
+                    "saved_accessory_id": saved.get("id"),
+                    "saved_name": saved.get("name"),
+                    "target_room_id": target_room.get("id") if target_room else None,
+                    "target_room_name": target_room.get("name") if target_room else saved.get("room_name"),
+                    "status": "unmatched",
+                    "match_method": None,
+                }
+            )
+            continue
+
+        current_id, method = match
+        current = current_by_id[current_id]
+        if target_room is None:
+            missing_rooms += 1
+            rows.append(
+                {
+                    "saved_accessory_id": saved.get("id"),
+                    "saved_name": saved.get("name"),
+                    "apple_accessory_id": current_id,
+                    "apple_name": current.get("name"),
+                    "target_room_id": None,
+                    "target_room_name": saved.get("room_name"),
+                    "status": "missing_room",
+                    "match_method": method,
+                }
+            )
+            continue
+
+        current_room_id = str(current.get("room_id") or "")
+        target_room_id = str(target_room.get("id") or "")
+        status = "already_correct" if current_room_id == target_room_id else "move"
+        if status == "already_correct":
+            already_correct += 1
+        else:
+            actions.append(
+                {
+                    "accessory_id": current_id,
+                    "accessory_name": current.get("name") or saved.get("name") or current_id,
+                    "from_room_id": current.get("room_id"),
+                    "from_room_name": current.get("room_name"),
+                    "to_room_id": target_room_id,
+                    "to_room_name": target_room.get("name") or saved.get("room_name") or target_room_id,
+                    "hue_device_id": f"reassociation:{saved.get('id')}",
+                    "hue_device_name": saved.get("name") or current.get("name") or current_id,
+                    "hue_room_id": target_room_id,
+                    "hue_room_name": target_room.get("name"),
+                    "match_method": f"reassociation:{method}",
+                    "room_match_method": room_method,
+                    "room_match_confidence": 1.0,
+                }
+            )
+
+        rows.append(
+            {
+                "saved_accessory_id": saved.get("id"),
+                "saved_name": saved.get("name"),
+                "apple_accessory_id": current_id,
+                "apple_name": current.get("name"),
+                "current_room_id": current.get("room_id"),
+                "current_room_name": current.get("room_name"),
+                "target_room_id": target_room_id,
+                "target_room_name": target_room.get("name"),
+                "status": status,
+                "match_method": method,
+                "room_match_method": room_method,
+            }
+        )
+
+    return {
+        "backup_created_at": backup.get("created_at"),
+        "home_id": current_home_id,
+        "bridge_profile": backup.get("bridge_profile"),
+        "actions": actions,
+        "matches": rows,
+        "summary": {
+            "saved_accessories": len(saved_accessories),
+            "current_accessories": len(current_accessories),
+            "matched_accessories": len(matches),
+            "moves": len(actions),
+            "already_correct": already_correct,
+            "unmatched_accessories": len(unmatched_saved),
+            "missing_rooms": missing_rooms,
+        },
+    }
 
 
 def build_learnable_apple_home_accessory_map(
