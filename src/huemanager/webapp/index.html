@@ -997,7 +997,22 @@
   async function copyDiagnostics() {
     if (!state.diagnostics) return;
     const payload = JSON.stringify(state.diagnostics, null, 2);
-    await navigator.clipboard.writeText(payload);
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(payload);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = payload;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.append(textarea);
+      textarea.focus();
+      textarea.select();
+      if (!document.execCommand("copy")) {
+        textarea.remove();
+        throw new Error("Copie automatique indisponible : sélectionne le JSON manuellement.");
+      }
+      textarea.remove();
+    }
     status("Rapport de diagnostic copié dans le presse-papiers.", "good");
   }
 
