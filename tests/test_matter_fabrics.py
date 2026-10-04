@@ -32,7 +32,7 @@ class FakeHueClient:
     def v2_put(self, resource_type: str, resource_id: str, body: dict) -> list[dict]:
         assert resource_type == "matter"
         self.puts.append((resource_type, resource_id, body))
-        if body == {"action": "matter_reset"}:
+        if body == {"action": {"action_type": "matter_reset"}}:
             self.fabrics = []
         return []
 
@@ -96,19 +96,6 @@ def test_delete_matter_fabric_is_explicitly_unsupported() -> None:
 
     assert exc_info.value.status_code == 405
     assert "does not expose DELETE" in str(exc_info.value.detail)
-
-
-def test_delete_matter_fabric_rejects_unknown_id(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    client = FakeHueClient([])
-    monkeypatch.setattr(web, "_client", lambda _: client)
-
-    with pytest.raises(HTTPException) as exc_info:
-        web.delete_matter_fabric("Bridge Pro", str(uuid.uuid4()))
-
-    assert exc_info.value.status_code == 404
-    assert client.deleted == []
 
 
 def test_matter_fabric_summary_identifies_apple_keychain() -> None:
