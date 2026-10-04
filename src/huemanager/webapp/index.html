@@ -550,7 +550,7 @@
       "management.selectAll": "Tout sélectionner",
       "management.selectNone": "Tout désélectionner",
       "matter.title": "Associations Matter du Bridge",
-      "matter.description": "Liste les fabrics Matter enregistrés directement dans le Bridge sélectionné. Supprimer un fabric retire uniquement cette association Matter ; les lampes, pièces Hue, scènes et accessoires Zigbee ne sont pas supprimés.",
+      "matter.description": "Liste les fabrics Matter enregistrés directement dans le Bridge sélectionné. L’API Hue ne permet pas de supprimer un fabric individuellement ; seul un reset Matter global est exposé.",
       "matter.refresh": "Relire les associations Matter",
       "matter.none": "Aucune association Matter enregistrée sur ce Bridge.",
       "matter.delete": "Supprimer cette association",
@@ -713,7 +713,7 @@
       "management.selectAll": "Select all",
       "management.selectNone": "Deselect all",
       "matter.title": "Bridge Matter associations",
-      "matter.description": "Lists Matter fabrics stored directly on the selected Bridge. Deleting a fabric removes only that Matter association; Hue lights, rooms, scenes and Zigbee accessories are not deleted.",
+      "matter.description": "Lists Matter fabrics stored directly on the selected Bridge. The Hue API does not expose per-fabric deletion; only a global Matter reset is available.",
       "matter.refresh": "Reload Matter associations",
       "matter.none": "No Matter association is stored on this Bridge.",
       "matter.delete": "Delete this association",
@@ -1336,38 +1336,6 @@
       details.textContent = parts.join(" · ");
       box.append(details);
 
-      const button = document.createElement("button");
-      button.className = "danger";
-      button.textContent = t("matter.delete");
-      button.addEventListener("click", async () => {
-        const vendorLabel = fabric.vendor_name
-          ? `${fabric.vendor_name} (${fabric.vendor_id})`
-          : (fabric.vendor_id == null ? "vendor inconnu" : `vendor ${fabric.vendor_id}`);
-        const warning =
-          `Supprimer l'association Matter « ${label} » ?\n\n` +
-          `Bridge : ${data.bridge}\n` +
-          `Vendor : ${vendorLabel}\n` +
-          `État : ${fabric.status || "inconnu"}\n` +
-          `ID : ${fabric.id}\n\n` +
-          "Cette opération retire uniquement ce fabric Matter du Bridge. " +
-          "Elle ne supprime pas les lampes ni les pièces Hue.";
-        if (!window.confirm(warning)) return;
-
-        button.disabled = true;
-        try {
-          status(`Suppression du fabric Matter ${label}…`);
-          await api(
-            `/api/bridges/${encodeURIComponent(data.bridge)}/matter-fabrics/${encodeURIComponent(fabric.id)}`,
-            { method: "DELETE" },
-          );
-          await loadMatterFabrics();
-          status(`Association Matter « ${label} » supprimée.`, "good");
-        } catch (e) {
-          button.disabled = false;
-          status(e.message, "bad");
-        }
-      });
-      box.append(button);
       root.append(box);
     }
   }

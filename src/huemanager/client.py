@@ -83,13 +83,40 @@ class HueBridgeClient:
             timeout=self.timeout,
             verify=self.profile.verify_tls,
         )
-        response.raise_for_status()
+
+        payload: Any = None
+        if response.content:
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = None
+
+        if isinstance(payload, dict):
+            errors = payload.get("errors") or []
+            if errors:
+                descriptions = "; ".join(
+                    str(error.get("description", error))
+                    for error in errors
+                )
+                raise HueApiError(
+                    f"Hue API {response.status_code} {method} {path}: {descriptions}"
+                )
+
+        if not response.ok:
+            detail = response.text.strip()
+            if len(detail) > 500:
+                detail = detail[:500] + "…"
+            raise HueApiError(
+                f"Hue API {response.status_code} {method} {path}"
+                + (f": {detail}" if detail else "")
+            )
+
         if not response.content:
             return []
-        payload = response.json()
-        errors = payload.get("errors") or []
-        if errors:
-            raise HueApiError("; ".join(str(e.get("description", e)) for e in errors))
+        if not isinstance(payload, dict):
+            raise HueApiError(
+                f"Unexpected CLIP v2 response for {method} {path}"
+            )
         return payload.get("data", [])
 
     def v1_all(self) -> dict:

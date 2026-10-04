@@ -32,7 +32,7 @@ class FakeHueClient:
     def v2_put(self, resource_type: str, resource_id: str, body: dict) -> list[dict]:
         assert resource_type == "matter"
         self.puts.append((resource_type, resource_id, body))
-        if body == {"action": "matter_reset"}:
+        if body == {"action": {"action_type": "matter_reset"}}:
             self.fabrics = []
         return []
 
@@ -90,38 +90,12 @@ def test_list_matter_fabrics_orders_apple_first(monkeypatch: pytest.MonkeyPatch)
     assert result["fabrics"][0]["is_apple"] is True
 
 
-def test_delete_matter_fabric_only_deletes_requested_fabric(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    apple_id = str(uuid.uuid4())
-    other_id = str(uuid.uuid4())
-    client = FakeHueClient(
-        [
-            _fabric(fabric_id=apple_id, label="Maison", vendor_id=0x1349),
-            _fabric(fabric_id=other_id, label="Google", vendor_id=6006),
-        ]
-    )
-    monkeypatch.setattr(web, "_client", lambda _: client)
-
-    result = web.delete_matter_fabric("Bridge Pro", apple_id)
-
-    assert client.deleted == [("matter_fabric", apple_id)]
-    assert result["deleted"]["is_apple"] is True
-    assert result["remaining"] == 1
-    assert client.fabrics[0]["id"] == other_id
-
-
-def test_delete_matter_fabric_rejects_unknown_id(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    client = FakeHueClient([])
-    monkeypatch.setattr(web, "_client", lambda _: client)
-
+def test_delete_matter_fabric_is_explicitly_unsupported() -> None:
     with pytest.raises(HTTPException) as exc_info:
         web.delete_matter_fabric("Bridge Pro", str(uuid.uuid4()))
 
-    assert exc_info.value.status_code == 404
-    assert client.deleted == []
+    assert exc_info.value.status_code == 405
+    assert "does not expose DELETE" in str(exc_info.value.detail)
 
 
 def test_matter_fabric_summary_identifies_apple_keychain() -> None:
@@ -169,7 +143,11 @@ def test_reset_matter_feature_uses_matter_reset_action(
     result = web.reset_matter_feature("Bridge Pro")
 
     assert client.puts == [
-        ("matter", matter_id, {"action": "matter_reset"})
+        (
+            "matter",
+            matter_id,
+            {"action": {"action_type": "matter_reset"}},
+        )
     ]
     assert result["removed_fabrics"] == 2
     assert client.fabrics == []
