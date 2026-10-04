@@ -16,7 +16,9 @@ from .apple_home import (
     build_apple_home_identity_diagnostics,
     build_apple_home_sync_plan,
     build_learnable_apple_home_accessory_map,
+    build_reassociation_recovery_plan,
     get_accessory_map,
+    get_reassociation_backup,
     get_room_map,
     get_room_selection,
     load_apple_home_state,
@@ -24,6 +26,7 @@ from .apple_home import (
     save_apple_home_state,
     store_accessory_map,
     store_inventory,
+    store_reassociation_backup,
     store_room_map,
     store_room_selection,
 )
@@ -443,6 +446,83 @@ def learn_apple_home_identities(bridge_name: str) -> dict:
             "total_persistent_mappings": len(merged),
             "mappings": learnable["mappings"],
         }
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@app.post("/api/bridges/{bridge_name}/apple-home/reassociation-backup")
+def create_apple_home_reassociation_backup(bridge_name: str) -> dict:
+    """Save Apple accessory-to-room links before removing/re-adding a Hue bridge."""
+    try:
+        state = _load_apple_home()
+        inventory = state.get("inventory")
+        if not inventory:
+            raise MigrationError(
+                "No Apple Home inventory available. Open HueManager Home Sync on an Apple device first."
+            )
+        home_id = str((inventory.get("home") or {}).get("id") or "")
+        if not home_id:
+            raise MigrationError("Apple Home inventory has no home id.")
+
+        state, backup = store_reassociation_backup(
+            state,
+            bridge_name,
+            home_id,
+            inventory_tree(_client(bridge_name)),
+            inventory,
+        )
+        _save_apple_home(state)
+        return {
+            "ok": True,
+            "created_at": backup.get("created_at"),
+            "home_id": home_id,
+            "bridge_profile": bridge_name,
+            "accessories": len(backup.get("accessories", [])),
+        }
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@app.get("/api/bridges/{bridge_name}/apple-home/reassociation-backup")
+def apple_home_reassociation_backup(bridge_name: str) -> dict:
+    try:
+        state = _load_apple_home()
+        inventory = state.get("inventory")
+        if not inventory:
+            raise MigrationError(
+                "No Apple Home inventory available. Open HueManager Home Sync on an Apple device first."
+            )
+        home_id = str((inventory.get("home") or {}).get("id") or "")
+        backup = get_reassociation_backup(state, bridge_name, home_id)
+        return {
+            "available": bool(backup),
+            "backup": backup,
+        }
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@app.get("/api/bridges/{bridge_name}/apple-home/reassociation-plan")
+def apple_home_reassociation_plan(bridge_name: str) -> dict:
+    """Build a conservative room-restore plan after Apple recreated accessory UUIDs."""
+    try:
+        state = _load_apple_home()
+        inventory = state.get("inventory")
+        if not inventory:
+            raise MigrationError(
+                "No Apple Home inventory available. Open HueManager Home Sync on an Apple device first."
+            )
+        home_id = str((inventory.get("home") or {}).get("id") or "")
+        backup = get_reassociation_backup(state, bridge_name, home_id)
+        if not backup:
+            raise MigrationError(
+                "No reassociation backup exists for this Hue bridge and Apple Home."
+            )
+        return build_reassociation_recovery_plan(
+            inventory_tree(_client(bridge_name)),
+            inventory,
+            backup,
+        )
     except Exception as exc:
         raise _api_error(exc) from exc
 
