@@ -474,9 +474,10 @@ def build_apple_home_sync_plan(
             device_name = device.get("name") or device_id
             candidates: list[dict] = []
             match_method = None
+            hue_identifiers = _hue_identifier_candidates(device)
 
             serial_matches: dict[str, dict] = {}
-            for identifier in _hue_identifier_candidates(device):
+            for identifier in hue_identifiers:
                 for accessory in accessories_by_serial.get(identifier, []):
                     accessory_id = str(accessory["id"])
                     if accessory_id not in matched_apple_ids:
@@ -484,6 +485,12 @@ def build_apple_home_sync_plan(
             if len(serial_matches) == 1:
                 candidates = list(serial_matches.values())
                 match_method = "serial"
+            elif not serial_matches and hue_identifiers:
+                # A real Hue identifier exists but Apple Home did not expose a
+                # matching serial number. Do not guess by name: renamed or
+                # similarly named accessories can otherwise be moved incorrectly.
+                candidates = []
+                match_method = "identifier_unmatched"
             elif not serial_matches:
                 name_matches = []
                 for accessory in accessories_by_name.get(_normalise(device_name), []):
@@ -548,6 +555,7 @@ def build_apple_home_sync_plan(
                         "hue_room_name": room.get("name"),
                         "status": status,
                         "match_method": match_method,
+                        "hue_identifiers": sorted(hue_identifiers),
                         "candidates": [
                             {
                                 "id": item.get("id"),
@@ -614,6 +622,8 @@ def build_apple_home_sync_plan(
                     ),
                     "status": status,
                     "match_method": match_method,
+                    "hue_identifiers": sorted(hue_identifiers),
+                    "apple_serial_number": accessory.get("serial_number"),
                 }
             )
 
@@ -675,6 +685,8 @@ def build_apple_home_sync_plan(
                 "name": device_row.get("hue_device_name"),
                 "status": device_row.get("status"),
                 "match_method": device_row.get("match_method"),
+                "hue_identifiers": device_row.get("hue_identifiers", []),
+                "apple_serial_number": device_row.get("apple_serial_number"),
                 "apple_accessory_id": device_row.get("apple_accessory_id"),
                 "apple_accessory_name": device_row.get("apple_accessory_name"),
                 "apple_current_room_id": device_row.get("apple_room_id"),

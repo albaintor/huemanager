@@ -144,3 +144,53 @@ def test_fuzzy_match_does_not_steal_accessory_from_other_mapped_room() -> None:
 
     assert plan["actions"] == []
     assert plan["devices"][0]["status"] == "unmatched_accessory"
+
+
+def test_identifier_bearing_device_never_falls_back_to_similar_name() -> None:
+    hue_tree = {
+        "rooms": [
+            {
+                "id": "hue-buanderie",
+                "name": "Sous-sol Buanderie",
+                "devices": [
+                    {
+                        "id": "new-light",
+                        "name": "Sous-sol buanderie",
+                        "services": [{"type": "light"}],
+                        "identifiers": {
+                            "zigbee_macs": ["00:17:88:01:02:03:04:05"],
+                            "v1_uniqueids": [],
+                            "pairing_fields": [],
+                        },
+                    }
+                ],
+            }
+        ]
+    }
+    inventory = {
+        "home": {"id": "home-1", "name": "Maison"},
+        "rooms": [{"id": "apple-buanderie", "name": "Sous-sol Buanderie"}],
+        "accessories": [
+            {
+                "id": "motion",
+                "name": "Sous-sol buanderie détecteur",
+                "serial_number": None,
+                "room_id": "apple-buanderie",
+                "room_name": "Sous-sol Buanderie",
+                "manufacturer": "Signify Netherlands B.V.",
+                "model": "SML001",
+                "is_bridged": True,
+                "bridge_name": "Hue Bridge Pro",
+                "bridge_manufacturer": "Signify Netherlands B.V.",
+                "bridge_model": "BSB003",
+            }
+        ],
+    }
+
+    plan = build_apple_home_sync_plan(hue_tree, inventory)
+
+    device = plan["devices"][0]
+    assert device["status"] == "unmatched_accessory"
+    assert device["match_method"] == "identifier_unmatched"
+    assert device["hue_identifiers"] == ["0017880102030405"]
+    assert plan["actions"] == []

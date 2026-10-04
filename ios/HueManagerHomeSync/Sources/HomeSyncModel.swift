@@ -783,6 +783,21 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         homes.first { $0.uniqueIdentifier.uuidString == selectedHomeID }
     }
 
+    private func homeKitSerialNumber(for accessory: HMAccessory) -> String? {
+        for service in accessory.services {
+            for characteristic in service.characteristics
+            where characteristic.characteristicType == HMCharacteristicTypeSerialNumber {
+                if let value = characteristic.value as? String {
+                    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty {
+                        return trimmed
+                    }
+                }
+            }
+        }
+        return nil
+    }
+
     private func inventory(for home: HMHome) -> HomeInventory {
         var parentBridgeByAccessoryID: [String: HMAccessory] = [:]
         for possibleBridge in home.accessories {
@@ -812,7 +827,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
                     roomName: accessory.room?.name,
                     manufacturer: accessory.manufacturer,
                     model: accessory.model,
-                    serialNumber: nil,
+                    serialNumber: homeKitSerialNumber(for: accessory),
                     isBridged: accessory.isBridged,
                     bridgeID: bridge?.uniqueIdentifier.uuidString,
                     bridgeName: bridge?.name,

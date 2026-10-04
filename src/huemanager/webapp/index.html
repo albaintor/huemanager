@@ -521,6 +521,9 @@
       "apple.noHomeAccessory": "Aucun accessoire actuellement dans cette pièce Apple.",
       "apple.noSelectedRoom": "Aucune pièce Apple sélectionnée.",
       "apple.unmatched": "Aucune correspondance Apple trouvée",
+      "apple.identifierUnmatched": "Aucune correspondance par identifiant commun Apple/Hue trouvée",
+      "apple.identityVerified": "identifiant commun vérifié",
+      "apple.nameFallback": "correspondance de secours par nom",
       "apple.currentlyIn": "actuellement dans",
       "apple.alreadyCorrect": "déjà dans la bonne pièce",
       "apple.impactTitle": "Impact de cette sélection",
@@ -1498,7 +1501,9 @@
       const detail = document.createElement("div");
       detail.className = "muted";
       if (!device.apple_accessory_name) {
-        detail.textContent = t("apple.unmatched");
+        detail.textContent = device.match_method === "identifier_unmatched"
+          ? t("apple.identifierUnmatched")
+          : t("apple.unmatched");
       } else if (device.status === "move") {
         detail.innerHTML =
           `Apple: <strong>${escapeHtml(device.apple_accessory_name)}</strong> · ` +
@@ -1513,6 +1518,22 @@
         detail.innerHTML =
           `Apple: <strong>${escapeHtml(device.apple_accessory_name)}</strong> · ` +
           `${escapeHtml(t("apple.currentlyIn"))} ${escapeHtml(device.apple_current_room_name || "Sans pièce")}`;
+      }
+      if (device.apple_accessory_name) {
+        const identity = document.createElement("div");
+        identity.className = "muted";
+        if (device.match_method === "serial") {
+          const value = device.apple_serial_number || (device.hue_identifiers || [])[0] || "";
+          identity.textContent = value
+            ? `${t("apple.identityVerified")} · ${value}`
+            : t("apple.identityVerified");
+        } else if (
+          device.match_method === "name" ||
+          String(device.match_method || "").startsWith("heuristic:")
+        ) {
+          identity.textContent = t("apple.nameFallback");
+        }
+        if (identity.textContent) item.append(identity);
       }
       item.append(detail);
       root.append(item);
