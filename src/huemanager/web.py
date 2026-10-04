@@ -71,9 +71,12 @@ from .session import (
 app = FastAPI(title="HueManager", version="0.7.0")
 SNAPSHOT_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 BACKUP_ID_RE = re.compile(r"^[a-f0-9]{32}$")
-APPLE_MATTER_VENDOR_ID = 0x1349
+APPLE_MATTER_VENDOR_IDS = {
+    0x1349: "Apple Home",
+    0x1384: "Apple Keychain",
+}
 MATTER_VENDOR_NAMES = {
-    APPLE_MATTER_VENDOR_ID: "Apple",
+    **APPLE_MATTER_VENDOR_IDS,
 }
 diagnostic_monitors = DiagnosticMonitorManager()
 
@@ -728,7 +731,7 @@ def _matter_fabric_summary(fabric: dict[str, Any]) -> dict[str, Any]:
             f"0x{numeric_vendor_id:04X}" if numeric_vendor_id is not None else None
         ),
         "vendor_name": MATTER_VENDOR_NAMES.get(numeric_vendor_id),
-        "is_apple": numeric_vendor_id == APPLE_MATTER_VENDOR_ID,
+        "is_apple": numeric_vendor_id in APPLE_MATTER_VENDOR_IDS,
     }
 
 
@@ -751,7 +754,7 @@ def list_matter_fabrics(bridge_name: str) -> dict:
         return {
             "bridge": bridge_name,
             "count": len(fabrics),
-            "apple_vendor_id": APPLE_MATTER_VENDOR_ID,
+            "apple_vendor_ids": sorted(APPLE_MATTER_VENDOR_IDS),
             "fabrics": fabrics,
         }
     except Exception as exc:
@@ -791,6 +794,57 @@ def delete_matter_fabric(bridge_name: str, fabric_id: str) -> dict:
         }
     except HTTPException:
         raise
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@app.post("/api/bridges/{bridge_name}/matter-reset")
+def reset_matter_feature(bridge_name: str) -> dict:
+    """Reset the Hue Bridge Matter subsystem and remove all commissioned fabrics."""
+    try:
+        client = _client(bridge_name)
+        matters = [
+            row
+            for row in client.v2_get("matter")
+            if row.get("id")
+        ]
+        if not matters:
+            raise MigrationError("No Matter resource is exposed by this Hue Bridge.")
+        if len(matters) != 1:
+            raise MigrationError(
+                f"Expected one Matter resource, found {len(matters)}; reset aborted."
+            )
+
+        matter = matters[0]
+        matter_id = str(matter.get("id") or "")
+        try:
+            uuid.UUID(matter_id)
+        except ValueError as exc:
+            raise MigrationError("Invalid Matter resource identifier.") from exc
+
+        before = [
+            _matter_fabric_summary(row)
+            for row in client.v2_get("matter_fabric")
+            if row.get("id")
+        ]
+        reset_response = client.v2_put(
+            "matter",
+            matter_id,
+            {"action": "matter_reset"},
+        )
+
+        return {
+            "ok": True,
+            "bridge": bridge_name,
+            "matter_id": matter_id,
+            "removed_fabrics": len(before),
+            "fabrics_before": before,
+            "reset_response": reset_response,
+            "message": (
+                "Matter reset requested. Re-read Matter associations after a few seconds "
+                "to confirm that the fabrics disappeared."
+            ),
+        }
     except Exception as exc:
         raise _api_error(exc) from exc
 
