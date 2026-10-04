@@ -809,14 +809,13 @@ def reset_matter_feature(bridge_name: str) -> dict:
             for row in client.v2_get("matter_fabric")
             if row.get("id")
         ]
+        # Bridge Pro firmware validates MatterPut.action as a string.
+        # The runtime schema on the Bridge is authoritative here even though
+        # some third-party API specifications describe this field as an object.
         reset_response = client.v2_put(
             "matter",
             matter_id,
-            {
-                "action": {
-                    "action_type": "matter_reset",
-                }
-            },
+            {"action": "matter_reset"},
         )
 
         return {
