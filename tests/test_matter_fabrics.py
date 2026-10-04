@@ -9,15 +9,26 @@ from huemanager import web
 
 
 class FakeHueClient:
-    def __init__(self, fabrics: list[dict], matters: list[dict] | None = None) -> None:
+    def __init__(
+        self,
+        fabrics: list[dict],
+        matters: list[dict] | None = None,
+        homekits: list[dict] | None = None,
+    ) -> None:
         self.fabrics = list(fabrics)
         self.matters = list(matters or [])
+        self.homekits = list(homekits or [])
         self.deleted: list[tuple[str, str]] = []
         self.puts: list[tuple[str, str, dict]] = []
 
     def v2_get(self, resource_type: str, resource_id: str | None = None) -> list[dict]:
-        rows = self.fabrics if resource_type == "matter_fabric" else self.matters
-        if resource_type not in {"matter_fabric", "matter"}:
+        if resource_type == "matter_fabric":
+            rows = self.fabrics
+        elif resource_type == "matter":
+            rows = self.matters
+        elif resource_type == "homekit":
+            rows = self.homekits
+        else:
             raise AssertionError(resource_type)
         if resource_id is not None:
             return [row for row in rows if row.get("id") == resource_id]
@@ -30,10 +41,15 @@ class FakeHueClient:
         return []
 
     def v2_put(self, resource_type: str, resource_id: str, body: dict) -> list[dict]:
-        assert resource_type == "matter"
+        assert resource_type in {"matter", "homekit"}
         self.puts.append((resource_type, resource_id, body))
-        if body == {"action": "matter_reset"}:
+        if resource_type == "matter" and body == {"action": "matter_reset"}:
             self.fabrics = []
+        if resource_type == "homekit" and body == {"action": "homekit_reset"}:
+            for row in self.homekits:
+                if row.get("id") == resource_id:
+                    row["status"] = "unpaired"
+                    row["action"] = "none"
         return []
 
 
@@ -147,3 +163,56 @@ def test_reset_matter_feature_uses_matter_reset_action(
     ]
     assert result["removed_fabrics"] == 2
     assert client.fabrics == []
+
+
+
+def test_get_homekit_state_reports_pairing(monkeypatch: pytest.MonkeyPatch) -> None:
+    homekit_id = str(uuid.uuid4())
+    client = FakeHueClient(
+        [],
+        homekits=[
+            {
+                "id": homekit_id,
+                "type": "homekit",
+                "status": "paired",
+                "action": "none",
+            }
+        ],
+    )
+    monkeypatch.setattr(web, "_client", lambda _: client)
+
+    result = web.get_homekit_state("Bridge Pro")
+
+    assert result["count"] == 1
+    assert result["resources"][0] == {
+        "id": homekit_id,
+        "type": "homekit",
+        "status": "paired",
+        "action": "none",
+    }
+
+
+def test_reset_homekit_feature_uses_homekit_reset_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    homekit_id = str(uuid.uuid4())
+    client = FakeHueClient(
+        [],
+        homekits=[
+            {
+                "id": homekit_id,
+                "type": "homekit",
+                "status": "paired",
+                "action": "none",
+            }
+        ],
+    )
+    monkeypatch.setattr(web, "_client", lambda _: client)
+
+    result = web.reset_homekit_feature("Bridge Pro")
+
+    assert client.puts == [
+        ("homekit", homekit_id, {"action": "homekit_reset"})
+    ]
+    assert result["before"]["status"] == "paired"
+    assert client.homekits[0]["status"] == "unpaired"
