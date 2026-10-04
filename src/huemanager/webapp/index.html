@@ -266,6 +266,50 @@
       </div>
 
       <div class="card span-12">
+        <h2 data-i18n="diagnostics.title">Diagnostic réseau Hue</h2>
+        <p class="muted" data-i18n="diagnostics.description">
+          Diagnostic en lecture seule : état Zigbee exposé par le Bridge, ressources injoignables,
+          temps de réponse des API locales et estimation de coexistence avec le Wi-Fi 2,4 GHz.
+        </p>
+        <div class="row">
+          <div class="grow">
+            <label for="diagnosticWifiChannel" data-i18n="diagnostics.wifiChannel">Canal Wi-Fi 2,4 GHz</label>
+            <input id="diagnosticWifiChannel" type="number" min="1" max="13" placeholder="1–13">
+          </div>
+          <div class="grow">
+            <label for="diagnosticWifiWidth" data-i18n="diagnostics.wifiWidth">Largeur Wi-Fi</label>
+            <select id="diagnosticWifiWidth">
+              <option value="20">20 MHz</option>
+              <option value="40">40 MHz</option>
+            </select>
+          </div>
+          <div class="grow">
+            <label for="diagnosticSamples" data-i18n="diagnostics.samples">Mesures API</label>
+            <select id="diagnosticSamples">
+              <option value="1">1</option>
+              <option value="3" selected>3</option>
+              <option value="5">5</option>
+            </select>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="runDiagnostics" class="primary" data-i18n="diagnostics.run">Diagnostiquer</button>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="copyDiagnostics" disabled data-i18n="diagnostics.copy">Copier le JSON</button>
+          </div>
+        </div>
+        <div id="diagnosticSummary" class="audit-summary"></div>
+        <div id="diagnosticFindings"></div>
+        <pre id="diagnosticResult" class="hidden"></pre>
+        <p class="muted" data-i18n="diagnostics.limit">
+          L'API Hue publique n'expose pas la table des voisins Zigbee, RSSI/LQI, retries,
+          pertes de paquets ni l'occupation radio : ces limites sont indiquées dans le rapport.
+        </p>
+      </div>
+
+      <div class="card span-12">
         <h2 data-i18n="apple.title">Apple Maison — synchronisation des pièces Hue</h2>
         <p class="muted" data-i18n="apple.description">
           Sélectionne une pièce Apple pour chaque pièce Hue : l’impact est recalculé immédiatement
@@ -300,6 +344,14 @@
       "management.cleanupTitle": "Incohérences et nettoyage",
       "management.selectAll": "Tout sélectionner",
       "management.selectNone": "Tout désélectionner",
+      "diagnostics.title": "Diagnostic réseau Hue",
+      "diagnostics.description": "Diagnostic en lecture seule : état Zigbee exposé par le Bridge, ressources injoignables, temps de réponse des API locales et estimation de coexistence avec le Wi-Fi 2,4 GHz.",
+      "diagnostics.wifiChannel": "Canal Wi-Fi 2,4 GHz",
+      "diagnostics.wifiWidth": "Largeur Wi-Fi",
+      "diagnostics.samples": "Mesures API",
+      "diagnostics.run": "Diagnostiquer",
+      "diagnostics.copy": "Copier le JSON",
+      "diagnostics.limit": "L’API Hue publique n’expose pas la table des voisins Zigbee, RSSI/LQI, retries, pertes de paquets ni l’occupation radio : ces limites sont indiquées dans le rapport.",
       "migration.bridges": "Bridges",
       "migration.source": "Bridge source",
       "migration.destination": "Bridge Pro destination",
@@ -382,6 +434,14 @@
       "management.cleanupTitle": "Inconsistencies and cleanup",
       "management.selectAll": "Select all",
       "management.selectNone": "Deselect all",
+      "diagnostics.title": "Hue network diagnostics",
+      "diagnostics.description": "Read-only diagnostics: Zigbee state exposed by the Bridge, unreachable resources, local API response times and estimated coexistence with 2.4 GHz Wi-Fi.",
+      "diagnostics.wifiChannel": "2.4 GHz Wi-Fi channel",
+      "diagnostics.wifiWidth": "Wi-Fi width",
+      "diagnostics.samples": "API samples",
+      "diagnostics.run": "Run diagnostics",
+      "diagnostics.copy": "Copy JSON",
+      "diagnostics.limit": "The public Hue API does not expose the Zigbee neighbour table, RSSI/LQI, retries, packet loss or radio utilization; the report states these limitations.",
       "migration.bridges": "Bridges",
       "migration.source": "Source Bridge",
       "migration.destination": "Destination Hue Bridge Pro",
@@ -469,6 +529,7 @@
     restoreReady: false,
     audit: null,
     auditSelected: new Set(),
+    diagnostics: null,
     appleHome: null,
     appleHomePlan: null,
     appleRoomDraft: {},
@@ -489,6 +550,9 @@
     $("languageSelect").value = state.language;
     for (const el of document.querySelectorAll("[data-i18n]")) {
       el.textContent = t(el.dataset.i18n);
+    }
+    if (state.diagnostics) {
+      renderDiagnostics(state.diagnostics);
     }
     if (state.appleHomePlan) {
       renderAppleHomePlan(state.appleHomePlan);
@@ -853,6 +917,88 @@
     const data = await api(`/api/bridges/${encodeURIComponent(bridge)}/audit`);
     renderAudit(data);
     status(`Analyse de ${bridge} terminée.`, "good");
+  }
+
+
+  function renderDiagnostics(data) {
+    state.diagnostics = data;
+    const summary = $("diagnosticSummary");
+    summary.replaceChildren();
+
+    const zigbee = data.zigbee || {};
+    const reachability = data.reachability || {};
+    const coexistence = data.wifi_coexistence || {};
+    const v1Latency = data.api_latency?.clip_v1_root || {};
+    const v2Latency = data.api_latency?.clip_v2_resources || {};
+    const chips = [
+      [`Zigbee: canal ${zigbee.channel ?? "?"}`,
+        zigbee.standard_2_4ghz_channel === false ? "warn" : ""],
+      [`${zigbee.connected || 0}/${zigbee.devices || 0} Zigbee connectés`,
+        zigbee.disconnected ? "warn" : "good"],
+      [`${reachability.unreachable_count || 0} ressource(s) injoignable(s)`,
+        reachability.unreachable_count ? "warn" : "good"],
+      [`API v1 médiane: ${v1Latency.median_ms ?? "?"} ms`, ""],
+      [`API v2 médiane: ${v2Latency.median_ms ?? "?"} ms`, ""],
+    ];
+    if (coexistence.wifi_channel != null) {
+      const cls = coexistence.risk === "low" ? "good"
+        : coexistence.risk === "high" ? "warn" : "";
+      chips.push([`Wi-Fi/Zigbee: ${coexistence.risk || "unknown"}`, cls]);
+    }
+    for (const [label, cls] of chips) {
+      const chip = document.createElement("span");
+      chip.className = `pill ${cls}`.trim();
+      chip.textContent = label;
+      summary.append(chip);
+    }
+
+    const findingsRoot = $("diagnosticFindings");
+    findingsRoot.replaceChildren();
+    for (const finding of data.findings || []) {
+      const box = document.createElement("div");
+      box.className = `audit-issue ${finding.severity === "warning" ? "warning" : ""}`;
+      const title = document.createElement("h3");
+      title.textContent = finding.code || finding.severity || "diagnostic";
+      const message = document.createElement("p");
+      message.textContent = finding.message || "";
+      box.append(title, message);
+      findingsRoot.append(box);
+    }
+
+    const pre = $("diagnosticResult");
+    pre.textContent = JSON.stringify(data, null, 2);
+    pre.classList.remove("hidden");
+    $("copyDiagnostics").disabled = false;
+  }
+
+  async function runDiagnostics() {
+    const bridge = $("managementBridge").value;
+    if (!bridge) return;
+    const wifiValue = $("diagnosticWifiChannel").value.trim();
+    const params = new URLSearchParams({
+      wifi_width_mhz: $("diagnosticWifiWidth").value,
+      samples: $("diagnosticSamples").value,
+    });
+    if (wifiValue) params.set("wifi_channel", wifiValue);
+
+    status(`Diagnostic de ${bridge}…`);
+    $("runDiagnostics").disabled = true;
+    try {
+      const data = await api(
+        `/api/bridges/${encodeURIComponent(bridge)}/diagnostics?${params.toString()}`
+      );
+      renderDiagnostics(data);
+      status(`Diagnostic de ${bridge} terminé. Le JSON peut être copié tel quel.`, "good");
+    } finally {
+      $("runDiagnostics").disabled = false;
+    }
+  }
+
+  async function copyDiagnostics() {
+    if (!state.diagnostics) return;
+    const payload = JSON.stringify(state.diagnostics, null, 2);
+    await navigator.clipboard.writeText(payload);
+    status("Rapport de diagnostic copié dans le presse-papiers.", "good");
   }
 
 
@@ -1260,6 +1406,12 @@
   $("managementTab").addEventListener("click", () => showView("management"));
   $("auditBridge").addEventListener("click", () => {
     runAudit().catch(e => status(e.message, "bad"));
+  });
+  $("runDiagnostics").addEventListener("click", () => {
+    runDiagnostics().catch(e => status(e.message, "bad"));
+  });
+  $("copyDiagnostics").addEventListener("click", () => {
+    copyDiagnostics().catch(e => status(e.message, "bad"));
   });
   $("selectAllAudit").addEventListener("click", () => setAllAuditSelection(true));
   $("deselectAllAudit").addEventListener("click", () => setAllAuditSelection(false));
@@ -1852,6 +2004,12 @@
   $("saveAppleRoomMap").addEventListener("click", saveAppleRoomMap);
 
   $("managementBridge").addEventListener("change", () => {
+    state.diagnostics = null;
+    $("diagnosticSummary").replaceChildren();
+    $("diagnosticFindings").replaceChildren();
+    $("diagnosticResult").textContent = "";
+    $("diagnosticResult").classList.add("hidden");
+    $("copyDiagnostics").disabled = true;
     state.appleHomePlan = null;
     state.appleRoomDraft = {};
     state.appleRoomSaved = {};
