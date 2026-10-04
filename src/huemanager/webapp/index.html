@@ -399,6 +399,21 @@
         </div>
         <div id="matterFabricStatus" class="muted" style="margin-top:10px"></div>
         <div id="matterFabricList"></div>
+        <hr style="margin:18px 0">
+        <h3 data-i18n="homekit.title">État HomeKit natif du Bridge</h3>
+        <p class="muted" data-i18n="homekit.description">
+          Vérifie séparément la ressource HomeKit/HAP du Bridge. Elle peut rester appairée
+          même lorsque la liaison Matter Apple a été supprimée.
+        </p>
+        <div class="row">
+          <button id="refreshHomeKit" class="primary" data-i18n="homekit.refresh">
+            Relire HomeKit
+          </button>
+          <button id="resetHomeKit" class="danger" data-i18n="homekit.reset">
+            Réinitialiser HomeKit
+          </button>
+        </div>
+        <div id="homeKitStatus" class="muted" style="margin-top:10px"></div>
       </div>
 
       <div class="card span-12">
@@ -556,6 +571,10 @@
       "matter.delete": "Supprimer cette association",
       "matter.apple": "Apple",
       "matter.reset": "Réinitialiser Matter",
+      "homekit.title": "État HomeKit natif du Bridge",
+      "homekit.description": "Vérifie séparément la ressource HomeKit/HAP du Bridge. Elle peut rester appairée même lorsque la liaison Matter Apple a été supprimée.",
+      "homekit.refresh": "Relire HomeKit",
+      "homekit.reset": "Réinitialiser HomeKit",
       "diagnostics.title": "Diagnostic réseau Hue",
       "diagnostics.description": "Diagnostic en lecture seule : état Zigbee exposé par le Bridge, ressources injoignables, temps de réponse des API locales et estimation de coexistence avec le Wi-Fi 2,4 GHz.",
       "diagnostics.wifiChannel": "Canal Wi-Fi 2,4 GHz",
@@ -719,6 +738,10 @@
       "matter.delete": "Delete this association",
       "matter.apple": "Apple",
       "matter.reset": "Reset Matter",
+      "homekit.title": "Native Bridge HomeKit state",
+      "homekit.description": "Checks the Bridge HomeKit/HAP resource separately. It can remain paired even after the Apple Matter link was removed.",
+      "homekit.refresh": "Reload HomeKit",
+      "homekit.reset": "Reset HomeKit",
       "diagnostics.title": "Hue network diagnostics",
       "diagnostics.description": "Read-only diagnostics: Zigbee state exposed by the Bridge, unreachable resources, local API response times and estimated coexistence with 2.4 GHz Wi-Fi.",
       "diagnostics.wifiChannel": "2.4 GHz Wi-Fi channel",
@@ -881,6 +904,7 @@
     monitor: null,
     monitorPollTimer: null,
     matterFabrics: null,
+    homeKitState: null,
     appleHome: null,
     appleAudit: null,
     appleHomePlan: null,
@@ -1339,6 +1363,65 @@
       root.append(box);
     }
   }
+
+  function renderHomeKitState(data) {
+    state.homeKitState = data;
+    const resources = data?.resources || [];
+    if (!resources.length) {
+      $("homeKitStatus").textContent = "Aucune ressource HomeKit exposée par ce Bridge.";
+      $("resetHomeKit").disabled = true;
+      return;
+    }
+    const row = resources[0];
+    $("homeKitStatus").textContent =
+      `HomeKit : ${row.status || "état inconnu"} · action : ${row.action || "?"} · ID : ${row.id || "?"}`;
+    $("resetHomeKit").disabled = false;
+  }
+
+  async function loadHomeKitState() {
+    const bridge = $("managementBridge").value;
+    if (!bridge) return;
+    $("refreshHomeKit").disabled = true;
+    $("homeKitStatus").textContent = "Lecture de HomeKit…";
+    try {
+      const data = await api(
+        `/api/bridges/${encodeURIComponent(bridge)}/homekit`
+      );
+      renderHomeKitState(data);
+    } finally {
+      $("refreshHomeKit").disabled = false;
+    }
+  }
+
+  async function resetHomeKit() {
+    const bridge = $("managementBridge").value;
+    if (!bridge) return;
+    const row = state.homeKitState?.resources?.[0];
+    const warning =
+      `Réinitialiser uniquement l'intégration HomeKit/HAP de « ${bridge} » ?\n\n` +
+      `État actuel : ${row?.status || "inconnu"}\n` +
+      `ID : ${row?.id || "?"}\n\n` +
+      "Cette action n'efface pas les lampes, pièces Hue, scènes ou accessoires Zigbee. " +
+      "Elle supprime uniquement l'appairage HomeKit natif du Bridge.";
+    if (!window.confirm(warning)) return;
+
+    $("resetHomeKit").disabled = true;
+    try {
+      status(`Réinitialisation HomeKit de ${bridge}…`);
+      await api(
+        `/api/bridges/${encodeURIComponent(bridge)}/homekit-reset`,
+        { method: "POST" },
+      );
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      await loadHomeKitState();
+      status("Réinitialisation HomeKit envoyée.", "good");
+    } catch (e) {
+      status(e.message, "bad");
+    } finally {
+      $("resetHomeKit").disabled = false;
+    }
+  }
+
 
   async function resetMatter() {
     const bridge = $("managementBridge").value;
@@ -3522,12 +3605,22 @@
     resetMatter().catch(e => status(e.message, "bad"));
   });
 
+  $("refreshHomeKit").addEventListener("click", () => {
+    loadHomeKitState().catch(e => status(e.message, "bad"));
+  });
+  $("resetHomeKit").addEventListener("click", () => {
+    resetHomeKit().catch(e => status(e.message, "bad"));
+  });
+
   $("managementBridge").addEventListener("change", () => {
     stopMonitorPolling();
     state.matterFabrics = null;
+    state.homeKitState = null;
     $("matterFabricStatus").textContent = "";
     $("matterFabricList").replaceChildren();
+    $("homeKitStatus").textContent = "";
     loadMatterFabrics().catch(e => status(e.message, "bad"));
+    loadHomeKitState().catch(e => status(e.message, "bad"));
     state.diagnostics = null;
     state.ignoredDeviceIds = new Set();
     state.monitor = null;
@@ -3588,6 +3681,7 @@
       loadIgnoredDiagnostics(),
       refreshMonitor(),
       loadMatterFabrics(),
+      loadHomeKitState(),
     ]))
     .catch(e => status(e.message, "bad"));
 })();
