@@ -30,6 +30,7 @@ from .backup import (
 )
 from .client import HueApiError, HueBridgeClient
 from .config import BridgeProfile, ConfigStore
+from .diagnostics import diagnose_bridge
 from .migration import (
     MigrationError,
     analyse,
@@ -385,6 +386,36 @@ def bridge_tree(bridge_name: str) -> dict:
     except Exception as exc:
         raise _api_error(exc) from exc
 
+
+
+@app.get("/api/bridges/{bridge_name}/diagnostics")
+def bridge_diagnostics(
+    bridge_name: str,
+    wifi_channel: int | None = None,
+    wifi_width_mhz: int = 20,
+    samples: int = 3,
+) -> dict:
+    try:
+        if wifi_channel is not None and not 1 <= wifi_channel <= 13:
+            raise ValueError("wifi_channel must be between 1 and 13")
+        if wifi_width_mhz not in (20, 40):
+            raise ValueError("wifi_width_mhz must be 20 or 40")
+        if not 1 <= samples <= 5:
+            raise ValueError("samples must be between 1 and 5")
+        return diagnose_bridge(
+            _client(bridge_name),
+            wifi_channel=wifi_channel,
+            wifi_width_mhz=wifi_width_mhz,
+            samples=samples,
+        )
+    except (
+        HueApiError,
+        OSError,
+        ValueError,
+        KeyError,
+        IndexError,
+    ) as exc:
+        raise _api_error(exc) from exc
 
 
 @app.get("/api/bridges/{bridge_name}/audit")

@@ -39,6 +39,31 @@ The web UI can:
 - verify that every physical resource has been found on the destination;
 - recreate rooms, scenes, Hue v2 `behavior_instance` graphs, virtual CLIP sensors, rules and relevant resource-link metadata.
 
+## Diagnostics réseau / Zigbee
+
+L'onglet **Gestion** contient un diagnostic en lecture seule pour distinguer un problème de
+Bridge/API d'un problème de maillage Zigbee visible par les API publiques. Le rapport inclut :
+
+- le canal Zigbee réellement renvoyé par le Bridge et sa fréquence IEEE 802.15.4 lorsqu'il est
+  dans la plage standard 11–26 ;
+- le nombre d'appareils Zigbee connectés, déconnectés ou d'état inconnu ;
+- les lampes/capteurs CLIP v1 explicitement `reachable: false` ;
+- les fabricants tiers présents dans les ressources v1 (signal informatif, pas une preuve de panne) ;
+- les temps de réponse des lectures locales CLIP v1 et CLIP v2 ;
+- les comptes de ressources v1/v2 ;
+- une estimation de coexistence radio si le canal Wi-Fi 2,4 GHz et sa largeur sont fournis.
+
+Le JSON complet peut être copié depuis l'interface pour analyse. La même fonction est disponible
+en CLI :
+
+```bash
+huemanager diagnose pro --wifi-channel 3 --wifi-width 20 --samples 3
+```
+
+L'estimation Wi-Fi/Zigbee est uniquement spectrale. L'API locale Hue publique n'expose pas la
+table des voisins Zigbee, le RSSI/LQI par lien, les retries, les pertes de paquets ou l'occupation
+du canal ; HueManager les signale donc explicitement comme non mesurables.
+
 ## iConnectHue / advanced switch configurations
 
 A button configuration is not assumed to belong only to the room where the switch is located. HueManager analyses every referenced Hue resource in the matching bridge rules.

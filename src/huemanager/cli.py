@@ -16,6 +16,7 @@ from .backup import (
 )
 from .client import HueApiError, HueBridgeClient
 from .config import BridgeProfile, ConfigStore
+from .diagnostics import diagnose_bridge
 from .migration import (
     MigrationError,
     analyse,
@@ -286,6 +287,45 @@ def apply(
         )
     else:
         console.print("[green]Done.[/green] The source bridge was not modified.")
+
+
+@app.command("diagnose")
+def diagnose_cmd(
+    bridge: str,
+    wifi_channel: int | None = typer.Option(
+        None,
+        "--wifi-channel",
+        help="2.4 GHz Wi-Fi channel (1..13) used near the Bridge",
+    ),
+    wifi_width_mhz: int = typer.Option(
+        20,
+        "--wifi-width",
+        help="2.4 GHz Wi-Fi channel width: 20 or 40 MHz",
+    ),
+    samples: int = typer.Option(
+        3,
+        "--samples",
+        min=1,
+        max=5,
+        help="Number of local API latency samples",
+    ),
+) -> None:
+    """Run read-only Bridge, Zigbee and Wi-Fi coexistence diagnostics."""
+    if wifi_channel is not None and not 1 <= wifi_channel <= 13:
+        raise typer.BadParameter("--wifi-channel must be between 1 and 13")
+    if wifi_width_mhz not in (20, 40):
+        raise typer.BadParameter("--wifi-width must be 20 or 40")
+    try:
+        result = diagnose_bridge(
+            _client(bridge),
+            wifi_channel=wifi_channel,
+            wifi_width_mhz=wifi_width_mhz,
+            samples=samples,
+        )
+    except (HueApiError, OSError, ValueError) as exc:
+        console.print(f"[red]Diagnostics failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    console.print_json(data=result)
 
 
 @app.command()
