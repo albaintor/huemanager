@@ -764,38 +764,20 @@ def list_matter_fabrics(bridge_name: str) -> dict:
 @app.delete("/api/bridges/{bridge_name}/matter-fabrics/{fabric_id}")
 def delete_matter_fabric(bridge_name: str, fabric_id: str) -> dict:
     try:
-        try:
-            uuid.UUID(fabric_id)
-        except ValueError as exc:
-            raise MigrationError("Invalid Matter fabric identifier.") from exc
+        uuid.UUID(fabric_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid Matter fabric identifier.",
+        ) from exc
 
-        client = _client(bridge_name)
-        rows = client.v2_get("matter_fabric")
-        current = next(
-            (row for row in rows if str(row.get("id") or "") == fabric_id),
-            None,
-        )
-        if current is None:
-            raise HTTPException(status_code=404, detail="Matter fabric not found.")
-
-        deleted = _matter_fabric_summary(current)
-        client.v2_delete("matter_fabric", fabric_id)
-
-        remaining = [
-            _matter_fabric_summary(row)
-            for row in client.v2_get("matter_fabric")
-            if row.get("id")
-        ]
-        return {
-            "ok": True,
-            "bridge": bridge_name,
-            "deleted": deleted,
-            "remaining": len(remaining),
-        }
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise _api_error(exc) from exc
+    raise HTTPException(
+        status_code=405,
+        detail=(
+            "The Hue v2 API does not expose DELETE for matter_fabric. "
+            "Use the Matter reset action instead."
+        ),
+    )
 
 
 @app.post("/api/bridges/{bridge_name}/matter-reset")
@@ -830,7 +812,11 @@ def reset_matter_feature(bridge_name: str) -> dict:
         reset_response = client.v2_put(
             "matter",
             matter_id,
-            {"action": "matter_reset"},
+            {
+                "action": {
+                    "action_type": "matter_reset",
+                }
+            },
         )
 
         return {
