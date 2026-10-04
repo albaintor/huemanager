@@ -610,6 +610,12 @@ def test_bridge_audit_finds_safe_and_broken_cleanup_candidates():
                     "children": [],
                 },
                 {
+                    "id": "room-empty-2",
+                    "type": "room",
+                    "metadata": {"name": "Ancienne pièce"},
+                    "children": [],
+                },
+                {
                     "id": "scene-empty",
                     "type": "scene",
                     "id_v1": "/scenes/9",
@@ -674,6 +680,11 @@ def test_bridge_audit_finds_safe_and_broken_cleanup_candidates():
     kinds = {issue["kind"] for issue in audit["issues"]}
 
     assert "empty_room" in kinds
+    assert "duplicate_room_name" in kinds
+    duplicate_name = next(
+        issue for issue in audit["issues"] if issue["kind"] == "duplicate_room_name"
+    )
+    assert duplicate_name["cleanup"] is None
     assert "rule_no_actions" in kinds
     assert "rule_broken_refs" in kinds
     assert "automation_broken_refs" in kinds
