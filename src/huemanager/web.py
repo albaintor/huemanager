@@ -246,6 +246,8 @@ def _save_apple_home(state: dict) -> None:
 
 
 def _api_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, HueApiError):
+        return HTTPException(status_code=502, detail=str(exc))
     return HTTPException(status_code=400, detail=str(exc))
 
 
@@ -733,6 +735,71 @@ def _matter_fabric_summary(fabric: dict[str, Any]) -> dict[str, Any]:
         "vendor_name": MATTER_VENDOR_NAMES.get(numeric_vendor_id),
         "is_apple": numeric_vendor_id in APPLE_MATTER_VENDOR_IDS,
     }
+
+
+def _homekit_summary(resource: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(resource.get("id") or ""),
+        "type": resource.get("type") or "homekit",
+        "status": resource.get("status"),
+        "action": resource.get("action"),
+    }
+
+
+@app.get("/api/bridges/{bridge_name}/homekit")
+def get_homekit_state(bridge_name: str) -> dict:
+    try:
+        rows = [
+            row
+            for row in _client(bridge_name).v2_get("homekit")
+            if row.get("id")
+        ]
+        return {
+            "bridge": bridge_name,
+            "count": len(rows),
+            "resources": [_homekit_summary(row) for row in rows],
+        }
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@app.post("/api/bridges/{bridge_name}/homekit-reset")
+def reset_homekit_feature(bridge_name: str) -> dict:
+    try:
+        client = _client(bridge_name)
+        rows = [
+            row
+            for row in client.v2_get("homekit")
+            if row.get("id")
+        ]
+        if not rows:
+            raise MigrationError("No HomeKit resource is exposed by this Hue Bridge.")
+        if len(rows) != 1:
+            raise MigrationError(
+                f"Expected one HomeKit resource, found {len(rows)}; reset aborted."
+            )
+
+        current = _homekit_summary(rows[0])
+        homekit_id = current["id"]
+        try:
+            uuid.UUID(homekit_id)
+        except ValueError as exc:
+            raise MigrationError("Invalid HomeKit resource identifier.") from exc
+
+        response = client.v2_put(
+            "homekit",
+            homekit_id,
+            {"action": "homekit_reset"},
+        )
+        return {
+            "ok": True,
+            "bridge": bridge_name,
+            "before": current,
+            "reset_response": response,
+            "message": "HomeKit reset requested.",
+        }
+    except Exception as exc:
+        raise _api_error(exc) from exc
 
 
 @app.get("/api/bridges/{bridge_name}/matter-fabrics")
