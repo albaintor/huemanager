@@ -268,12 +268,21 @@ def _find_pairing_fields(value: Any, path: str = "") -> list[dict]:
 def _device_identifiers(device: dict, v1: dict) -> dict:
     uniqueids: list[str] = []
     zigbee_macs: list[str] = []
+    v1_resource_ids: list[str] = []
+    v1_numeric_ids: list[int] = []
     exposed_pairing_fields = _find_pairing_fields(device)
     for service in device.get("services_expanded", []):
         id_v1 = service.get("id_v1")
         parsed = _parse_v1_path(id_v1) if isinstance(id_v1, str) else None
         if parsed:
             section, rid = parsed
+            resource_id = f"{section}:{rid}"
+            if resource_id not in v1_resource_ids:
+                v1_resource_ids.append(resource_id)
+            if str(rid).isdigit():
+                numeric_id = int(rid)
+                if numeric_id not in v1_numeric_ids:
+                    v1_numeric_ids.append(numeric_id)
             uniqueid = v1.get(section, {}).get(rid, {}).get("uniqueid")
             if uniqueid and uniqueid not in uniqueids:
                 uniqueids.append(uniqueid)
@@ -293,6 +302,8 @@ def _device_identifiers(device: dict, v1: dict) -> dict:
     return {
         "zigbee_macs": zigbee_macs,
         "v1_uniqueids": uniqueids,
+        "v1_resource_ids": v1_resource_ids,
+        "v1_numeric_ids": sorted(v1_numeric_ids),
         "pairing_fields": deduped_fields,
         "pairing_serial_available": bool(deduped_fields),
     }

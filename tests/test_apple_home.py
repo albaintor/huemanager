@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from huemanager.apple_home import (
+    build_apple_home_identity_diagnostics,
     build_apple_home_sync_plan,
     get_accessory_map,
     get_room_selection,
@@ -280,3 +281,92 @@ def test_manual_accessory_map_overrides_missing_common_identifier() -> None:
     assert device["status"] == "move"
     assert manual["actions"][0]["from_room_name"] == "Bureau"
     assert manual["actions"][0]["to_room_name"] == "Salon"
+
+
+def test_identity_diagnostic_detects_hap_v1_relation_on_manual_anchor() -> None:
+    hue_tree = {
+        "rooms": [
+            {
+                "id": "hue-room",
+                "name": "Salon",
+                "devices": [
+                    {
+                        "id": "hue-device",
+                        "name": "Lampe",
+                        "model": "LCA001",
+                        "services": [{"type": "light"}],
+                        "identifiers": {
+                            "zigbee_macs": ["00:17:88:01:02:03:04:05"],
+                            "v1_uniqueids": [],
+                            "v1_resource_ids": ["lights:17"],
+                            "v1_numeric_ids": [17],
+                            "pairing_fields": [],
+                        },
+                    }
+                ],
+            }
+        ]
+    }
+    inventory = {
+        "home": {"id": "home-1", "name": "Maison"},
+        "rooms": [{"id": "apple-room", "name": "Salon"}],
+        "accessories": [
+            {
+                "id": "apple-light",
+                "name": "Lampe",
+                "room_id": "apple-room",
+                "room_name": "Salon",
+                "manufacturer": "Signify",
+                "model": "LCA001",
+                "serial_number": "SERIAL-OTHER",
+                "hap_instance_id": 17,
+                "vendor_accessory": True,
+                "is_bridged": True,
+                "bridge_name": "Hue Bridge Pro",
+                "bridge_manufacturer": "Signify",
+                "bridge_model": "BSB003",
+            }
+        ],
+        "bridges": [],
+    }
+
+    report = build_apple_home_identity_diagnostics(
+        hue_tree,
+        inventory,
+        accessory_map={"hue-device": "apple-light"},
+    )
+
+    assert report["summary"]["anchors"] == 1
+    assert report["summary"]["hap_aid_equals_v1_on_anchors"] == 1
+    assert report["anchors"][0]["comparisons"]["hap_aid_equals_v1_numeric_id"] is True
+
+
+def test_identity_diagnostic_reports_bridge_identifier_overlap() -> None:
+    inventory = {
+        "home": {"id": "home-1", "name": "Maison"},
+        "rooms": [],
+        "accessories": [],
+        "bridges": [
+            {
+                "id": "bridge-uuid",
+                "name": "Hue Bridge",
+                "manufacturer": "Signify",
+                "model": "BSB003",
+                "bridged_accessory_ids": ["AABBCCDD-0000-0000-0000-000000000001"],
+                "unique_identifiers_for_bridged_accessories": [
+                    "AABBCCDD-0000-0000-0000-000000000001"
+                ],
+                "hap_instance_id": None,
+                "vendor_accessory": False,
+            }
+        ],
+    }
+
+    report = build_apple_home_identity_diagnostics(
+        {"rooms": []},
+        inventory,
+    )
+
+    bridge = report["bridge_identity"][0]
+    assert bridge["reported_ids_equal_child_uuids"] is True
+    assert bridge["overlap"] == 1

@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
 from .apple_home import (
+    build_apple_home_identity_diagnostics,
     build_apple_home_sync_plan,
     get_accessory_map,
     get_room_map,
@@ -122,6 +123,7 @@ class AppleHomeInventoryRequest(BaseModel):
     home: dict[str, Any]
     rooms: list[dict[str, Any]] = Field(default_factory=list)
     accessories: list[dict[str, Any]] = Field(default_factory=list)
+    bridges: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class AppleHomeRoomMapRequest(BaseModel):
@@ -328,6 +330,26 @@ def update_apple_home_sync_result(request: AppleHomeSyncResultRequest) -> dict:
         state = record_sync_result(_load_apple_home(), request.model_dump())
         _save_apple_home(state)
         return {"ok": True, "last_sync": state.get("last_sync")}
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@app.get("/api/bridges/{bridge_name}/apple-home/identity-diagnostics")
+def apple_home_identity_diagnostics(bridge_name: str) -> dict:
+    try:
+        state = _load_apple_home()
+        inventory = state.get("inventory")
+        if not inventory:
+            raise MigrationError(
+                "No Apple Home inventory available. Open HueManager Home Sync on an Apple device first."
+            )
+        home_id = str((inventory.get("home") or {}).get("id") or "")
+        return build_apple_home_identity_diagnostics(
+            inventory_tree(_client(bridge_name)),
+            inventory,
+            room_map=get_room_map(state, bridge_name, home_id),
+            accessory_map=get_accessory_map(state, bridge_name, home_id),
+        )
     except Exception as exc:
         raise _api_error(exc) from exc
 

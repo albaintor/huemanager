@@ -4,6 +4,7 @@ import copy
 import json
 import re
 import unicodedata
+from collections import Counter
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -391,6 +392,340 @@ def _unique_index(items: list[dict], key_getter) -> dict[str, dict]:
         if key:
             buckets.setdefault(key, []).append(item)
     return {key: values[0] for key, values in buckets.items() if len(values) == 1}
+
+
+
+
+def build_apple_home_identity_diagnostics(
+    hue_tree: dict,
+    inventory: dict,
+    *,
+    room_map: dict[str, str] | None = None,
+    accessory_map: dict[str, str] | None = None,
+) -> dict:
+    """Compare every public Apple/Hue identity surface without using it to move devices."""
+    room_map = room_map or {}
+    accessory_map = accessory_map or {}
+    plan = build_apple_home_sync_plan(
+        hue_tree,
+        inventory,
+        room_map=room_map,
+        accessory_map=accessory_map,
+    )
+
+    hue_devices: dict[str, dict] = {}
+    for room in hue_tree.get("rooms", []):
+        for device in room.get("devices", []):
+            device_id = str(device.get("id") or "")
+            if not device_id:
+                continue
+            hue_devices[device_id] = {
+                **copy.deepcopy(device),
+                "_room_id": str(room.get("id") or ""),
+                "_room_name": room.get("name"),
+            }
+
+    apple_accessories = [
+        accessory
+        for accessory in inventory.get("accessories", [])
+        if accessory.get("id")
+    ]
+    apple_by_id = {
+        str(accessory["id"]): accessory
+        for accessory in apple_accessories
+    }
+    hue_apple_accessories = [
+        accessory
+        for accessory in apple_accessories
+        if _apple_accessory_origin(accessory) == "hue"
+    ]
+
+    room_plan_by_hue_id = {
+        str(room.get("hue_room_id")): room
+        for room in plan.get("rooms", [])
+        if room.get("hue_room_id")
+    }
+
+    anchors: list[dict] = []
+    anchored_hue_ids: set[str] = set()
+    anchored_apple_ids: set[str] = set()
+
+    def add_anchor(
+        hue_device: dict,
+        apple_accessory: dict,
+        source: str,
+        confidence: float,
+    ) -> None:
+        hue_device_id = str(hue_device.get("id") or "")
+        apple_accessory_id = str(apple_accessory.get("id") or "")
+        if (
+            not hue_device_id
+            or not apple_accessory_id
+            or hue_device_id in anchored_hue_ids
+            or apple_accessory_id in anchored_apple_ids
+        ):
+            return
+
+        identifiers = hue_device.get("identifiers", {})
+        hue_identifier_values = _hue_identifier_candidates(hue_device)
+        apple_serial = _normalise_identifier(
+            apple_accessory.get("serial_number")
+        )
+        apple_uuid = _normalise_identifier(apple_accessory_id)
+        hap_instance_id = apple_accessory.get("hap_instance_id")
+        v1_numeric_ids = [
+            int(value)
+            for value in identifiers.get("v1_numeric_ids", [])
+            if isinstance(value, int) or str(value).isdigit()
+        ]
+
+        comparisons = {
+            "serial_equals_hue_identifier": bool(
+                apple_serial and apple_serial in hue_identifier_values
+            ),
+            "apple_uuid_equals_hue_identifier": bool(
+                apple_uuid and apple_uuid in hue_identifier_values
+            ),
+            "hap_aid_equals_v1_numeric_id": bool(
+                hap_instance_id is not None
+                and int(hap_instance_id) in v1_numeric_ids
+            ),
+        }
+
+        offsets = []
+        if hap_instance_id is not None:
+            for numeric_id in v1_numeric_ids:
+                offsets.append(int(hap_instance_id) - int(numeric_id))
+
+        anchors.append(
+            {
+                "source": source,
+                "confidence": confidence,
+                "hue": {
+                    "id_v2": hue_device_id,
+                    "name": hue_device.get("name"),
+                    "room_id": hue_device.get("_room_id"),
+                    "room_name": hue_device.get("_room_name"),
+                    "model": hue_device.get("model"),
+                    "identifiers": copy.deepcopy(identifiers),
+                },
+                "apple": {
+                    "id": apple_accessory_id,
+                    "name": apple_accessory.get("name"),
+                    "room_id": apple_accessory.get("room_id"),
+                    "room_name": apple_accessory.get("room_name"),
+                    "model": apple_accessory.get("model"),
+                    "serial_number": apple_accessory.get("serial_number"),
+                    "hap_instance_id": hap_instance_id,
+                    "vendor_accessory": apple_accessory.get("vendor_accessory"),
+                    "bridge_id": apple_accessory.get("bridge_id"),
+                    "bridge_name": apple_accessory.get("bridge_name"),
+                    "bridge_child_index": apple_accessory.get("bridge_child_index"),
+                    "bridge_reported_identifier_index": apple_accessory.get(
+                        "bridge_reported_identifier_index"
+                    ),
+                },
+                "comparisons": comparisons,
+                "hap_minus_v1_offsets": offsets,
+            }
+        )
+        anchored_hue_ids.add(hue_device_id)
+        anchored_apple_ids.add(apple_accessory_id)
+
+    # Ground truth first: explicit user mappings and real exact identifier matches.
+    for device_row in plan.get("devices", []):
+        hue_device_id = str(device_row.get("hue_device_id") or "")
+        apple_accessory_id = str(device_row.get("apple_accessory_id") or "")
+        method = str(device_row.get("match_method") or "")
+        if (
+            hue_device_id in hue_devices
+            and apple_accessory_id in apple_by_id
+            and method in {"manual_accessory", "serial"}
+        ):
+            add_anchor(
+                hue_devices[hue_device_id],
+                apple_by_id[apple_accessory_id],
+                method,
+                1.0,
+            )
+
+    # Diagnostic-only anchors: unique exact name + exact model in the room already
+    # mapped Hue -> Apple. These anchors never drive a HomeKit move.
+    for hue_device_id, hue_device in hue_devices.items():
+        if hue_device_id in anchored_hue_ids:
+            continue
+        room_plan = room_plan_by_hue_id.get(str(hue_device.get("_room_id") or ""))
+        if not room_plan or not room_plan.get("apple_room_id"):
+            continue
+        name_key = _normalise(hue_device.get("name"))
+        model_key = _normalise(hue_device.get("model"))
+        candidates = []
+        for accessory in hue_apple_accessories:
+            accessory_id = str(accessory.get("id") or "")
+            if accessory_id in anchored_apple_ids:
+                continue
+            if str(accessory.get("room_id") or "") != str(
+                room_plan.get("apple_room_id") or ""
+            ):
+                continue
+            if _normalise(accessory.get("name")) != name_key:
+                continue
+            apple_model_key = _normalise(accessory.get("model"))
+            if model_key and apple_model_key and model_key != apple_model_key:
+                continue
+            candidates.append(accessory)
+        if len(candidates) == 1:
+            add_anchor(hue_device, candidates[0], "diagnostic_name_room_model", 0.8)
+
+    offset_counter: Counter[int] = Counter()
+    for anchor in anchors:
+        if len(anchor.get("hap_minus_v1_offsets", [])) == 1:
+            offset_counter[anchor["hap_minus_v1_offsets"][0]] += 1
+
+    common_offsets = [
+        {"offset": offset, "anchors": count}
+        for offset, count in offset_counter.most_common(10)
+    ]
+
+    bridge_rows = inventory.get("bridges", [])
+    bridge_identifier_checks = []
+    for bridge in bridge_rows:
+        actual = {
+            _normalise_identifier(value)
+            for value in bridge.get("bridged_accessory_ids", [])
+            if value
+        }
+        reported = {
+            _normalise_identifier(value)
+            for value in bridge.get(
+                "unique_identifiers_for_bridged_accessories", []
+            )
+            if value
+        }
+        bridge_identifier_checks.append(
+            {
+                "id": bridge.get("id"),
+                "name": bridge.get("name"),
+                "manufacturer": bridge.get("manufacturer"),
+                "model": bridge.get("model"),
+                "hap_instance_id": bridge.get("hap_instance_id"),
+                "vendor_accessory": bridge.get("vendor_accessory"),
+                "bridged_accessories": len(actual),
+                "reported_bridged_identifiers": len(reported),
+                "reported_ids_equal_child_uuids": (
+                    bool(actual) and actual == reported
+                ),
+                "overlap": len(actual & reported),
+            }
+        )
+
+    hue_with_identifiers = sum(
+        bool(_hue_identifier_candidates(device))
+        for device in hue_devices.values()
+    )
+    apple_with_serial = sum(
+        bool(accessory.get("serial_number"))
+        for accessory in hue_apple_accessories
+    )
+    apple_with_hap_aid = sum(
+        accessory.get("hap_instance_id") is not None
+        for accessory in hue_apple_accessories
+    )
+    apple_with_vendor_access = sum(
+        accessory.get("vendor_accessory") is True
+        for accessory in hue_apple_accessories
+    )
+    serial_exact = sum(
+        anchor["comparisons"]["serial_equals_hue_identifier"]
+        for anchor in anchors
+    )
+    hap_equals_v1 = sum(
+        anchor["comparisons"]["hap_aid_equals_v1_numeric_id"]
+        for anchor in anchors
+    )
+
+    findings = []
+    if hue_apple_accessories and apple_with_serial and serial_exact == 0:
+        findings.append(
+            {
+                "code": "homekit_serial_not_hue_identifier",
+                "severity": "info",
+                "message": (
+                    "HomeKit exposes serial numbers on Hue accessories, but none "
+                    "of the diagnostic anchors matches a Hue Zigbee/v1 identifier."
+                ),
+            }
+        )
+    if hue_apple_accessories and apple_with_hap_aid == 0:
+        findings.append(
+            {
+                "code": "hap_aid_unavailable",
+                "severity": "warning",
+                "message": (
+                    "No HAP Accessory Instance ID is exposed to this app. On recent "
+                    "iOS versions this property requires vendor-level HomeKit access; "
+                    "a standard HomeKit entitlement can therefore return no AID."
+                ),
+            }
+        )
+    if hap_equals_v1:
+        findings.append(
+            {
+                "code": "hap_aid_matches_hue_v1_id",
+                "severity": "info",
+                "message": (
+                    f"{hap_equals_v1} diagnostic anchor(s) have a HAP AID equal "
+                    "to one Hue v1 numeric resource id."
+                ),
+            }
+        )
+    if common_offsets and common_offsets[0]["anchors"] >= 3:
+        findings.append(
+            {
+                "code": "candidate_hap_v1_offset",
+                "severity": "info",
+                "message": (
+                    "A repeated HAP-AID minus Hue-v1-ID offset was detected on "
+                    f"{common_offsets[0]['anchors']} anchors: "
+                    f"{common_offsets[0]['offset']}."
+                ),
+            }
+        )
+
+    return {
+        "inventory_received_at": inventory.get("received_at"),
+        "summary": {
+            "hue_devices": len(hue_devices),
+            "hue_devices_with_identifiers": hue_with_identifiers,
+            "apple_accessories_total": len(apple_accessories),
+            "apple_hue_accessories": len(hue_apple_accessories),
+            "apple_hue_with_serial": apple_with_serial,
+            "apple_hue_with_hap_aid": apple_with_hap_aid,
+            "apple_hue_with_vendor_access": apple_with_vendor_access,
+            "anchors": len(anchors),
+            "exact_serial_matches_on_anchors": serial_exact,
+            "hap_aid_equals_v1_on_anchors": hap_equals_v1,
+            "manual_mappings": len(accessory_map),
+        },
+        "bridge_identity": bridge_identifier_checks,
+        "candidate_hap_v1_offsets": common_offsets,
+        "anchors": anchors[:100],
+        "findings": findings,
+        "limitations": [
+            (
+                "HMAccessory.uniqueIdentifier is a HomeKit identifier and is not "
+                "documented as the Zigbee EUI-64."
+            ),
+            (
+                "The Hue local REST API does not expose the native Hue Bridge "
+                "HomeKit AID mapping table."
+            ),
+            (
+                "Diagnostic name/room/model anchors are observational only and "
+                "are never used to move an Apple Home accessory."
+            ),
+        ],
+    }
 
 
 def build_apple_home_sync_plan(

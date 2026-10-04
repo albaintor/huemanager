@@ -417,12 +417,17 @@
         <div class="row">
           <button id="refreshAppleHome" data-i18n="apple.refresh">Relire l’inventaire reçu</button>
           <button id="planAppleHome" class="primary" disabled data-i18n="apple.analyze">Analyser Hue ↔ Maison</button>
+          <button id="diagnoseAppleIdentity" disabled data-i18n="apple.identityAnalyze">Diagnostiquer les identifiants</button>
+          <button id="copyAppleIdentity" disabled data-i18n="apple.identityCopy">Copier le diagnostic</button>
           <button id="saveAppleRoomMap" disabled data-i18n="apple.save">Enregistrer la configuration</button>
         </div>
         <div id="appleHomeStatus" class="muted" style="margin-top:10px">
           <span data-i18n="apple.noInventory">Aucun inventaire Apple Maison reçu.</span>
         </div>
         <div id="appleHomeSummary" class="audit-summary"></div>
+        <div id="appleIdentitySummary" class="audit-summary"></div>
+        <div id="appleIdentityFindings"></div>
+        <pre id="appleIdentityResult" class="hidden"></pre>
         <div id="appleHomeRoomMap"></div>
         <div id="appleHomeMoves"></div>
       </div>
@@ -500,6 +505,11 @@
       "apple.description": "L’inventaire Apple Maison est publié par l’app iOS HueManager Home Sync. Ici, tu peux relire le dernier inventaire reçu, puis sélectionner une pièce Apple pour chaque pièce Hue et vérifier l’impact avant enregistrement.",
       "apple.refresh": "Relire l’inventaire reçu",
       "apple.analyze": "Analyser Hue ↔ Maison",
+      "apple.identityAnalyze": "Diagnostiquer les identifiants",
+      "apple.identityCopy": "Copier le diagnostic",
+      "apple.identityHap": "AID HAP accessibles",
+      "apple.identitySerial": "Séries Hue/HomeKit",
+      "apple.identityAnchors": "Paires de contrôle",
       "apple.save": "Enregistrer la configuration",
       "apple.selectionSaved": "Sélection des pièces enregistrée",
       "apple.selectionDraft": "Sélection des pièces modifiée — enregistre la configuration",
@@ -615,6 +625,11 @@
       "apple.description": "The Apple Home inventory is published by the iOS HueManager Home Sync app. Here you can reload the last inventory received, then select an Apple Home room for each Hue room and review the impact before saving.",
       "apple.refresh": "Reload received inventory",
       "apple.analyze": "Analyze Hue ↔ Home",
+      "apple.identityAnalyze": "Diagnose identifiers",
+      "apple.identityCopy": "Copy identity diagnostic",
+      "apple.identityHap": "HAP AIDs available",
+      "apple.identitySerial": "Hue/HomeKit serials",
+      "apple.identityAnchors": "Control pairs",
       "apple.save": "Save configuration",
       "apple.selectionSaved": "Room selection saved",
       "apple.selectionDraft": "Room selection changed — save the configuration",
@@ -681,6 +696,7 @@
     monitorPollTimer: null,
     appleHome: null,
     appleHomePlan: null,
+    appleIdentityDiagnostics: null,
     appleSelectedRoomIds: new Set(),
     appleSelectedRoomSavedIds: new Set(),
     appleSelectionInitialized: false,
@@ -1439,6 +1455,8 @@
     if (!inventory) {
       $("appleHomeStatus").textContent = t("apple.noInventoryHelp");
       $("planAppleHome").disabled = true;
+      $("diagnoseAppleIdentity").disabled = true;
+      $("copyAppleIdentity").disabled = true;
       $("saveAppleRoomMap").disabled = true;
       return;
     }
@@ -1452,12 +1470,95 @@
       `inventaire ${inventory.received_at || "reçu"}` +
       (lastSync ? ` · dernier apply: ${lastSync.moved || 0} déplacé(s), ${lastSync.failed?.length || 0} échec(s)` : "");
     $("planAppleHome").disabled = false;
+    $("diagnoseAppleIdentity").disabled = false;
   }
 
   async function loadAppleHomeStatus() {
     const data = await api("/api/apple-home");
     renderAppleHomeStatus(data);
     return data;
+  }
+
+  function renderAppleIdentityDiagnostics(data) {
+    state.appleIdentityDiagnostics = data;
+    const summary = data.summary || {};
+    const summaryRoot = $("appleIdentitySummary");
+    summaryRoot.replaceChildren();
+
+    const chips = [
+      [`${summary.hue_devices_with_identifiers || 0}/${summary.hue_devices || 0} Hue avec identifiant`, ""],
+      [`${summary.apple_hue_with_serial || 0}/${summary.apple_hue_accessories || 0} ${t("apple.identitySerial")}`,
+        summary.apple_hue_with_serial ? "" : "warn"],
+      [`${summary.apple_hue_with_hap_aid || 0}/${summary.apple_hue_accessories || 0} ${t("apple.identityHap")}`,
+        summary.apple_hue_with_hap_aid ? "good" : "warn"],
+      [`${summary.anchors || 0} ${t("apple.identityAnchors")}`, ""],
+      [`${summary.exact_serial_matches_on_anchors || 0} série(s) exacte(s)`,
+        summary.exact_serial_matches_on_anchors ? "good" : "warn"],
+      [`${summary.hap_aid_equals_v1_on_anchors || 0} AID=v1`,
+        summary.hap_aid_equals_v1_on_anchors ? "good" : ""],
+    ];
+    for (const [label, cls] of chips) {
+      const chip = document.createElement("span");
+      chip.className = `pill ${cls}`.trim();
+      chip.textContent = label;
+      summaryRoot.append(chip);
+    }
+
+    const findingsRoot = $("appleIdentityFindings");
+    findingsRoot.replaceChildren();
+    for (const finding of data.findings || []) {
+      const box = document.createElement("div");
+      box.className = `audit-issue ${finding.severity === "warning" ? "warning" : ""}`;
+      const title = document.createElement("h3");
+      title.textContent = finding.code || "identity";
+      const message = document.createElement("p");
+      message.textContent = finding.message || "";
+      box.append(title, message);
+      findingsRoot.append(box);
+    }
+
+    const pre = $("appleIdentityResult");
+    pre.textContent = JSON.stringify(data, null, 2);
+    pre.classList.remove("hidden");
+    $("copyAppleIdentity").disabled = false;
+  }
+
+  async function runAppleIdentityDiagnostics() {
+    const bridge = $("managementBridge").value;
+    if (!bridge) return;
+    status("Diagnostic des identifiants Apple/Hue…");
+    $("diagnoseAppleIdentity").disabled = true;
+    try {
+      const data = await api(
+        `/api/bridges/${encodeURIComponent(bridge)}/apple-home/identity-diagnostics`
+      );
+      renderAppleIdentityDiagnostics(data);
+      status("Diagnostic des identifiants terminé.", "good");
+    } finally {
+      $("diagnoseAppleIdentity").disabled = !state.appleHome?.inventory;
+    }
+  }
+
+  async function copyAppleIdentityDiagnostics() {
+    if (!state.appleIdentityDiagnostics) return;
+    const payload = JSON.stringify(state.appleIdentityDiagnostics, null, 2);
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(payload);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = payload;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.append(textarea);
+      textarea.focus();
+      textarea.select();
+      if (!document.execCommand("copy")) {
+        textarea.remove();
+        throw new Error("Copie automatique indisponible.");
+      }
+      textarea.remove();
+    }
+    status("Diagnostic d’identifiants copié.", "good");
   }
 
   function canonicalRoomMap(map) {
@@ -2699,6 +2800,12 @@
       .catch(e => status(e.message, "bad"));
   });
   $("planAppleHome").addEventListener("click", runAppleHomePlan);
+  $("diagnoseAppleIdentity").addEventListener("click", () => {
+    runAppleIdentityDiagnostics().catch(e => status(e.message, "bad"));
+  });
+  $("copyAppleIdentity").addEventListener("click", () => {
+    copyAppleIdentityDiagnostics().catch(e => status(e.message, "bad"));
+  });
   $("saveAppleRoomMap").addEventListener("click", saveAppleRoomMap);
 
   $("managementBridge").addEventListener("change", () => {
@@ -2726,6 +2833,7 @@
     loadIgnoredDiagnostics().catch(e => status(e.message, "bad"));
     refreshMonitor().catch(e => status(e.message, "bad"));
     state.appleHomePlan = null;
+    state.appleIdentityDiagnostics = null;
     state.appleSelectedRoomIds = new Set();
     state.appleSelectedRoomSavedIds = new Set();
     state.appleSelectionInitialized = false;
@@ -2735,6 +2843,11 @@
     state.appleAccessorySaved = {};
     state.applePreviewSeq += 1;
     $("appleHomeSummary").replaceChildren();
+    $("appleIdentitySummary").replaceChildren();
+    $("appleIdentityFindings").replaceChildren();
+    $("appleIdentityResult").textContent = "";
+    $("appleIdentityResult").classList.add("hidden");
+    $("copyAppleIdentity").disabled = true;
     $("appleHomeRoomMap").replaceChildren();
     $("appleHomeMoves").replaceChildren();
   });
