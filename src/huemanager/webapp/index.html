@@ -302,7 +302,69 @@
         </div>
         <div id="diagnosticSummary" class="audit-summary"></div>
         <div id="diagnosticFindings"></div>
+        <details id="diagnosticIgnoredDetails">
+          <summary data-i18n="diagnostics.ignoredTitle">Appareils déconnectés et exclusions</summary>
+          <p class="muted" data-i18n="diagnostics.ignoredHelp">
+            Coche les appareils volontairement coupés électriquement pour les exclure des surveillances futures.
+            Les appareils déjà déconnectés au démarrage d'une surveillance sont aussi exclus automatiquement de l'analyse de flapping.
+          </p>
+          <div class="row">
+            <button id="saveIgnoredDiagnostics" disabled data-i18n="diagnostics.saveIgnored">
+              Enregistrer les exclusions
+            </button>
+            <button id="clearIgnoredDiagnostics" disabled data-i18n="diagnostics.clearIgnored">
+              Réinitialiser les exclusions
+            </button>
+            <span id="diagnosticIgnoredCount" class="pill">0 ignoré</span>
+          </div>
+          <div id="diagnosticDisconnectedDevices"></div>
+        </details>
         <pre id="diagnosticResult" class="hidden"></pre>
+
+        <hr style="margin:18px 0">
+        <h3 data-i18n="monitor.title">Surveillance Zigbee dans le temps</h3>
+        <p class="muted" data-i18n="monitor.description">
+          Échantillonne périodiquement la connectivité et la latence locale. La surveillance s'arrête
+          automatiquement à la fin de la durée choisie et peut être arrêtée manuellement à tout moment.
+        </p>
+        <div class="row">
+          <div class="grow">
+            <label for="monitorDuration" data-i18n="monitor.duration">Durée maximale</label>
+            <select id="monitorDuration">
+              <option value="60">1 min</option>
+              <option value="300" selected>5 min</option>
+              <option value="600">10 min</option>
+              <option value="900">15 min</option>
+              <option value="1800">30 min</option>
+            </select>
+          </div>
+          <div class="grow">
+            <label for="monitorInterval" data-i18n="monitor.interval">Intervalle</label>
+            <select id="monitorInterval">
+              <option value="5">5 s</option>
+              <option value="10" selected>10 s</option>
+              <option value="20">20 s</option>
+              <option value="30">30 s</option>
+            </select>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="startMonitor" class="primary" data-i18n="monitor.start">Démarrer</button>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="stopMonitor" class="danger" disabled data-i18n="monitor.stop">Arrêter</button>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="copyMonitor" disabled data-i18n="monitor.copy">Copier le rapport</button>
+          </div>
+        </div>
+        <div id="monitorStatus" class="muted" style="margin-top:10px"></div>
+        <div id="monitorSummary" class="audit-summary"></div>
+        <div id="monitorFlapping"></div>
+        <pre id="monitorResult" class="hidden"></pre>
+
         <p class="muted" data-i18n="diagnostics.limit">
           L'API Hue publique n'expose pas la table des voisins Zigbee, RSSI/LQI, retries,
           pertes de paquets ni l'occupation radio : ces limites sont indiquées dans le rapport.
