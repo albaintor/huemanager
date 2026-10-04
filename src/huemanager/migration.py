@@ -903,7 +903,7 @@ def audit_bridge(client: HueBridgeClient) -> dict:
     safe_cleanup = sum(
         1
         for issue in issues
-        if issue.get("cleanup", {}).get("safe")
+        if (issue.get("cleanup") or {}).get("safe")
     )
     return {
         "bridge": {
