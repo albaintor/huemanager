@@ -31,7 +31,6 @@ from .backup import (
 from .client import HueApiError, HueBridgeClient
 from .config import BridgeProfile, ConfigStore
 from .diagnostics import diagnose_bridge
-from .monitoring import DiagnosticMonitorManager
 from .migration import (
     MigrationError,
     analyse,
@@ -46,6 +45,7 @@ from .migration import (
     room_deletion_impact,
     save_snapshot,
 )
+from .monitoring import DiagnosticMonitorManager
 from .session import (
     load_migration_session,
     new_migration_session,
