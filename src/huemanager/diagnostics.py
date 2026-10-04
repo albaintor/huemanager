@@ -119,35 +119,13 @@ def _is_first_party(manufacturer: str | None) -> bool:
     return "philips" in value or "signify" in value
 
 
-def diagnose_bridge(
-    client: HueBridgeClient,
-    *,
-    wifi_channel: int | None = None,
-    wifi_width_mhz: int = 20,
-    samples: int = 3,
-) -> dict[str, Any]:
-    """Collect read-only Hue Bridge diagnostics exposed by the public local APIs."""
-    samples = max(1, min(int(samples), 5))
-
-    v1, v1_latency = _timed_samples(client.v1_all, samples)
-    resources, v2_latency = _timed_samples(client.v2_resources, samples)
+def collect_zigbee_devices(resources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return physical Zigbee devices and their public connectivity state."""
     by_id = {
         resource["id"]: resource
         for resource in resources
         if resource.get("id")
     }
-    resource_counts = Counter(
-        str(resource.get("type") or "unknown")
-        for resource in resources
-    )
-
-    config = v1.get("config", {})
-    zigbee_channel_raw = config.get("zigbeechannel")
-    try:
-        zigbee_channel = int(zigbee_channel_raw) if zigbee_channel_raw is not None else None
-    except (TypeError, ValueError):
-        zigbee_channel = None
-
     room_names_by_device: dict[str, list[str]] = {}
     for room in (item for item in resources if item.get("type") == "room"):
         room_name = room.get("metadata", {}).get("name") or room.get("id") or "?"
@@ -201,12 +179,10 @@ def diagnose_bridge(
                 "connectivity": statuses,
             }
         )
+    return zigbee_devices
 
-    zigbee_health_counts = Counter(item["health"] for item in zigbee_devices)
-    disconnected_devices = [
-        item for item in zigbee_devices if item["health"] == "disconnected"
-    ]
 
+def _unreachable_resources(v1: dict[str, Any]) -> list[dict[str, Any]]:
     unreachable: list[dict[str, Any]] = []
     for light_id, light in v1.get("lights", {}).items():
         if light.get("state", {}).get("reachable") is False:
@@ -232,6 +208,57 @@ def diagnose_bridge(
                     "uniqueid": sensor.get("uniqueid"),
                 }
             )
+    return unreachable
+
+
+def collect_monitor_sample(client: HueBridgeClient) -> dict[str, Any]:
+    """Collect one lightweight read-only sample for longitudinal monitoring."""
+    v1, v1_latency = _timed_samples(client.v1_all, 1)
+    resources, v2_latency = _timed_samples(client.v2_resources, 1)
+    devices = collect_zigbee_devices(resources)
+    health_counts = Counter(str(device.get("health") or "unknown") for device in devices)
+    return {
+        "devices": devices,
+        "connected": health_counts.get("connected", 0),
+        "disconnected": health_counts.get("disconnected", 0),
+        "unknown": health_counts.get("unknown", 0),
+        "unreachable_count": len(_unreachable_resources(v1)),
+        "clip_v1_root": {"ms": v1_latency["all_ms"][0]},
+        "clip_v2_resources": {"ms": v2_latency["all_ms"][0]},
+    }
+
+
+def diagnose_bridge(
+    client: HueBridgeClient,
+    *,
+    wifi_channel: int | None = None,
+    wifi_width_mhz: int = 20,
+    samples: int = 3,
+) -> dict[str, Any]:
+    """Collect read-only Hue Bridge diagnostics exposed by the public local APIs."""
+    samples = max(1, min(int(samples), 5))
+
+    v1, v1_latency = _timed_samples(client.v1_all, samples)
+    resources, v2_latency = _timed_samples(client.v2_resources, samples)
+    resource_counts = Counter(
+        str(resource.get("type") or "unknown")
+        for resource in resources
+    )
+
+    config = v1.get("config", {})
+    zigbee_channel_raw = config.get("zigbeechannel")
+    try:
+        zigbee_channel = int(zigbee_channel_raw) if zigbee_channel_raw is not None else None
+    except (TypeError, ValueError):
+        zigbee_channel = None
+
+    zigbee_devices = collect_zigbee_devices(resources)
+    zigbee_health_counts = Counter(item["health"] for item in zigbee_devices)
+    disconnected_devices = [
+        item for item in zigbee_devices if item["health"] == "disconnected"
+    ]
+
+    unreachable = _unreachable_resources(v1)
 
     third_party: list[dict[str, Any]] = []
     for section, kind in (("lights", "light"), ("sensors", "sensor")):

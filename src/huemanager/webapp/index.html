@@ -302,7 +302,69 @@
         </div>
         <div id="diagnosticSummary" class="audit-summary"></div>
         <div id="diagnosticFindings"></div>
+        <details id="diagnosticIgnoredDetails">
+          <summary data-i18n="diagnostics.ignoredTitle">Appareils déconnectés et exclusions</summary>
+          <p class="muted" data-i18n="diagnostics.ignoredHelp">
+            Coche les appareils volontairement coupés électriquement pour les exclure des surveillances futures.
+            Les appareils déjà déconnectés au démarrage d'une surveillance sont aussi exclus automatiquement de l'analyse de flapping.
+          </p>
+          <div class="row">
+            <button id="saveIgnoredDiagnostics" disabled data-i18n="diagnostics.saveIgnored">
+              Enregistrer les exclusions
+            </button>
+            <button id="clearIgnoredDiagnostics" disabled data-i18n="diagnostics.clearIgnored">
+              Réinitialiser les exclusions
+            </button>
+            <span id="diagnosticIgnoredCount" class="pill">0 ignoré</span>
+          </div>
+          <div id="diagnosticDisconnectedDevices"></div>
+        </details>
         <pre id="diagnosticResult" class="hidden"></pre>
+
+        <hr style="margin:18px 0">
+        <h3 data-i18n="monitor.title">Surveillance Zigbee dans le temps</h3>
+        <p class="muted" data-i18n="monitor.description">
+          Échantillonne périodiquement la connectivité et la latence locale. La surveillance s'arrête
+          automatiquement à la fin de la durée choisie et peut être arrêtée manuellement à tout moment.
+        </p>
+        <div class="row">
+          <div class="grow">
+            <label for="monitorDuration" data-i18n="monitor.duration">Durée maximale</label>
+            <select id="monitorDuration">
+              <option value="60">1 min</option>
+              <option value="300" selected>5 min</option>
+              <option value="600">10 min</option>
+              <option value="900">15 min</option>
+              <option value="1800">30 min</option>
+            </select>
+          </div>
+          <div class="grow">
+            <label for="monitorInterval" data-i18n="monitor.interval">Intervalle</label>
+            <select id="monitorInterval">
+              <option value="5">5 s</option>
+              <option value="10" selected>10 s</option>
+              <option value="20">20 s</option>
+              <option value="30">30 s</option>
+            </select>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="startMonitor" class="primary" data-i18n="monitor.start">Démarrer</button>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="stopMonitor" class="danger" disabled data-i18n="monitor.stop">Arrêter</button>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="copyMonitor" disabled data-i18n="monitor.copy">Copier le rapport</button>
+          </div>
+        </div>
+        <div id="monitorStatus" class="muted" style="margin-top:10px"></div>
+        <div id="monitorSummary" class="audit-summary"></div>
+        <div id="monitorFlapping"></div>
+        <pre id="monitorResult" class="hidden"></pre>
+
         <p class="muted" data-i18n="diagnostics.limit">
           L'API Hue publique n'expose pas la table des voisins Zigbee, RSSI/LQI, retries,
           pertes de paquets ni l'occupation radio : ces limites sont indiquées dans le rapport.
@@ -351,6 +413,17 @@
       "diagnostics.samples": "Mesures API",
       "diagnostics.run": "Diagnostiquer",
       "diagnostics.copy": "Copier le JSON",
+      "diagnostics.ignoredTitle": "Appareils déconnectés et exclusions",
+      "diagnostics.ignoredHelp": "Coche les appareils volontairement coupés électriquement pour les exclure des surveillances futures. Les appareils déjà déconnectés au démarrage d’une surveillance sont aussi exclus automatiquement de l’analyse de flapping.",
+      "diagnostics.saveIgnored": "Enregistrer les exclusions",
+      "diagnostics.clearIgnored": "Réinitialiser les exclusions",
+      "monitor.title": "Surveillance Zigbee dans le temps",
+      "monitor.description": "Échantillonne périodiquement la connectivité et la latence locale. La surveillance s’arrête automatiquement à la fin de la durée choisie et peut être arrêtée manuellement à tout moment.",
+      "monitor.duration": "Durée maximale",
+      "monitor.interval": "Intervalle",
+      "monitor.start": "Démarrer",
+      "monitor.stop": "Arrêter",
+      "monitor.copy": "Copier le rapport",
       "diagnostics.limit": "L’API Hue publique n’expose pas la table des voisins Zigbee, RSSI/LQI, retries, pertes de paquets ni l’occupation radio : ces limites sont indiquées dans le rapport.",
       "migration.bridges": "Bridges",
       "migration.source": "Bridge source",
@@ -441,6 +514,17 @@
       "diagnostics.samples": "API samples",
       "diagnostics.run": "Run diagnostics",
       "diagnostics.copy": "Copy JSON",
+      "diagnostics.ignoredTitle": "Disconnected devices and exclusions",
+      "diagnostics.ignoredHelp": "Select devices that are intentionally power-cut to exclude them from future monitoring. Devices already disconnected when monitoring starts are also automatically excluded from flapping analysis.",
+      "diagnostics.saveIgnored": "Save exclusions",
+      "diagnostics.clearIgnored": "Reset exclusions",
+      "monitor.title": "Longitudinal Zigbee monitoring",
+      "monitor.description": "Periodically samples connectivity and local API latency. Monitoring stops automatically after the selected duration and can be stopped manually at any time.",
+      "monitor.duration": "Maximum duration",
+      "monitor.interval": "Interval",
+      "monitor.start": "Start",
+      "monitor.stop": "Stop",
+      "monitor.copy": "Copy report",
       "diagnostics.limit": "The public Hue API does not expose the Zigbee neighbour table, RSSI/LQI, retries, packet loss or radio utilization; the report states these limitations.",
       "migration.bridges": "Bridges",
       "migration.source": "Source Bridge",
@@ -530,6 +614,9 @@
     audit: null,
     auditSelected: new Set(),
     diagnostics: null,
+    ignoredDeviceIds: new Set(),
+    monitor: null,
+    monitorPollTimer: null,
     appleHome: null,
     appleHomePlan: null,
     appleRoomDraft: {},
@@ -553,6 +640,9 @@
     }
     if (state.diagnostics) {
       renderDiagnostics(state.diagnostics);
+    }
+    if (state.monitor) {
+      renderMonitor(state.monitor);
     }
     if (state.appleHomePlan) {
       renderAppleHomePlan(state.appleHomePlan);
@@ -965,6 +1055,7 @@
       findingsRoot.append(box);
     }
 
+    renderDisconnectedDevices(data);
     const pre = $("diagnosticResult");
     pre.textContent = JSON.stringify(data, null, 2);
     pre.classList.remove("hidden");
@@ -1014,6 +1105,265 @@
       textarea.remove();
     }
     status("Rapport de diagnostic copié dans le presse-papiers.", "good");
+  }
+
+
+  function renderDisconnectedDevices(data) {
+    const root = $("diagnosticDisconnectedDevices");
+    root.replaceChildren();
+    const devices = data?.zigbee?.disconnected_devices || [];
+    const count = state.ignoredDeviceIds.size;
+    $("diagnosticIgnoredCount").textContent = count + " ignoré" + (count > 1 ? "s" : "");
+    $("saveIgnoredDiagnostics").disabled = devices.length === 0;
+    $("clearIgnoredDiagnostics").disabled = count === 0;
+
+    if (!devices.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "Aucun appareil Zigbee déconnecté dans ce diagnostic.";
+      root.append(empty);
+      return;
+    }
+
+    for (const device of devices) {
+      const item = document.createElement("label");
+      item.className = "item";
+      item.style.display = "block";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.dataset.deviceId = device.id;
+      checkbox.checked = state.ignoredDeviceIds.has(device.id);
+      const room = (device.rooms || []).join(", ") || "sans pièce";
+      const statuses = (device.connectivity || [])
+        .map(value => value.status)
+        .filter(Boolean)
+        .join(", ");
+      const text = document.createElement("span");
+      text.textContent = " " + (device.name || device.id) + " — " + room + " — "
+        + (device.manufacturer || "?") + " " + (device.model || "")
+        + (statuses ? " — " + statuses : "");
+      item.append(checkbox, text);
+      root.append(item);
+    }
+  }
+
+  async function loadIgnoredDiagnostics() {
+    const bridge = $("managementBridge").value;
+    if (!bridge) return;
+    const data = await api(
+      "/api/bridges/" + encodeURIComponent(bridge) + "/diagnostics/ignored"
+    );
+    state.ignoredDeviceIds = new Set(data.device_ids || []);
+    if (state.diagnostics) renderDisconnectedDevices(state.diagnostics);
+    else {
+      const count = state.ignoredDeviceIds.size;
+      $("diagnosticIgnoredCount").textContent = count + " ignoré" + (count > 1 ? "s" : "");
+      $("clearIgnoredDiagnostics").disabled = count === 0;
+    }
+  }
+
+  async function saveIgnoredDiagnostics() {
+    const bridge = $("managementBridge").value;
+    if (!bridge || !state.diagnostics) return;
+    const next = new Set(state.ignoredDeviceIds);
+    for (const checkbox of $("diagnosticDisconnectedDevices").querySelectorAll(
+      'input[type="checkbox"][data-device-id]'
+    )) {
+      if (checkbox.checked) next.add(checkbox.dataset.deviceId);
+      else next.delete(checkbox.dataset.deviceId);
+    }
+    const data = await api(
+      "/api/bridges/" + encodeURIComponent(bridge) + "/diagnostics/ignored",
+      {
+        method: "PUT",
+        body: JSON.stringify({device_ids: [...next]}),
+      }
+    );
+    state.ignoredDeviceIds = new Set(data.device_ids || []);
+    renderDisconnectedDevices(state.diagnostics);
+    status("Exclusions de diagnostic enregistrées.", "good");
+  }
+
+  async function clearIgnoredDiagnostics() {
+    const bridge = $("managementBridge").value;
+    if (!bridge) return;
+    const data = await api(
+      "/api/bridges/" + encodeURIComponent(bridge) + "/diagnostics/ignored",
+      {
+        method: "PUT",
+        body: JSON.stringify({device_ids: []}),
+      }
+    );
+    state.ignoredDeviceIds = new Set(data.device_ids || []);
+    if (state.diagnostics) renderDisconnectedDevices(state.diagnostics);
+    status("Exclusions de diagnostic réinitialisées.", "good");
+  }
+
+  function stopMonitorPolling() {
+    if (state.monitorPollTimer) {
+      clearTimeout(state.monitorPollTimer);
+      state.monitorPollTimer = null;
+    }
+  }
+
+  function renderMonitor(data) {
+    state.monitor = data;
+    const running = ["starting", "running"].includes(data?.status);
+    $("startMonitor").disabled = running;
+    $("stopMonitor").disabled = !running;
+    $("copyMonitor").disabled = !data || data.status === "idle";
+
+    const statusRoot = $("monitorStatus");
+    if (!data || data.status === "idle") {
+      statusRoot.textContent = "Aucune surveillance lancée.";
+      $("monitorSummary").replaceChildren();
+      $("monitorFlapping").replaceChildren();
+      $("monitorResult").classList.add("hidden");
+      return;
+    }
+
+    const elapsed = Number(data.last_sample_elapsed_seconds || 0);
+    const remaining = Math.max(0, Number(data.duration_seconds || 0) - elapsed);
+    let reason = "";
+    if (data.stop_reason === "duration_elapsed") reason = "arrêt automatique : durée atteinte";
+    else if (data.stop_reason === "user") reason = "arrêt manuel";
+    else if (data.stop_reason) reason = data.stop_reason;
+    statusRoot.textContent =
+      "État : " + data.status + " · " + (data.samples_collected || 0) + " mesure(s)"
+      + " · ~" + Math.round(elapsed) + " s écoulées"
+      + " · ~" + Math.round(remaining) + " s restantes"
+      + (reason ? " · " + reason : "")
+      + (data.error ? " · dernière erreur : " + data.error : "");
+
+    const summary = data.summary || {};
+    const apiLatency = summary.api_latency || {};
+    const flapping = summary.flapping_devices || [];
+    const chips = [
+      [(data.samples_collected || 0) + " mesure(s)", ""],
+      [(summary.tracked_devices || 0) + " appareil(s) suivis", ""],
+      [(summary.stable_tracked_devices || 0) + " stables", flapping.length ? "" : "good"],
+      [flapping.length + " instable(s)", flapping.length ? "warn" : "good"],
+      [(summary.excluded_initially_disconnected || []).length + " hors ligne au départ exclus", ""],
+      [(summary.ignored_devices || []).length + " ignoré(s)", ""],
+      ["API v1 max: " + (apiLatency.clip_v1_root?.max_ms ?? "?") + " ms", ""],
+      ["API v2 max: " + (apiLatency.clip_v2_resources?.max_ms ?? "?") + " ms", ""],
+    ];
+    const summaryRoot = $("monitorSummary");
+    summaryRoot.replaceChildren();
+    for (const [label, cls] of chips) {
+      const chip = document.createElement("span");
+      chip.className = ("pill " + cls).trim();
+      chip.textContent = label;
+      summaryRoot.append(chip);
+    }
+
+    const flappingRoot = $("monitorFlapping");
+    flappingRoot.replaceChildren();
+    if (!flapping.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = running
+        ? "Aucun basculement détecté pour l'instant parmi les appareils suivis."
+        : "Aucun basculement détecté parmi les appareils suivis.";
+      flappingRoot.append(empty);
+    } else {
+      for (const device of flapping) {
+        const box = document.createElement("div");
+        box.className = "audit-issue warning";
+        const title = document.createElement("h3");
+        title.textContent = device.name || device.id;
+        const detail = document.createElement("p");
+        detail.textContent =
+          ((device.rooms || []).join(", ") || "sans pièce")
+          + " · " + (device.disconnects || 0) + " déconnexion(s)"
+          + " · " + (device.reconnects || 0) + " reconnexion(s)"
+          + " · coupure cumulée ~" + (device.total_disconnected_seconds || 0) + " s"
+          + " · plus longue ~" + (device.longest_disconnected_seconds || 0) + " s";
+        box.append(title, detail);
+        const details = document.createElement("details");
+        const summaryEl = document.createElement("summary");
+        summaryEl.textContent = "Transitions";
+        const pre = document.createElement("pre");
+        pre.textContent = JSON.stringify(device.transitions || [], null, 2);
+        details.append(summaryEl, pre);
+        box.append(details);
+        flappingRoot.append(box);
+      }
+    }
+
+    const pre = $("monitorResult");
+    pre.textContent = JSON.stringify(data, null, 2);
+    pre.classList.remove("hidden");
+  }
+
+  async function refreshMonitor() {
+    const bridge = $("managementBridge").value;
+    if (!bridge) return;
+    const data = await api(
+      "/api/bridges/" + encodeURIComponent(bridge) + "/diagnostics/monitor"
+    );
+    renderMonitor(data);
+    stopMonitorPolling();
+    if (["starting", "running"].includes(data.status)) {
+      state.monitorPollTimer = setTimeout(() => {
+        refreshMonitor().catch(e => status(e.message, "bad"));
+      }, 2000);
+    }
+  }
+
+  async function startMonitor() {
+    const bridge = $("managementBridge").value;
+    if (!bridge) return;
+    stopMonitorPolling();
+    const data = await api(
+      "/api/bridges/" + encodeURIComponent(bridge) + "/diagnostics/monitor",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          duration_seconds: Number($("monitorDuration").value),
+          interval_seconds: Number($("monitorInterval").value),
+        }),
+      }
+    );
+    renderMonitor(data);
+    status("Surveillance Zigbee de " + bridge + " démarrée.", "good");
+    state.monitorPollTimer = setTimeout(() => {
+      refreshMonitor().catch(e => status(e.message, "bad"));
+    }, 1000);
+  }
+
+  async function stopMonitor() {
+    const bridge = $("managementBridge").value;
+    if (!bridge) return;
+    const data = await api(
+      "/api/bridges/" + encodeURIComponent(bridge) + "/diagnostics/monitor/stop",
+      {method: "POST"}
+    );
+    stopMonitorPolling();
+    renderMonitor(data);
+    status("Surveillance Zigbee arrêtée.", "good");
+  }
+
+  async function copyMonitor() {
+    if (!state.monitor || state.monitor.status === "idle") return;
+    const payload = JSON.stringify(state.monitor, null, 2);
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(payload);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = payload;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.append(textarea);
+      textarea.focus();
+      textarea.select();
+      if (!document.execCommand("copy")) {
+        textarea.remove();
+        throw new Error("Copie automatique indisponible : sélectionne le JSON manuellement.");
+      }
+      textarea.remove();
+    }
+    status("Rapport de surveillance copié dans le presse-papiers.", "good");
   }
 
 
@@ -1427,6 +1777,21 @@
   });
   $("copyDiagnostics").addEventListener("click", () => {
     copyDiagnostics().catch(e => status(e.message, "bad"));
+  });
+  $("saveIgnoredDiagnostics").addEventListener("click", () => {
+    saveIgnoredDiagnostics().catch(e => status(e.message, "bad"));
+  });
+  $("clearIgnoredDiagnostics").addEventListener("click", () => {
+    clearIgnoredDiagnostics().catch(e => status(e.message, "bad"));
+  });
+  $("startMonitor").addEventListener("click", () => {
+    startMonitor().catch(e => status(e.message, "bad"));
+  });
+  $("stopMonitor").addEventListener("click", () => {
+    stopMonitor().catch(e => status(e.message, "bad"));
+  });
+  $("copyMonitor").addEventListener("click", () => {
+    copyMonitor().catch(e => status(e.message, "bad"));
   });
   $("selectAllAudit").addEventListener("click", () => setAllAuditSelection(true));
   $("deselectAllAudit").addEventListener("click", () => setAllAuditSelection(false));
@@ -2019,12 +2384,29 @@
   $("saveAppleRoomMap").addEventListener("click", saveAppleRoomMap);
 
   $("managementBridge").addEventListener("change", () => {
+    stopMonitorPolling();
     state.diagnostics = null;
+    state.ignoredDeviceIds = new Set();
+    state.monitor = null;
     $("diagnosticSummary").replaceChildren();
     $("diagnosticFindings").replaceChildren();
+    $("diagnosticDisconnectedDevices").replaceChildren();
+    $("diagnosticIgnoredCount").textContent = "0 ignoré";
+    $("saveIgnoredDiagnostics").disabled = true;
+    $("clearIgnoredDiagnostics").disabled = true;
     $("diagnosticResult").textContent = "";
     $("diagnosticResult").classList.add("hidden");
     $("copyDiagnostics").disabled = true;
+    $("monitorStatus").textContent = "";
+    $("monitorSummary").replaceChildren();
+    $("monitorFlapping").replaceChildren();
+    $("monitorResult").textContent = "";
+    $("monitorResult").classList.add("hidden");
+    $("copyMonitor").disabled = true;
+    $("stopMonitor").disabled = true;
+    $("startMonitor").disabled = false;
+    loadIgnoredDiagnostics().catch(e => status(e.message, "bad"));
+    refreshMonitor().catch(e => status(e.message, "bad"));
     state.appleHomePlan = null;
     state.appleRoomDraft = {};
     state.appleRoomSaved = {};
@@ -2045,9 +2427,9 @@
   });
 
   showView("management");
-  Promise.all([loadBridges(), loadBackups(), loadSnapshots(), loadAppleHomeStatus()]).catch(
-    e => status(e.message, "bad")
-  );
+  Promise.all([loadBridges(), loadBackups(), loadSnapshots(), loadAppleHomeStatus()])
+    .then(() => Promise.all([loadIgnoredDiagnostics(), refreshMonitor()]))
+    .catch(e => status(e.message, "bad"));
 })();
 </script>
 </body>

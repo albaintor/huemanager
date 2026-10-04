@@ -46,3 +46,38 @@ class ConfigStore:
             name: BridgeProfile(**value)
             for name, value in self._read().get("bridges", {}).items()
         }
+
+    def get_diagnostic_ignored_devices(self, bridge_name: str) -> set[str]:
+        data = self._read()
+        values = (
+            data.get("diagnostics", {})
+            .get("ignored_devices", {})
+            .get(bridge_name, [])
+        )
+        return {
+            str(value)
+            for value in values
+            if isinstance(value, str) and value
+        }
+
+    def save_diagnostic_ignored_devices(
+        self,
+        bridge_name: str,
+        device_ids: set[str] | list[str],
+    ) -> None:
+        data = self._read()
+        diagnostics = data.setdefault("diagnostics", {})
+        ignored = diagnostics.setdefault("ignored_devices", {})
+        ignored[bridge_name] = sorted(
+            {
+                str(value)
+                for value in device_ids
+                if isinstance(value, str) and value
+            }
+        )
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        try:
+            os.chmod(self.path, 0o600)
+        except OSError:
+            pass
