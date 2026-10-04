@@ -32,7 +32,7 @@ class FakeHueClient:
     def v2_put(self, resource_type: str, resource_id: str, body: dict) -> list[dict]:
         assert resource_type == "matter"
         self.puts.append((resource_type, resource_id, body))
-        if body == {"action": {"action_type": "matter_reset"}}:
+        if body == {"action": "matter_reset"}:
             self.fabrics = []
         return []
 
@@ -143,11 +143,7 @@ def test_reset_matter_feature_uses_matter_reset_action(
     result = web.reset_matter_feature("Bridge Pro")
 
     assert client.puts == [
-        (
-            "matter",
-            matter_id,
-            {"action": {"action_type": "matter_reset"}},
-        )
+        ("matter", matter_id, {"action": "matter_reset"})
     ]
     assert result["removed_fabrics"] == 2
     assert client.fabrics == []
