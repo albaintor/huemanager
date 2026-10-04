@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from huemanager.monitoring import summarize_monitor_samples
+import pytest
+
+from huemanager.client import HueApiError
+from huemanager.monitoring import ServiceConnectivityMonitor, summarize_monitor_samples
 
 
 def _sample(
@@ -66,3 +69,86 @@ def test_monitor_reports_api_latency_across_samples() -> None:
     assert result["api_latency"]["clip_v2_resources"]["median_ms"] == 300.0
     assert result["api_latency"]["clip_v2_resources"]["max_ms"] == 400.0
     assert result["flapping_devices"] == []
+
+
+
+class _FakeServiceClient:
+    def __init__(self, resources: list[dict] | None = None) -> None:
+        self.resources = resources if resources is not None else [{"id": "bridge"}]
+        self.calls: list[str] = []
+
+    def v2_get(self, resource_type: str) -> list[dict]:
+        self.calls.append(resource_type)
+        return list(self.resources)
+
+
+def test_service_monitor_logs_only_outage_and_restoration_transitions() -> None:
+    monitor = ServiceConnectivityMonitor(
+        bridge_name="Bridge Pro",
+        client=_FakeServiceClient(),  # type: ignore[arg-type]
+        interval_seconds=10,
+    )
+
+    monitor._record_probe(
+        available=True,
+        checked_at="2026-10-04T18:00:00+00:00",
+        monotonic_now=0.0,
+    )
+    monitor._record_probe(
+        available=False,
+        checked_at="2026-10-04T18:00:10+00:00",
+        monotonic_now=10.0,
+        error="timeout",
+    )
+    monitor._record_probe(
+        available=False,
+        checked_at="2026-10-04T18:00:20+00:00",
+        monotonic_now=20.0,
+        error="still unavailable",
+    )
+    monitor._record_probe(
+        available=True,
+        checked_at="2026-10-04T18:00:30+00:00",
+        monotonic_now=30.0,
+    )
+
+    assert monitor.checks == 4
+    assert monitor.successful_checks == 2
+    assert monitor.failed_checks == 2
+    assert monitor.current_state == "up"
+    assert monitor.events == [
+        {
+            "type": "down",
+            "at": "2026-10-04T18:00:10+00:00",
+            "error": "timeout",
+        },
+        {
+            "type": "restored",
+            "at": "2026-10-04T18:00:30+00:00",
+            "downtime_seconds": 20.0,
+        },
+    ]
+
+
+def test_service_monitor_probe_uses_lightweight_authenticated_bridge_resource() -> None:
+    client = _FakeServiceClient()
+    monitor = ServiceConnectivityMonitor(
+        bridge_name="Bridge Pro",
+        client=client,  # type: ignore[arg-type]
+        interval_seconds=10,
+    )
+
+    monitor._probe()
+
+    assert client.calls == ["bridge"]
+
+
+def test_service_monitor_probe_rejects_empty_bridge_resource() -> None:
+    monitor = ServiceConnectivityMonitor(
+        bridge_name="Bridge Pro",
+        client=_FakeServiceClient([]),  # type: ignore[arg-type]
+        interval_seconds=10,
+    )
+
+    with pytest.raises(HueApiError, match="no bridge resource"):
+        monitor._probe()
