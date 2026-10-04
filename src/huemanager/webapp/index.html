@@ -614,6 +614,9 @@
     audit: null,
     auditSelected: new Set(),
     diagnostics: null,
+    ignoredDeviceIds: new Set(),
+    monitor: null,
+    monitorPollTimer: null,
     appleHome: null,
     appleHomePlan: null,
     appleRoomDraft: {},
@@ -637,6 +640,9 @@
     }
     if (state.diagnostics) {
       renderDiagnostics(state.diagnostics);
+    }
+    if (state.monitor) {
+      renderMonitor(state.monitor);
     }
     if (state.appleHomePlan) {
       renderAppleHomePlan(state.appleHomePlan);
