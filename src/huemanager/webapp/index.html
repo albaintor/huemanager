@@ -1778,6 +1778,21 @@
   $("copyDiagnostics").addEventListener("click", () => {
     copyDiagnostics().catch(e => status(e.message, "bad"));
   });
+  $("saveIgnoredDiagnostics").addEventListener("click", () => {
+    saveIgnoredDiagnostics().catch(e => status(e.message, "bad"));
+  });
+  $("clearIgnoredDiagnostics").addEventListener("click", () => {
+    clearIgnoredDiagnostics().catch(e => status(e.message, "bad"));
+  });
+  $("startMonitor").addEventListener("click", () => {
+    startMonitor().catch(e => status(e.message, "bad"));
+  });
+  $("stopMonitor").addEventListener("click", () => {
+    stopMonitor().catch(e => status(e.message, "bad"));
+  });
+  $("copyMonitor").addEventListener("click", () => {
+    copyMonitor().catch(e => status(e.message, "bad"));
+  });
   $("selectAllAudit").addEventListener("click", () => setAllAuditSelection(true));
   $("deselectAllAudit").addEventListener("click", () => setAllAuditSelection(false));
   $("cleanupSelectedAudit").addEventListener("click", () => {
@@ -2369,12 +2384,29 @@
   $("saveAppleRoomMap").addEventListener("click", saveAppleRoomMap);
 
   $("managementBridge").addEventListener("change", () => {
+    stopMonitorPolling();
     state.diagnostics = null;
+    state.ignoredDeviceIds = new Set();
+    state.monitor = null;
     $("diagnosticSummary").replaceChildren();
     $("diagnosticFindings").replaceChildren();
+    $("diagnosticDisconnectedDevices").replaceChildren();
+    $("diagnosticIgnoredCount").textContent = "0 ignoré";
+    $("saveIgnoredDiagnostics").disabled = true;
+    $("clearIgnoredDiagnostics").disabled = true;
     $("diagnosticResult").textContent = "";
     $("diagnosticResult").classList.add("hidden");
     $("copyDiagnostics").disabled = true;
+    $("monitorStatus").textContent = "";
+    $("monitorSummary").replaceChildren();
+    $("monitorFlapping").replaceChildren();
+    $("monitorResult").textContent = "";
+    $("monitorResult").classList.add("hidden");
+    $("copyMonitor").disabled = true;
+    $("stopMonitor").disabled = true;
+    $("startMonitor").disabled = false;
+    loadIgnoredDiagnostics().catch(e => status(e.message, "bad"));
+    refreshMonitor().catch(e => status(e.message, "bad"));
     state.appleHomePlan = null;
     state.appleRoomDraft = {};
     state.appleRoomSaved = {};
@@ -2395,9 +2427,9 @@
   });
 
   showView("management");
-  Promise.all([loadBridges(), loadBackups(), loadSnapshots(), loadAppleHomeStatus()]).catch(
-    e => status(e.message, "bad")
-  );
+  Promise.all([loadBridges(), loadBackups(), loadSnapshots(), loadAppleHomeStatus()])
+    .then(() => Promise.all([loadIgnoredDiagnostics(), refreshMonitor()]))
+    .catch(e => status(e.message, "bad"));
 })();
 </script>
 </body>
