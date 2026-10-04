@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import re
 import threading
 import time
 import uuid
@@ -10,6 +11,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from statistics import median
 from typing import Any
+
+from requests import exceptions as requests_exceptions
 
 from .client import HueApiError, HueBridgeClient
 from .diagnostics import collect_monitor_sample
@@ -316,6 +319,142 @@ class DiagnosticMonitor:
 
 
 
+def classify_service_failure(exc: Exception) -> dict[str, Any]:
+    """Classify a failed Hue API probe by the layer that failed."""
+    text = str(exc)
+    lowered = text.casefold()
+
+    def result(
+        classification: str,
+        layer: str,
+        summary: str,
+        *,
+        http_status: int | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "classification": classification,
+            "layer": layer,
+            "summary": summary,
+            "http_status": http_status,
+            "error": text,
+        }
+
+    if isinstance(exc, requests_exceptions.ConnectTimeout):
+        return result(
+            "CONNECT_TIMEOUT",
+            "tcp",
+            "Timed out while establishing the TCP connection to the Hue API service.",
+        )
+    if isinstance(exc, requests_exceptions.ReadTimeout):
+        return result(
+            "READ_TIMEOUT",
+            "http",
+            "The Hue API connection was established but no response arrived before timeout.",
+        )
+    if isinstance(exc, requests_exceptions.SSLError):
+        return result(
+            "TLS_ERROR",
+            "tls",
+            "TLS negotiation with the Hue API service failed.",
+        )
+
+    if "connection refused" in lowered or "errno 111" in lowered:
+        return result(
+            "CONNECTION_REFUSED",
+            "tcp",
+            "The Bridge host actively refused the HTTPS connection on port 443.",
+        )
+    if "connection reset by peer" in lowered or "connection reset" in lowered:
+        return result(
+            "CONNECTION_RESET",
+            "tcp",
+            "The TCP connection to the Hue API service was reset.",
+        )
+    if (
+        "name or service not known" in lowered
+        or "temporary failure in name resolution" in lowered
+        or "nodename nor servname provided" in lowered
+    ):
+        return result(
+            "DNS_ERROR",
+            "dns",
+            "The Hue Bridge hostname could not be resolved.",
+        )
+    if "network is unreachable" in lowered or "no route to host" in lowered:
+        return result(
+            "NETWORK_UNREACHABLE",
+            "network",
+            "No network route to the Hue Bridge was available.",
+        )
+    if isinstance(exc, requests_exceptions.ConnectionError):
+        return result(
+            "CONNECTION_ERROR",
+            "tcp",
+            "The HTTPS connection to the Hue API service failed.",
+        )
+
+    if isinstance(exc, HueApiError):
+        match = re.search(r"Hue API\s+(\d{3})\b", text)
+        status = int(match.group(1)) if match else None
+        if status == 429:
+            return result(
+                "HTTP_429_RATE_LIMITED",
+                "http",
+                "The Hue API service is reachable but is rate limiting requests.",
+                http_status=status,
+            )
+        if status is not None and 500 <= status <= 599:
+            return result(
+                "HTTP_5XX",
+                "http",
+                "The Hue HTTPS service is reachable but the Hue API returned a server error.",
+                http_status=status,
+            )
+        if status is not None and 400 <= status <= 499:
+            return result(
+                "HTTP_4XX",
+                "http",
+                "The Hue HTTPS service is reachable but the Hue API rejected the request.",
+                http_status=status,
+            )
+        if "no bridge resource" in lowered:
+            return result(
+                "API_EMPTY_RESPONSE",
+                "api",
+                "The Hue API responded but returned no bridge resource.",
+            )
+        if "unexpected clip" in lowered:
+            return result(
+                "API_INVALID_RESPONSE",
+                "api",
+                "The Hue API responded with an unexpected payload.",
+            )
+        return result(
+            "API_ERROR",
+            "api",
+            "The Hue API service returned an application-level error.",
+        )
+
+    if isinstance(exc, TimeoutError):
+        return result(
+            "TIMEOUT",
+            "network",
+            "The Hue API probe timed out.",
+        )
+    if isinstance(exc, OSError):
+        return result(
+            "OS_NETWORK_ERROR",
+            "network",
+            "The operating system reported a network error while checking the Hue API.",
+        )
+
+    return result(
+        "UNKNOWN_ERROR",
+        "unknown",
+        "An unexpected error occurred while checking the Hue API service.",
+    )
+
+
 @dataclass
 class ServiceConnectivityMonitor:
     """Continuously check the authenticated Hue API service with a lightweight call.
@@ -335,11 +474,16 @@ class ServiceConnectivityMonitor:
     current_state: str = "unknown"
     last_check_at: str | None = None
     last_error: str | None = None
+    last_failure_classification: str | None = None
     checks: int = 0
     successful_checks: int = 0
     failed_checks: int = 0
     events: list[dict[str, Any]] = field(default_factory=list)
     _down_since_monotonic: float | None = field(default=None, repr=False)
+    _outage_started_at: str | None = field(default=None, repr=False)
+    _outage_failed_checks: int = field(default=0, repr=False)
+    _outage_classifications: list[str] = field(default_factory=list, repr=False)
+    _outage_last_error: str | None = field(default=None, repr=False)
     _started_monotonic: float | None = field(default=None, repr=False)
     _stop: threading.Event = field(default_factory=threading.Event, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
@@ -356,6 +500,15 @@ class ServiceConnectivityMonitor:
     def stop(self) -> None:
         self._stop.set()
 
+    def _endpoint(self) -> str:
+        profile = getattr(self.client, "profile", None)
+        host = getattr(profile, "host", None)
+        return (
+            f"https://{host}/clip/v2/resource/bridge"
+            if host
+            else "/clip/v2/resource/bridge"
+        )
+
     def _probe(self) -> None:
         resources = self.client.v2_get("bridge")
         if not resources:
@@ -368,6 +521,7 @@ class ServiceConnectivityMonitor:
         checked_at: str,
         monotonic_now: float,
         error: str | None = None,
+        failure: dict[str, Any] | None = None,
     ) -> None:
         with self._lock:
             previous = self.current_state
@@ -376,7 +530,6 @@ class ServiceConnectivityMonitor:
 
             if available:
                 self.successful_checks += 1
-                self.last_error = None
                 if previous == "down":
                     down_since = self._down_since_monotonic
                     downtime = (
@@ -387,35 +540,78 @@ class ServiceConnectivityMonitor:
                     event = {
                         "type": "restored",
                         "at": checked_at,
+                        "outage_started_at": self._outage_started_at,
                         "downtime_seconds": (
                             round(downtime, 1) if downtime is not None else None
                         ),
+                        "failed_checks": self._outage_failed_checks,
+                        "classifications": list(self._outage_classifications),
+                        "last_error": self._outage_last_error,
+                        "endpoint": self._endpoint(),
                     }
                     self.events.append(event)
                     LOGGER.info(
-                        "Hue API service restored bridge=%s downtime_seconds=%s",
+                        "Hue API service RESTORED bridge=%s downtime_seconds=%s "
+                        "failed_checks=%s classifications=%s endpoint=%s",
                         self.bridge_name,
                         event["downtime_seconds"],
+                        event["failed_checks"],
+                        ",".join(event["classifications"]) or "UNKNOWN",
+                        event["endpoint"],
                     )
                 self.current_state = "up"
+                self.last_error = None
+                self.last_failure_classification = None
                 self._down_since_monotonic = None
+                self._outage_started_at = None
+                self._outage_failed_checks = 0
+                self._outage_classifications = []
+                self._outage_last_error = None
                 return
 
+            failure = failure or {
+                "classification": "UNKNOWN_ERROR",
+                "layer": "unknown",
+                "summary": "The Hue API service probe failed.",
+                "http_status": None,
+                "error": error or "Hue API service unavailable",
+            }
+            classification = str(failure.get("classification") or "UNKNOWN_ERROR")
             self.failed_checks += 1
-            self.last_error = error or "Hue API service unavailable"
+            self.last_error = error or str(failure.get("error") or "Hue API service unavailable")
+            self.last_failure_classification = classification
+
             if previous != "down":
                 self._down_since_monotonic = monotonic_now
+                self._outage_started_at = checked_at
+                self._outage_failed_checks = 1
+                self._outage_classifications = [classification]
+                self._outage_last_error = self.last_error
                 event = {
                     "type": "down",
                     "at": checked_at,
+                    "classification": classification,
+                    "layer": failure.get("layer"),
+                    "summary": failure.get("summary"),
+                    "http_status": failure.get("http_status"),
+                    "endpoint": self._endpoint(),
                     "error": self.last_error,
                 }
                 self.events.append(event)
                 LOGGER.warning(
-                    "Hue API service unavailable bridge=%s error=%s",
+                    "Hue API service DOWN bridge=%s classification=%s layer=%s "
+                    "endpoint=%s error=%s",
                     self.bridge_name,
+                    classification,
+                    failure.get("layer") or "unknown",
+                    event["endpoint"],
                     self.last_error,
                 )
+            else:
+                self._outage_failed_checks += 1
+                self._outage_last_error = self.last_error
+                if classification not in self._outage_classifications:
+                    self._outage_classifications.append(classification)
             self.current_state = "down"
 
     def _run(self) -> None:
@@ -437,11 +633,13 @@ class ServiceConnectivityMonitor:
                     KeyError,
                     IndexError,
                 ) as exc:
+                    failure = classify_service_failure(exc)
                     self._record_probe(
                         available=False,
                         checked_at=checked_at,
                         monotonic_now=monotonic_now,
                         error=str(exc),
+                        failure=failure,
                     )
                 else:
                     self._record_probe(
@@ -466,6 +664,7 @@ class ServiceConnectivityMonitor:
             events = copy.deepcopy(self.events)
             last_check_at = self.last_check_at
             last_error = self.last_error
+            last_failure_classification = self.last_failure_classification
             checks = self.checks
             successful_checks = self.successful_checks
             failed_checks = self.failed_checks
@@ -488,6 +687,7 @@ class ServiceConnectivityMonitor:
             "current_state": current_state,
             "last_check_at": last_check_at,
             "last_error": last_error,
+            "last_failure_classification": last_failure_classification,
             "checks": checks,
             "successful_checks": successful_checks,
             "failed_checks": failed_checks,
