@@ -393,6 +393,9 @@
           <button id="refreshMatterFabrics" class="primary" data-i18n="matter.refresh">
             Relire les associations Matter
           </button>
+          <button id="resetMatter" class="danger" data-i18n="matter.reset">
+            Réinitialiser Matter
+          </button>
         </div>
         <div id="matterFabricStatus" class="muted" style="margin-top:10px"></div>
         <div id="matterFabricList"></div>
@@ -552,6 +555,7 @@
       "matter.none": "Aucune association Matter enregistrée sur ce Bridge.",
       "matter.delete": "Supprimer cette association",
       "matter.apple": "Apple",
+      "matter.reset": "Réinitialiser Matter",
       "diagnostics.title": "Diagnostic réseau Hue",
       "diagnostics.description": "Diagnostic en lecture seule : état Zigbee exposé par le Bridge, ressources injoignables, temps de réponse des API locales et estimation de coexistence avec le Wi-Fi 2,4 GHz.",
       "diagnostics.wifiChannel": "Canal Wi-Fi 2,4 GHz",
@@ -714,6 +718,7 @@
       "matter.none": "No Matter association is stored on this Bridge.",
       "matter.delete": "Delete this association",
       "matter.apple": "Apple",
+      "matter.reset": "Reset Matter",
       "diagnostics.title": "Hue network diagnostics",
       "diagnostics.description": "Read-only diagnostics: Zigbee state exposed by the Bridge, unreachable resources, local API response times and estimated coexistence with 2.4 GHz Wi-Fi.",
       "diagnostics.wifiChannel": "2.4 GHz Wi-Fi channel",
@@ -1366,6 +1371,51 @@
       root.append(box);
     }
   }
+
+  async function resetMatter() {
+    const bridge = $("managementBridge").value;
+    if (!bridge) return;
+    const fabrics = state.matterFabrics?.fabrics || [];
+    const details = fabrics.length
+      ? fabrics.map(fabric => {
+          const vendor = fabric.vendor_name
+            ? `${fabric.vendor_name} ${fabric.vendor_id ?? ""}`.trim()
+            : (fabric.vendor_id == null ? "vendor inconnu" : `vendor ${fabric.vendor_id}`);
+          return `• ${fabric.label || "Matter fabric"} — ${vendor} — ${fabric.status || "état inconnu"}`;
+        }).join("\n")
+      : "• aucun fabric actuellement listé";
+
+    const warning =
+      `Réinitialiser complètement Matter sur « ${bridge} » ?\n\n` +
+      "Cette opération supprime TOUTES les associations Matter enregistrées sur ce Bridge, " +
+      "puis remet son sous-système Matter à zéro.\n\n" +
+      `${details}\n\n` +
+      "Elle ne supprime pas les lampes, pièces Hue, scènes ni accessoires Zigbee. " +
+      "En revanche, toutes les plateformes Matter devront être réassociées ensuite.\n\n" +
+      "Utilise cette action uniquement si les suppressions individuelles restent bloquées.";
+    if (!window.confirm(warning)) return;
+
+    $("resetMatter").disabled = true;
+    $("refreshMatterFabrics").disabled = true;
+    try {
+      status(`Réinitialisation Matter de ${bridge}…`);
+      const result = await api(
+        `/api/bridges/${encodeURIComponent(bridge)}/matter-reset`,
+        { method: "POST" },
+      );
+      $("matterFabricStatus").textContent =
+        `Réinitialisation Matter envoyée · ${result.removed_fabrics || 0} fabric(s) présent(s) avant reset.`;
+      await new Promise(resolve => setTimeout(resolve, 2500));
+      await loadMatterFabrics();
+      status("Sous-système Matter réinitialisé. Vérifie que la liste est maintenant vide.", "good");
+    } catch (e) {
+      status(e.message, "bad");
+    } finally {
+      $("resetMatter").disabled = false;
+      $("refreshMatterFabrics").disabled = false;
+    }
+  }
+
 
   async function loadMatterFabrics() {
     const bridge = $("managementBridge").value;
@@ -3498,6 +3548,10 @@
 
   $("refreshMatterFabrics").addEventListener("click", () => {
     loadMatterFabrics().catch(e => status(e.message, "bad"));
+  });
+
+  $("resetMatter").addEventListener("click", () => {
+    resetMatter().catch(e => status(e.message, "bad"));
   });
 
   $("managementBridge").addEventListener("change", () => {
