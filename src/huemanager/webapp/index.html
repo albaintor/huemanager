@@ -94,6 +94,22 @@
     .pill.warn { border-color: var(--warn); color: var(--warn); } .pill.good { border-color: var(--good); color: var(--good); }
     .dependency { border-left: 3px solid var(--warn); padding: 9px 11px; background: var(--panel-2); margin: 8px 0; border-radius: 0 8px 8px 0; }
     .apple-room-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin: 12px 0; background: var(--panel-2); }
+    .apple-room-card.not-selected { opacity: .55; }
+    .apple-room-select {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 10px;
+      font-weight: 700;
+    }
+    .apple-room-select input[type="checkbox"] {
+      width: auto;
+      min-height: auto;
+      margin: 0;
+      padding: 0;
+      flex: 0 0 auto;
+      transform: scale(1.1);
+    }
     .apple-room-head { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.4fr); gap: 16px; align-items: end; }
     .room-impact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
     .room-impact-column { border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--panel); }
@@ -487,6 +503,11 @@
       "apple.save": "Enregistrer les correspondances",
       "apple.noInventory": "Aucun inventaire Apple Maison reçu.",
       "apple.mappingTitle": "Correspondance des pièces et prévisualisation",
+      "apple.syncSelectionTitle": "Pièces à synchroniser",
+      "apple.selectAll": "Tout sélectionner",
+      "apple.selectNone": "Aucune",
+      "apple.syncThisRoom": "Synchroniser cette pièce",
+      "apple.roomExcluded": "Cette pièce est exclue de la synchronisation.",
       "apple.noneRoom": "— aucune pièce Maison —",
       "apple.hueContents": "Accessoires dans la pièce Philips Hue",
       "apple.homeContents": "Accessoires Hue/associés dans la pièce Apple sélectionnée",
@@ -588,6 +609,11 @@
       "apple.save": "Save room mappings",
       "apple.noInventory": "No Apple Home inventory received.",
       "apple.mappingTitle": "Room mapping and preview",
+      "apple.syncSelectionTitle": "Rooms to synchronize",
+      "apple.selectAll": "Select all",
+      "apple.selectNone": "None",
+      "apple.syncThisRoom": "Synchronize this room",
+      "apple.roomExcluded": "This room is excluded from synchronization.",
       "apple.noneRoom": "— no Apple Home room —",
       "apple.hueContents": "Accessories in the Philips Hue room",
       "apple.homeContents": "Hue/matched accessories in the selected Apple Home room",
@@ -640,6 +666,7 @@
     monitorPollTimer: null,
     appleHome: null,
     appleHomePlan: null,
+    appleSelectedRoomIds: new Set(),
     appleRoomDraft: {},
     appleRoomSaved: {},
     applePreviewSeq: 0,
@@ -1609,16 +1636,60 @@
     card.append(impact);
   }
 
+  function initializeAppleRoomSelection(plan) {
+    const available = new Set((plan.rooms || []).map(room => room.hue_room_id));
+    const selected = Array.isArray(plan.selected_hue_room_ids)
+      ? plan.selected_hue_room_ids
+      : [...available];
+    state.appleSelectedRoomIds = new Set(
+      selected.filter(roomId => available.has(roomId))
+    );
+  }
+
+  async function persistAppleRoomSelection() {
+    const inventory = state.appleHome?.inventory;
+    const bridge = $("managementBridge").value;
+    if (!inventory?.home?.id || !bridge) return;
+    const result = await api(
+      `/api/bridges/${encodeURIComponent(bridge)}/apple-home/selection`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          home_id: inventory.home.id,
+          hue_room_ids: [...state.appleSelectedRoomIds],
+        }),
+      }
+    );
+    state.appleSelectedRoomIds = new Set(result.hue_room_ids || []);
+    if (state.appleHomePlan) {
+      state.appleHomePlan.selected_hue_room_ids = [...state.appleSelectedRoomIds];
+      renderAppleHomePlan(state.appleHomePlan);
+    }
+  }
+
+  function selectedAppleMoves(plan) {
+    return (plan.actions || []).filter(move =>
+      state.appleSelectedRoomIds.has(move.hue_room_id)
+    );
+  }
+
   function renderAppleHomePlan(plan, { resetDraft = false } = {}) {
     state.appleHomePlan = plan;
-    if (resetDraft) initializeAppleRoomDraft(plan);
+    if (resetDraft) {
+      initializeAppleRoomDraft(plan);
+      initializeAppleRoomSelection(plan);
+    } else if (!state.appleSelectedRoomIds.size && (plan.rooms || []).length) {
+      initializeAppleRoomSelection(plan);
+    }
 
     const summary = plan.summary || {};
+    const selectedMoves = selectedAppleMoves(plan);
     const summaryRoot = $("appleHomeSummary");
     summaryRoot.replaceChildren();
     const chips = [
       [`${summary.mapped_rooms || 0}/${summary.hue_rooms || 0} pièce(s) associée(s)`, summary.unmapped_rooms ? "warn" : "good"],
-      [`${summary.moves || 0} déplacement(s)`, summary.moves ? "warn" : "good"],
+      [`${state.appleSelectedRoomIds.size}/${(plan.rooms || []).length} pièce(s) sélectionnée(s)`, state.appleSelectedRoomIds.size ? "good" : "warn"],
+      [`${selectedMoves.length}/${summary.moves || 0} déplacement(s) sélectionné(s)`, selectedMoves.length ? "warn" : "good"],
       [`${summary.already_correct || 0} déjà correct(s)`, "good"],
       [`${summary.unmatched_accessories || 0} accessoire(s) non reconnu(s)`, summary.unmatched_accessories ? "warn" : ""],
       [`${summary.ambiguous_accessories || 0} correspondance(s) ambiguë(s)`, summary.ambiguous_accessories ? "warn" : ""],
@@ -1636,10 +1707,54 @@
     title.textContent = t("apple.mappingTitle");
     mappingRoot.append(title);
 
+    const selectionToolbar = document.createElement("div");
+    selectionToolbar.className = "audit-toolbar";
+    const selectionLabel = document.createElement("strong");
+    selectionLabel.textContent = t("apple.syncSelectionTitle");
+    const selectAll = document.createElement("button");
+    selectAll.type = "button";
+    selectAll.textContent = t("apple.selectAll");
+    selectAll.addEventListener("click", () => {
+      state.appleSelectedRoomIds = new Set((plan.rooms || []).map(room => room.hue_room_id));
+      persistAppleRoomSelection().catch(e => status(e.message, "bad"));
+    });
+    const selectNone = document.createElement("button");
+    selectNone.type = "button";
+    selectNone.textContent = t("apple.selectNone");
+    selectNone.addEventListener("click", () => {
+      state.appleSelectedRoomIds = new Set();
+      persistAppleRoomSelection().catch(e => status(e.message, "bad"));
+    });
+    const selectionCount = document.createElement("span");
+    selectionCount.className = "pill";
+    selectionCount.textContent =
+      `${state.appleSelectedRoomIds.size}/${(plan.rooms || []).length}`;
+    selectionToolbar.append(selectionLabel, selectAll, selectNone, selectionCount);
+    mappingRoot.append(selectionToolbar);
+
     const appleRooms = state.appleHome?.inventory?.rooms || [];
     for (const room of plan.rooms || []) {
       const card = document.createElement("div");
-      card.className = "apple-room-card";
+      const roomSelected = state.appleSelectedRoomIds.has(room.hue_room_id);
+      card.className = roomSelected ? "apple-room-card" : "apple-room-card not-selected";
+
+      const selectRoomLabel = document.createElement("label");
+      selectRoomLabel.className = "apple-room-select";
+      const selectRoomCheckbox = document.createElement("input");
+      selectRoomCheckbox.type = "checkbox";
+      selectRoomCheckbox.checked = roomSelected;
+      const selectRoomText = document.createElement("span");
+      selectRoomText.textContent = t("apple.syncThisRoom");
+      selectRoomCheckbox.addEventListener("change", () => {
+        if (selectRoomCheckbox.checked) {
+          state.appleSelectedRoomIds.add(room.hue_room_id);
+        } else {
+          state.appleSelectedRoomIds.delete(room.hue_room_id);
+        }
+        persistAppleRoomSelection().catch(e => status(e.message, "bad"));
+      });
+      selectRoomLabel.append(selectRoomCheckbox, selectRoomText);
+      card.append(selectRoomLabel);
 
       const head = document.createElement("div");
       head.className = "apple-room-head";
@@ -1680,6 +1795,12 @@
       selectWrap.append(selectLabel, select);
       head.append(label, selectWrap);
       card.append(head);
+      if (!roomSelected) {
+        const excluded = document.createElement("p");
+        excluded.className = "muted";
+        excluded.textContent = t("apple.roomExcluded");
+        card.append(excluded);
+      }
       renderRoomImpact(room, card);
       mappingRoot.append(card);
     }
@@ -1697,13 +1818,13 @@
     movesTitle.style.marginTop = "12px";
     movesTitle.textContent = t("apple.actions");
     movesRoot.append(movesTitle);
-    if (!(plan.actions || []).length) {
+    if (!selectedMoves.length) {
       const ok = document.createElement("p");
       ok.className = "muted";
       ok.textContent = t("apple.noGlobalMove");
       movesRoot.append(ok);
     } else {
-      for (const move of plan.actions || []) {
+      for (const move of selectedMoves) {
         const item = document.createElement("div");
         item.className = "dependency";
         item.innerHTML =
@@ -2428,6 +2549,7 @@
     loadIgnoredDiagnostics().catch(e => status(e.message, "bad"));
     refreshMonitor().catch(e => status(e.message, "bad"));
     state.appleHomePlan = null;
+    state.appleSelectedRoomIds = new Set();
     state.appleRoomDraft = {};
     state.appleRoomSaved = {};
     state.applePreviewSeq += 1;

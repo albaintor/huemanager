@@ -152,6 +152,15 @@ private struct SyncPlan: Codable {
     let devices: [SyncDeviceRow]?
     let actions: [SyncMove]
     let summary: SyncSummary
+    let selectedHueRoomIDs: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case rooms
+        case devices
+        case actions
+        case summary
+        case selectedHueRoomIDs = "selected_hue_room_ids"
+    }
 }
 
 struct BridgeInfo: Codable, Identifiable, Hashable {
@@ -207,6 +216,16 @@ struct SyncDeviceRow: Codable, Identifiable {
 private struct HealthResponse: Codable {
     let status: String
     let version: String
+}
+
+private struct RoomSelectionRequest: Codable {
+    let homeID: String
+    let hueRoomIDs: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case homeID = "home_id"
+        case hueRoomIDs = "hue_room_ids"
+    }
 }
 
 private struct HomeInfo: Codable {
@@ -440,16 +459,42 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         }
         selectedHueRoomIDs = updated
         persistRoomSelection()
+        Task { await publishRoomSelection() }
     }
 
     func selectAllRooms() {
         selectedHueRoomIDs = Set(roomPlans.map(\.hueRoomID))
         persistRoomSelection()
+        Task { await publishRoomSelection() }
     }
 
     func deselectAllRooms() {
         selectedHueRoomIDs = []
         persistRoomSelection()
+        Task { await publishRoomSelection() }
+    }
+
+    private func publishRoomSelection() async {
+        guard let home = selectedHome else { return }
+        let bridge = bridgeProfile.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !bridge.isEmpty else { return }
+
+        let encodedBridge =
+            bridge.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+            ?? bridge
+        do {
+            _ = try await send(
+                path: "/api/bridges/\(encodedBridge)/apple-home/selection",
+                method: "PUT",
+                body: RoomSelectionRequest(
+                    homeID: home.uniqueIdentifier.uuidString,
+                    hueRoomIDs: selectedHueRoomIDs.sorted()
+                )
+            )
+        } catch {
+            status = "Sélection des pièces non enregistrée : \(error.localizedDescription)"
+            hasError = true
+        }
     }
 
     func start() {
@@ -1015,7 +1060,13 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
                 devices: plan.devices ?? [],
                 moves: plan.actions
             )
-            restoreRoomSelection(for: roomPlans)
+            if let selected = plan.selectedHueRoomIDs {
+                let available = Set(roomPlans.map(\.hueRoomID))
+                selectedHueRoomIDs = Set(selected).intersection(available)
+                persistRoomSelection()
+            } else {
+                restoreRoomSelection(for: roomPlans)
+            }
             planSummary = plan.summary
             if plan.actions.isEmpty {
                 status = "Aucun déplacement nécessaire."

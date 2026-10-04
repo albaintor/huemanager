@@ -14,11 +14,13 @@ from pydantic import BaseModel, Field
 from .apple_home import (
     build_apple_home_sync_plan,
     get_room_map,
+    get_room_selection,
     load_apple_home_state,
     record_sync_result,
     save_apple_home_state,
     store_inventory,
     store_room_map,
+    store_room_selection,
 )
 from .backup import (
     analyse_bridge_restore,
@@ -123,6 +125,11 @@ class AppleHomeInventoryRequest(BaseModel):
 class AppleHomeRoomMapRequest(BaseModel):
     home_id: str = Field(min_length=1)
     room_map: dict[str, str] = Field(default_factory=dict)
+
+
+class AppleHomeRoomSelectionRequest(BaseModel):
+    home_id: str = Field(min_length=1)
+    hue_room_ids: list[str] = Field(default_factory=list, max_length=500)
 
 
 class AppleHomeSyncResultRequest(BaseModel):
@@ -328,11 +335,16 @@ def apple_home_plan(bridge_name: str) -> dict:
             )
         home_id = str((inventory.get("home") or {}).get("id") or "")
         room_map = get_room_map(state, bridge_name, home_id)
-        return build_apple_home_sync_plan(
+        plan = build_apple_home_sync_plan(
             inventory_tree(_client(bridge_name)),
             inventory,
             room_map=room_map,
         )
+        selected = get_room_selection(state, bridge_name, home_id)
+        if selected is None:
+            selected = [room["hue_room_id"] for room in plan.get("rooms", [])]
+        plan["selected_hue_room_ids"] = selected
+        return plan
     except Exception as exc:
         raise _api_error(exc) from exc
 
@@ -355,11 +367,16 @@ def preview_apple_home_room_map(
             raise MigrationError(
                 "The Apple Home inventory changed. Refresh the Home inventory before previewing."
             )
-        return build_apple_home_sync_plan(
+        plan = build_apple_home_sync_plan(
             inventory_tree(_client(bridge_name)),
             inventory,
             room_map=request.room_map,
         )
+        selected = get_room_selection(state, bridge_name, request.home_id)
+        if selected is None:
+            selected = [room["hue_room_id"] for room in plan.get("rooms", [])]
+        plan["selected_hue_room_ids"] = selected
+        return plan
     except Exception as exc:
         raise _api_error(exc) from exc
 
@@ -385,7 +402,44 @@ def update_apple_home_room_map(
             inventory,
             room_map=get_room_map(state, bridge_name, request.home_id),
         )
+        selected = get_room_selection(state, bridge_name, request.home_id)
+        if selected is None:
+            selected = [room["hue_room_id"] for room in plan.get("rooms", [])]
+        plan["selected_hue_room_ids"] = selected
         return {"ok": True, "room_map": request.room_map, "plan": plan}
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@app.put("/api/bridges/{bridge_name}/apple-home/selection")
+def update_apple_home_room_selection(
+    bridge_name: str,
+    request: AppleHomeRoomSelectionRequest,
+) -> dict:
+    try:
+        state = _load_apple_home()
+        inventory = state.get("inventory")
+        if not inventory:
+            raise MigrationError(
+                "No Apple Home inventory available. Open HueManager Home Sync on an Apple device first."
+            )
+        inventory_home_id = str((inventory.get("home") or {}).get("id") or "")
+        if inventory_home_id != request.home_id:
+            raise MigrationError(
+                "The Apple Home inventory changed. Refresh the Home inventory before selecting rooms."
+            )
+        state = store_room_selection(
+            state,
+            bridge_name,
+            request.home_id,
+            request.hue_room_ids,
+        )
+        _save_apple_home(state)
+        return {
+            "ok": True,
+            "home_id": request.home_id,
+            "hue_room_ids": get_room_selection(state, bridge_name, request.home_id) or [],
+        }
     except Exception as exc:
         raise _api_error(exc) from exc
 

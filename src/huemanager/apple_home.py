@@ -54,6 +54,13 @@ GENERIC_DEVICE_WORDS = {
 }
 
 HUE_ACCESSORY_HINTS = ("hue", "philips", "signify")
+FUZZY_MATCHABLE_HUE_SERVICE_TYPES = {
+    "light",
+    "motion",
+    "temperature",
+    "light_level",
+    "contact",
+}
 
 
 def _words(value: str | None) -> list[str]:
@@ -197,6 +204,15 @@ def _hue_identifier_candidates(device: dict) -> set[str]:
     return candidates
 
 
+def _hue_device_allows_fuzzy_match(device: dict) -> bool:
+    service_types = {
+        str(service.get("type") or "")
+        for service in device.get("services", [])
+        if service.get("type")
+    }
+    return bool(service_types & FUZZY_MATCHABLE_HUE_SERVICE_TYPES)
+
+
 def _apple_accessory_origin(accessory: dict) -> str:
     """Classify an Apple Home accessory for Hue-focused previews.
 
@@ -240,6 +256,7 @@ def load_apple_home_state(path: Path) -> dict:
             "updated_at": None,
             "inventory": None,
             "room_maps": {},
+            "room_selections": {},
             "last_sync": None,
         }
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -249,6 +266,7 @@ def load_apple_home_state(path: Path) -> dict:
         )
     payload.setdefault("inventory", None)
     payload.setdefault("room_maps", {})
+    payload.setdefault("room_selections", {})
     payload.setdefault("last_sync", None)
     return payload
 
@@ -291,6 +309,38 @@ def get_room_map(state: dict, bridge_profile: str, home_id: str) -> dict[str, st
     return copy.deepcopy(
         state.get("room_maps", {}).get(bridge_profile, {}).get(home_id, {})
     )
+
+
+def store_room_selection(
+    state: dict,
+    bridge_profile: str,
+    home_id: str,
+    hue_room_ids: list[str],
+) -> dict:
+    result = copy.deepcopy(state)
+    result.setdefault("room_selections", {}).setdefault(bridge_profile, {})[home_id] = sorted(
+        {
+            str(room_id)
+            for room_id in hue_room_ids
+            if str(room_id)
+        }
+    )
+    return result
+
+
+def get_room_selection(
+    state: dict,
+    bridge_profile: str,
+    home_id: str,
+) -> list[str] | None:
+    bridge = state.get("room_selections", {}).get(bridge_profile, {})
+    if home_id not in bridge:
+        return None
+    return [
+        str(room_id)
+        for room_id in copy.deepcopy(bridge.get(home_id, []))
+        if str(room_id)
+    ]
 
 
 def record_sync_result(state: dict, result: dict) -> dict:
@@ -401,6 +451,12 @@ def build_apple_home_sync_plan(
                 "confidence": round(confidence, 3) if confidence is not None else None,
             }
 
+    hue_room_by_apple_room_id = {
+        str(apple_room.get("id")): hue_room_id
+        for hue_room_id, apple_room in desired_room_by_hue_id.items()
+        if apple_room.get("id")
+    }
+
     moves: list[dict] = []
     device_rows: list[dict] = []
     matched_apple_ids: set[str] = set()
@@ -435,14 +491,24 @@ def build_apple_home_sync_plan(
                 elif len(name_matches) > 1:
                     candidates = name_matches
                     match_method = "name_ambiguous"
-                else:
+                elif _hue_device_allows_fuzzy_match(device):
+                    fuzzy_candidates = []
+                    for accessory in candidate_accessories:
+                        accessory_id = str(accessory.get("id"))
+                        if accessory_id in matched_apple_ids:
+                            continue
+                        current_apple_room_id = str(accessory.get("room_id") or "")
+                        owner_hue_room_id = hue_room_by_apple_room_id.get(current_apple_room_id)
+                        if owner_hue_room_id and owner_hue_room_id != hue_room_id:
+                            # A fuzzy fallback must never steal an accessory from
+                            # another Apple room that already maps to a different
+                            # Hue room. Exact serial/name matching may still move it.
+                            continue
+                        fuzzy_candidates.append(accessory)
+
                     fuzzy, fuzzy_score, fuzzy_suggestions = _best_fuzzy_match(
                         device_name,
-                        [
-                            accessory
-                            for accessory in candidate_accessories
-                            if str(accessory.get("id")) not in matched_apple_ids
-                        ],
+                        fuzzy_candidates,
                         threshold=0.90,
                         ambiguity_gap=0.12,
                         ignore_generic_device_words=True,
@@ -453,6 +519,9 @@ def build_apple_home_sync_plan(
                     elif fuzzy_suggestions:
                         candidates = []
                         match_method = "heuristic_unmatched"
+                else:
+                    candidates = []
+                    match_method = "unsupported_fuzzy_match"
             else:
                 candidates = list(serial_matches.values())
                 match_method = "serial_ambiguous"

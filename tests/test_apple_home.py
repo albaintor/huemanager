@@ -1,0 +1,146 @@
+from __future__ import annotations
+
+from huemanager.apple_home import (
+    build_apple_home_sync_plan,
+    get_room_selection,
+    store_room_selection,
+)
+
+
+def test_room_selection_is_persisted_per_bridge_and_home() -> None:
+    state = {
+        "schema": 1,
+        "inventory": None,
+        "room_maps": {},
+        "room_selections": {},
+        "last_sync": None,
+    }
+
+    updated = store_room_selection(
+        state,
+        "Bridge Pro",
+        "home-1",
+        ["room-b", "room-a", "room-a"],
+    )
+
+    assert get_room_selection(updated, "Bridge Pro", "home-1") == [
+        "room-a",
+        "room-b",
+    ]
+    assert get_room_selection(updated, "Bridge ancien", "home-1") is None
+
+
+def test_control_only_hue_device_is_not_fuzzy_matched_to_another_room() -> None:
+    hue_tree = {
+        "rooms": [
+            {
+                "id": "hue-buanderie",
+                "name": "Sous-sol buanderie",
+                "devices": [
+                    {
+                        "id": "switch-1",
+                        "name": "Sous-sol détecteur",
+                        "services": [
+                            {"type": "button"},
+                            {"type": "relative_rotary"},
+                        ],
+                        "identifiers": {
+                            "zigbee_macs": [],
+                            "v1_uniqueids": [],
+                            "pairing_fields": [],
+                        },
+                    }
+                ],
+            },
+            {
+                "id": "hue-descente",
+                "name": "Sous-sol descente",
+                "devices": [],
+            },
+        ]
+    }
+    inventory = {
+        "home": {"id": "home-1", "name": "Maison"},
+        "rooms": [
+            {"id": "apple-buanderie", "name": "Sous-sol buanderie"},
+            {"id": "apple-descente", "name": "Sous-sol descente"},
+        ],
+        "accessories": [
+            {
+                "id": "motion-1",
+                "name": "Sous-sol détecteur",
+                "room_id": "apple-descente",
+                "room_name": "Sous-sol descente",
+                "manufacturer": "Signify Netherlands B.V.",
+                "model": "SML001",
+                "serial_number": None,
+                "is_bridged": True,
+                "bridge_name": "Philips Hue",
+                "bridge_manufacturer": "Signify",
+                "bridge_model": "BSB003",
+            }
+        ],
+    }
+
+    plan = build_apple_home_sync_plan(hue_tree, inventory)
+
+    assert plan["actions"] == []
+    device = plan["devices"][0]
+    assert device["hue_device_id"] == "switch-1"
+    assert device["status"] == "unmatched_accessory"
+    assert device["match_method"] == "unsupported_fuzzy_match"
+
+
+def test_fuzzy_match_does_not_steal_accessory_from_other_mapped_room() -> None:
+    hue_tree = {
+        "rooms": [
+            {
+                "id": "hue-a",
+                "name": "Pièce A",
+                "devices": [
+                    {
+                        "id": "light-a",
+                        "name": "Lampe bureau",
+                        "services": [{"type": "light"}],
+                        "identifiers": {
+                            "zigbee_macs": [],
+                            "v1_uniqueids": [],
+                            "pairing_fields": [],
+                        },
+                    }
+                ],
+            },
+            {
+                "id": "hue-b",
+                "name": "Pièce B",
+                "devices": [],
+            },
+        ]
+    }
+    inventory = {
+        "home": {"id": "home-1", "name": "Maison"},
+        "rooms": [
+            {"id": "apple-a", "name": "Pièce A"},
+            {"id": "apple-b", "name": "Pièce B"},
+        ],
+        "accessories": [
+            {
+                "id": "apple-light-b",
+                "name": "Lampe bureau 2",
+                "room_id": "apple-b",
+                "room_name": "Pièce B",
+                "manufacturer": "Signify",
+                "model": "LCT001",
+                "serial_number": None,
+                "is_bridged": True,
+                "bridge_name": "Philips Hue",
+                "bridge_manufacturer": "Signify",
+                "bridge_model": "BSB003",
+            }
+        ],
+    }
+
+    plan = build_apple_home_sync_plan(hue_tree, inventory)
+
+    assert plan["actions"] == []
+    assert plan["devices"][0]["status"] == "unmatched_accessory"
