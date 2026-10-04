@@ -14,7 +14,6 @@ from typing import Any
 from .client import HueApiError, HueBridgeClient
 from .diagnostics import collect_monitor_sample
 
-
 LOGGER = logging.getLogger(__name__)
 
 
@@ -431,7 +430,13 @@ class ServiceConnectivityMonitor:
                 monotonic_now = time.monotonic()
                 try:
                     self._probe()
-                except Exception as exc:
+                except (
+                    HueApiError,
+                    OSError,
+                    ValueError,
+                    KeyError,
+                    IndexError,
+                ) as exc:
                     self._record_probe(
                         available=False,
                         checked_at=checked_at,
