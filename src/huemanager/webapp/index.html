@@ -1434,9 +1434,12 @@
     }
     const home = inventory.home || {};
     const lastSync = data.last_sync;
+    const accessories = inventory.accessories || [];
+    const serialCount = accessories.filter(item => item.serial_number).length;
     $("appleHomeStatus").textContent =
       `Maison « ${home.name || "?"} » · ${inventory.rooms?.length || 0} pièce(s) · ` +
-      `${inventory.accessories?.length || 0} accessoire(s) · inventaire ${inventory.received_at || "reçu"}` +
+      `${accessories.length} accessoire(s) · ${serialCount} identifiant(s) série HomeKit · ` +
+      `inventaire ${inventory.received_at || "reçu"}` +
       (lastSync ? ` · dernier apply: ${lastSync.moved || 0} déplacé(s), ${lastSync.failed?.length || 0} échec(s)` : "");
     $("planAppleHome").disabled = false;
   }

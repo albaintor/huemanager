@@ -783,14 +783,28 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         homes.first { $0.uniqueIdentifier.uuidString == selectedHomeID }
     }
 
-    private func homeKitSerialNumber(for accessory: HMAccessory) -> String? {
+    private func serialString(from characteristic: HMCharacteristic) -> String? {
+        guard let value = characteristic.value as? String else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func homeKitSerialNumber(for accessory: HMAccessory) async -> String? {
         for service in accessory.services {
             for characteristic in service.characteristics
             where characteristic.characteristicType == HMCharacteristicTypeSerialNumber {
-                if let value = characteristic.value as? String {
-                    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !trimmed.isEmpty {
-                        return trimmed
+                let cachedValue = serialString(from: characteristic)
+                return await withCheckedContinuation { continuation in
+                    characteristic.readValue { [weak self] error in
+                        guard let self else {
+                            continuation.resume(returning: cachedValue)
+                            return
+                        }
+                        if error == nil, let refreshed = self.serialString(from: characteristic) {
+                            continuation.resume(returning: refreshed)
+                        } else {
+                            continuation.resume(returning: cachedValue)
+                        }
                     }
                 }
             }
@@ -798,7 +812,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         return nil
     }
 
-    private func inventory(for home: HMHome) -> HomeInventory {
+    private func inventory(for home: HMHome) async -> HomeInventory {
         var parentBridgeByAccessoryID: [String: HMAccessory] = [:]
         for possibleBridge in home.accessories {
             for bridgedAccessory in possibleBridge.bridgedAccessories {
@@ -806,6 +820,31 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
                     bridgedAccessory.uniqueIdentifier.uuidString
                 ] = possibleBridge
             }
+        }
+
+        var accessoryRows: [AccessoryInfo] = []
+        accessoryRows.reserveCapacity(home.accessories.count)
+        for accessory in home.accessories {
+            let bridge = parentBridgeByAccessoryID[
+                accessory.uniqueIdentifier.uuidString
+            ]
+            let serialNumber = await homeKitSerialNumber(for: accessory)
+            accessoryRows.append(
+                AccessoryInfo(
+                    id: accessory.uniqueIdentifier.uuidString,
+                    name: accessory.name,
+                    roomID: accessory.room?.uniqueIdentifier.uuidString,
+                    roomName: accessory.room?.name,
+                    manufacturer: accessory.manufacturer,
+                    model: accessory.model,
+                    serialNumber: serialNumber,
+                    isBridged: accessory.isBridged,
+                    bridgeID: bridge?.uniqueIdentifier.uuidString,
+                    bridgeName: bridge?.name,
+                    bridgeManufacturer: bridge?.manufacturer,
+                    bridgeModel: bridge?.model
+                )
+            )
         }
 
         return HomeInventory(
@@ -816,25 +855,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
             rooms: home.rooms.map {
                 RoomInfo(id: $0.uniqueIdentifier.uuidString, name: $0.name)
             },
-            accessories: home.accessories.map { accessory in
-                let bridge = parentBridgeByAccessoryID[
-                    accessory.uniqueIdentifier.uuidString
-                ]
-                return AccessoryInfo(
-                    id: accessory.uniqueIdentifier.uuidString,
-                    name: accessory.name,
-                    roomID: accessory.room?.uniqueIdentifier.uuidString,
-                    roomName: accessory.room?.name,
-                    manufacturer: accessory.manufacturer,
-                    model: accessory.model,
-                    serialNumber: homeKitSerialNumber(for: accessory),
-                    isBridged: accessory.isBridged,
-                    bridgeID: bridge?.uniqueIdentifier.uuidString,
-                    bridgeName: bridge?.name,
-                    bridgeManufacturer: bridge?.manufacturer,
-                    bridgeModel: bridge?.model
-                )
-            }
+            accessories: accessoryRows
         )
     }
 
@@ -947,20 +968,31 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         defer { inventoryPublishing = false }
 
         do {
+            status = "Lecture des identifiants Apple Maison…"
+            let snapshot = await inventory(for: home)
+            let serialCount = snapshot.accessories.reduce(into: 0) { count, accessory in
+                if accessory.serialNumber != nil {
+                    count += 1
+                }
+            }
+
             status = "Publication de l’inventaire Apple Maison…"
             let data = try await send(
                 path: "/api/apple-home/inventory",
                 method: "POST",
-                body: inventory(for: home)
+                body: snapshot
             )
             let response = try JSONDecoder().decode(
                 InventoryPublishResponse.self,
                 from: data
             )
             lastPublishedInventoryAt = response.receivedAt
+            let identifierInfo =
+                "\(serialCount)/\(snapshot.accessories.count) numéro(s) de série HomeKit lu(s)"
             status = response.receivedAt == nil
-                ? "Inventaire Apple Maison publié dans HueManager."
-                : "Inventaire Apple Maison publié à \(lastPublishedInventoryDisplay)."
+                ? "Inventaire Apple Maison publié · \(identifierInfo)."
+                : "Inventaire Apple Maison publié à \(lastPublishedInventoryDisplay) · " +
+                    identifierInfo + "."
             hasError = false
         } catch {
             status = error.localizedDescription
