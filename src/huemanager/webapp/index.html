@@ -473,6 +473,38 @@
         <pre id="diagnosticResult" class="hidden"></pre>
 
         <hr style="margin:18px 0">
+        <h3 data-i18n="serviceMonitor.title">Surveillance du service API Hue</h3>
+        <p class="muted" data-i18n="serviceMonitor.description">
+          Vérifie l'API Hue locale authentifiée, sans ping et sans charger l'inventaire complet.
+          La surveillance continue jusqu'à un arrêt manuel. Seules les coupures et les reprises
+          de service sont conservées dans le journal.
+        </p>
+        <div class="row">
+          <div class="grow">
+            <label for="serviceMonitorInterval" data-i18n="serviceMonitor.interval">Intervalle</label>
+            <select id="serviceMonitorInterval">
+              <option value="10" selected>10 s</option>
+              <option value="30">30 s</option>
+              <option value="60">60 s</option>
+            </select>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="startServiceMonitor" class="primary" data-i18n="serviceMonitor.start">Démarrer</button>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="stopServiceMonitor" class="danger" disabled data-i18n="serviceMonitor.stop">Arrêter</button>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="copyServiceMonitor" disabled data-i18n="serviceMonitor.copy">Copier le journal</button>
+          </div>
+        </div>
+        <div id="serviceMonitorStatus" class="muted" style="margin-top:10px"></div>
+        <div id="serviceMonitorEvents"></div>
+
+        <hr style="margin:18px 0">
         <h3 data-i18n="monitor.title">Surveillance Zigbee dans le temps</h3>
         <p class="muted" data-i18n="monitor.description">
           Échantillonne périodiquement la connectivité et la latence locale. La surveillance s'arrête
@@ -586,6 +618,12 @@
       "diagnostics.ignoredHelp": "Coche les appareils volontairement coupés électriquement pour les exclure des surveillances futures. Les appareils déjà déconnectés au démarrage d’une surveillance sont aussi exclus automatiquement de l’analyse de flapping.",
       "diagnostics.saveIgnored": "Enregistrer les exclusions",
       "diagnostics.clearIgnored": "Réinitialiser les exclusions",
+      "serviceMonitor.title": "Surveillance du service API Hue",
+      "serviceMonitor.description": "Vérifie l’API Hue locale authentifiée, sans ping et sans charger l’inventaire complet. La surveillance continue jusqu’à un arrêt manuel. Seules les coupures et les reprises de service sont conservées dans le journal.",
+      "serviceMonitor.interval": "Intervalle",
+      "serviceMonitor.start": "Démarrer",
+      "serviceMonitor.stop": "Arrêter",
+      "serviceMonitor.copy": "Copier le journal",
       "monitor.title": "Surveillance Zigbee dans le temps",
       "monitor.description": "Échantillonne périodiquement la connectivité et la latence locale. La surveillance s’arrête automatiquement à la fin de la durée choisie et peut être arrêtée manuellement à tout moment.",
       "monitor.duration": "Durée maximale",
@@ -753,6 +791,12 @@
       "diagnostics.ignoredHelp": "Select devices that are intentionally power-cut to exclude them from future monitoring. Devices already disconnected when monitoring starts are also automatically excluded from flapping analysis.",
       "diagnostics.saveIgnored": "Save exclusions",
       "diagnostics.clearIgnored": "Reset exclusions",
+      "serviceMonitor.title": "Hue API service monitoring",
+      "serviceMonitor.description": "Checks the authenticated local Hue API without pinging and without loading the full inventory. Monitoring continues until manually stopped. Only outages and service restorations are retained in the log.",
+      "serviceMonitor.interval": "Interval",
+      "serviceMonitor.start": "Start",
+      "serviceMonitor.stop": "Stop",
+      "serviceMonitor.copy": "Copy log",
       "monitor.title": "Longitudinal Zigbee monitoring",
       "monitor.description": "Periodically samples connectivity and local API latency. Monitoring stops automatically after the selected duration and can be stopped manually at any time.",
       "monitor.duration": "Maximum duration",
@@ -903,6 +947,8 @@
     ignoredDeviceIds: new Set(),
     monitor: null,
     monitorPollTimer: null,
+    serviceMonitor: null,
+    serviceMonitorPollTimer: null,
     matterFabrics: null,
     homeKitState: null,
     appleHome: null,
@@ -1675,6 +1721,160 @@
     if (state.diagnostics) renderDisconnectedDevices(state.diagnostics);
     status("Exclusions de diagnostic réinitialisées.", "good");
   }
+
+  function stopServiceMonitorPolling() {
+    if (state.serviceMonitorPollTimer) {
+      clearTimeout(state.serviceMonitorPollTimer);
+      state.serviceMonitorPollTimer = null;
+    }
+  }
+
+  function serviceMonitorLogText(data) {
+    return (data?.events || []).map(event => {
+      if (event.type === "down") {
+        return `${event.at || "?"} | DOWN | ${event.error || "Hue API unavailable"}`;
+      }
+      if (event.type === "restored") {
+        const duration = event.downtime_seconds == null
+          ? ""
+          : ` | downtime ${event.downtime_seconds} s`;
+        return `${event.at || "?"} | RESTORED${duration}`;
+      }
+      return `${event.at || "?"} | ${event.type || "event"}`;
+    }).join("\n");
+  }
+
+  function renderServiceMonitor(data) {
+    state.serviceMonitor = data;
+    const running = ["starting", "running"].includes(data?.status);
+    $("startServiceMonitor").disabled = running;
+    $("stopServiceMonitor").disabled = !running;
+    $("copyServiceMonitor").disabled = !(data?.events || []).length;
+
+    const statusRoot = $("serviceMonitorStatus");
+    const eventsRoot = $("serviceMonitorEvents");
+    eventsRoot.replaceChildren();
+
+    if (!data || data.status === "idle") {
+      statusRoot.textContent = "Aucune surveillance du service API lancée.";
+      return;
+    }
+
+    const stateLabel = data.current_state === "up"
+      ? "API disponible"
+      : data.current_state === "down"
+        ? "API indisponible"
+        : "état en attente";
+    statusRoot.textContent =
+      `État : ${data.status} · ${stateLabel} · ${data.checks || 0} vérification(s)`
+      + ` · intervalle ${data.interval_seconds || 10} s`
+      + (data.last_check_at ? ` · dernière vérification ${data.last_check_at}` : "")
+      + (data.last_error && data.current_state === "down"
+        ? ` · erreur : ${data.last_error}`
+        : "");
+
+    const events = data.events || [];
+    if (!events.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = running
+        ? "Aucune coupure détectée depuis le démarrage."
+        : "Aucune coupure détectée pendant cette surveillance.";
+      eventsRoot.append(empty);
+      return;
+    }
+
+    for (const event of [...events].reverse()) {
+      const box = document.createElement("div");
+      box.className = event.type === "down" ? "audit-issue warning" : "audit-issue";
+      const title = document.createElement("h3");
+      title.textContent = event.type === "down"
+        ? "Coupure du service API Hue"
+        : "Service API Hue rétabli";
+      const detail = document.createElement("p");
+      if (event.type === "down") {
+        detail.textContent =
+          `${event.at || "?"} · ${event.error || "API Hue indisponible"}`;
+      } else {
+        const duration = event.downtime_seconds == null
+          ? "durée inconnue"
+          : `coupure ~${event.downtime_seconds} s`;
+        detail.textContent = `${event.at || "?"} · ${duration}`;
+      }
+      box.append(title, detail);
+      eventsRoot.append(box);
+    }
+  }
+
+  async function refreshServiceMonitor() {
+    const bridge = $("managementBridge").value;
+    if (!bridge) return;
+    const data = await api(
+      "/api/bridges/" + encodeURIComponent(bridge) + "/diagnostics/service-monitor"
+    );
+    renderServiceMonitor(data);
+    stopServiceMonitorPolling();
+    if (["starting", "running"].includes(data.status)) {
+      state.serviceMonitorPollTimer = setTimeout(() => {
+        refreshServiceMonitor().catch(e => status(e.message, "bad"));
+      }, 10000);
+    }
+  }
+
+  async function startServiceMonitor() {
+    const bridge = $("managementBridge").value;
+    if (!bridge) return;
+    stopServiceMonitorPolling();
+    const data = await api(
+      "/api/bridges/" + encodeURIComponent(bridge) + "/diagnostics/service-monitor",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          interval_seconds: Number($("serviceMonitorInterval").value),
+        }),
+      }
+    );
+    renderServiceMonitor(data);
+    status("Surveillance du service API Hue démarrée pour " + bridge + ".", "good");
+    state.serviceMonitorPollTimer = setTimeout(() => {
+      refreshServiceMonitor().catch(e => status(e.message, "bad"));
+    }, 10000);
+  }
+
+  async function stopServiceMonitor() {
+    const bridge = $("managementBridge").value;
+    if (!bridge) return;
+    const data = await api(
+      "/api/bridges/" + encodeURIComponent(bridge) + "/diagnostics/service-monitor/stop",
+      {method: "POST"}
+    );
+    stopServiceMonitorPolling();
+    renderServiceMonitor(data);
+    status("Surveillance du service API Hue arrêtée.", "good");
+  }
+
+  async function copyServiceMonitor() {
+    const payload = serviceMonitorLogText(state.serviceMonitor);
+    if (!payload) return;
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(payload);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = payload;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.append(textarea);
+      textarea.focus();
+      textarea.select();
+      if (!document.execCommand("copy")) {
+        textarea.remove();
+        throw new Error("Copie automatique indisponible.");
+      }
+      textarea.remove();
+    }
+    status("Journal des coupures API Hue copié.", "good");
+  }
+
 
   function stopMonitorPolling() {
     if (state.monitorPollTimer) {
@@ -2975,6 +3175,16 @@
   $("clearIgnoredDiagnostics").addEventListener("click", () => {
     clearIgnoredDiagnostics().catch(e => status(e.message, "bad"));
   });
+  $("startServiceMonitor").addEventListener("click", () => {
+    startServiceMonitor().catch(e => status(e.message, "bad"));
+  });
+  $("stopServiceMonitor").addEventListener("click", () => {
+    stopServiceMonitor().catch(e => status(e.message, "bad"));
+  });
+  $("copyServiceMonitor").addEventListener("click", () => {
+    copyServiceMonitor().catch(e => status(e.message, "bad"));
+  });
+
   $("startMonitor").addEventListener("click", () => {
     startMonitor().catch(e => status(e.message, "bad"));
   });
@@ -3614,6 +3824,7 @@
 
   $("managementBridge").addEventListener("change", () => {
     stopMonitorPolling();
+    stopServiceMonitorPolling();
     state.matterFabrics = null;
     state.homeKitState = null;
     $("matterFabricStatus").textContent = "";
@@ -3624,6 +3835,12 @@
     state.diagnostics = null;
     state.ignoredDeviceIds = new Set();
     state.monitor = null;
+    state.serviceMonitor = null;
+    $("serviceMonitorStatus").textContent = "";
+    $("serviceMonitorEvents").replaceChildren();
+    $("startServiceMonitor").disabled = false;
+    $("stopServiceMonitor").disabled = true;
+    $("copyServiceMonitor").disabled = true;
     $("diagnosticSummary").replaceChildren();
     $("diagnosticFindings").replaceChildren();
     $("diagnosticDisconnectedDevices").replaceChildren();
@@ -3643,6 +3860,7 @@
     $("startMonitor").disabled = false;
     loadIgnoredDiagnostics().catch(e => status(e.message, "bad"));
     refreshMonitor().catch(e => status(e.message, "bad"));
+    refreshServiceMonitor().catch(e => status(e.message, "bad"));
     state.appleHomePlan = null;
     state.appleIdentityDiagnostics = null;
     state.appleSelectedRoomIds = new Set();
@@ -3680,6 +3898,7 @@
     .then(() => Promise.all([
       loadIgnoredDiagnostics(),
       refreshMonitor(),
+      refreshServiceMonitor(),
       loadMatterFabrics(),
       loadHomeKitState(),
     ]))

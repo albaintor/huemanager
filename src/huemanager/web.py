@@ -55,7 +55,7 @@ from .migration import (
     room_deletion_impact,
     save_snapshot,
 )
-from .monitoring import DiagnosticMonitorManager
+from .monitoring import DiagnosticMonitorManager, ServiceConnectivityMonitorManager
 from .session import (
     load_migration_session,
     new_migration_session,
@@ -79,6 +79,7 @@ MATTER_VENDOR_NAMES = {
     **APPLE_MATTER_VENDOR_IDS,
 }
 diagnostic_monitors = DiagnosticMonitorManager()
+service_connectivity_monitors = ServiceConnectivityMonitorManager()
 
 
 class PairRequest(BaseModel):
@@ -129,6 +130,10 @@ class DiagnosticIgnoredDevicesRequest(BaseModel):
 class DiagnosticMonitorRequest(BaseModel):
     duration_seconds: int = Field(default=300, ge=30, le=3600)
     interval_seconds: int = Field(default=10, ge=5, le=60)
+
+
+class ServiceConnectivityMonitorRequest(BaseModel):
+    interval_seconds: int = Field(default=10, ge=5, le=300)
 
 
 class AppleHomeInventoryRequest(BaseModel):
@@ -1005,6 +1010,37 @@ def get_diagnostic_monitor(bridge_name: str) -> dict:
 def stop_diagnostic_monitor(bridge_name: str) -> dict:
     try:
         return diagnostic_monitors.stop(bridge_name)
+    except KeyError as exc:
+        raise _api_error(exc) from exc
+
+
+@app.post("/api/bridges/{bridge_name}/diagnostics/service-monitor")
+def start_service_connectivity_monitor(
+    bridge_name: str,
+    request: ServiceConnectivityMonitorRequest,
+) -> dict:
+    try:
+        return service_connectivity_monitors.start(
+            bridge_name,
+            _client(bridge_name),
+            interval_seconds=request.interval_seconds,
+        )
+    except (HueApiError, OSError, ValueError, KeyError) as exc:
+        raise _api_error(exc) from exc
+
+
+@app.get("/api/bridges/{bridge_name}/diagnostics/service-monitor")
+def get_service_connectivity_monitor(bridge_name: str) -> dict:
+    result = service_connectivity_monitors.get(bridge_name)
+    if result is None:
+        return {"bridge": bridge_name, "status": "idle"}
+    return result
+
+
+@app.post("/api/bridges/{bridge_name}/diagnostics/service-monitor/stop")
+def stop_service_connectivity_monitor(bridge_name: str) -> dict:
+    try:
+        return service_connectivity_monitors.stop(bridge_name)
     except KeyError as exc:
         raise _api_error(exc) from exc
 
