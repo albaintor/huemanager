@@ -417,7 +417,7 @@
         <div class="row">
           <button id="refreshAppleHome" data-i18n="apple.refresh">Relire l’inventaire reçu</button>
           <button id="planAppleHome" class="primary" disabled data-i18n="apple.analyze">Analyser Hue ↔ Maison</button>
-          <button id="saveAppleRoomMap" disabled data-i18n="apple.save">Enregistrer les correspondances</button>
+          <button id="saveAppleRoomMap" disabled data-i18n="apple.save">Enregistrer la configuration</button>
         </div>
         <div id="appleHomeStatus" class="muted" style="margin-top:10px">
           <span data-i18n="apple.noInventory">Aucun inventaire Apple Maison reçu.</span>
@@ -500,7 +500,9 @@
       "apple.description": "L’inventaire Apple Maison est publié par l’app iOS HueManager Home Sync. Ici, tu peux relire le dernier inventaire reçu, puis sélectionner une pièce Apple pour chaque pièce Hue et vérifier l’impact avant enregistrement.",
       "apple.refresh": "Relire l’inventaire reçu",
       "apple.analyze": "Analyser Hue ↔ Maison",
-      "apple.save": "Enregistrer les correspondances",
+      "apple.save": "Enregistrer la configuration",
+      "apple.selectionSaved": "Sélection des pièces enregistrée",
+      "apple.selectionDraft": "Sélection des pièces modifiée — enregistre la configuration",
       "apple.noInventory": "Aucun inventaire Apple Maison reçu.",
       "apple.mappingTitle": "Correspondance des pièces et prévisualisation",
       "apple.syncSelectionTitle": "Pièces à synchroniser",
@@ -606,7 +608,9 @@
       "apple.description": "The Apple Home inventory is published by the iOS HueManager Home Sync app. Here you can reload the last inventory received, then select an Apple Home room for each Hue room and review the impact before saving.",
       "apple.refresh": "Reload received inventory",
       "apple.analyze": "Analyze Hue ↔ Home",
-      "apple.save": "Save room mappings",
+      "apple.save": "Save configuration",
+      "apple.selectionSaved": "Room selection saved",
+      "apple.selectionDraft": "Room selection changed — save the configuration",
       "apple.noInventory": "No Apple Home inventory received.",
       "apple.mappingTitle": "Room mapping and preview",
       "apple.syncSelectionTitle": "Rooms to synchronize",
@@ -667,6 +671,8 @@
     appleHome: null,
     appleHomePlan: null,
     appleSelectedRoomIds: new Set(),
+    appleSelectedRoomSavedIds: new Set(),
+    appleSelectionInitialized: false,
     appleRoomDraft: {},
     appleRoomSaved: {},
     applePreviewSeq: 0,
@@ -1446,9 +1452,19 @@
     return canonicalRoomMap(state.appleRoomDraft) !== canonicalRoomMap(state.appleRoomSaved);
   }
 
+  function canonicalRoomSelection(values) {
+    return JSON.stringify([...values].sort());
+  }
+
+  function appleRoomSelectionDirty() {
+    return canonicalRoomSelection(state.appleSelectedRoomIds) !==
+      canonicalRoomSelection(state.appleSelectedRoomSavedIds);
+  }
+
   function updateAppleSaveState() {
+    const hasPlan = (state.appleHomePlan?.rooms || []).length > 0;
     $("saveAppleRoomMap").disabled =
-      !(state.appleHomePlan?.rooms || []).length || !appleRoomMapDirty();
+      !hasPlan || (!appleRoomMapDirty() && !appleRoomSelectionDirty());
   }
 
   function initializeAppleRoomDraft(plan) {
@@ -1644,6 +1660,8 @@
     state.appleSelectedRoomIds = new Set(
       selected.filter(roomId => available.has(roomId))
     );
+    state.appleSelectedRoomSavedIds = new Set(state.appleSelectedRoomIds);
+    state.appleSelectionInitialized = true;
   }
 
   async function persistAppleRoomSelection() {
@@ -1661,9 +1679,9 @@
       }
     );
     state.appleSelectedRoomIds = new Set(result.hue_room_ids || []);
+    state.appleSelectedRoomSavedIds = new Set(state.appleSelectedRoomIds);
     if (state.appleHomePlan) {
       state.appleHomePlan.selected_hue_room_ids = [...state.appleSelectedRoomIds];
-      renderAppleHomePlan(state.appleHomePlan);
     }
   }
 
@@ -1678,7 +1696,7 @@
     if (resetDraft) {
       initializeAppleRoomDraft(plan);
       initializeAppleRoomSelection(plan);
-    } else if (!state.appleSelectedRoomIds.size && (plan.rooms || []).length) {
+    } else if (!state.appleSelectionInitialized) {
       initializeAppleRoomSelection(plan);
     }
 
@@ -1716,14 +1734,16 @@
     selectAll.textContent = t("apple.selectAll");
     selectAll.addEventListener("click", () => {
       state.appleSelectedRoomIds = new Set((plan.rooms || []).map(room => room.hue_room_id));
-      persistAppleRoomSelection().catch(e => status(e.message, "bad"));
+      renderAppleHomePlan(plan);
+      status(t("apple.selectionDraft"), "warn");
     });
     const selectNone = document.createElement("button");
     selectNone.type = "button";
     selectNone.textContent = t("apple.selectNone");
     selectNone.addEventListener("click", () => {
       state.appleSelectedRoomIds = new Set();
-      persistAppleRoomSelection().catch(e => status(e.message, "bad"));
+      renderAppleHomePlan(plan);
+      status(t("apple.selectionDraft"), "warn");
     });
     const selectionCount = document.createElement("span");
     selectionCount.className = "pill";
@@ -1751,7 +1771,8 @@
         } else {
           state.appleSelectedRoomIds.delete(room.hue_room_id);
         }
-        persistAppleRoomSelection().catch(e => status(e.message, "bad"));
+        renderAppleHomePlan(plan);
+        status(t("apple.selectionDraft"), "warn");
       });
       selectRoomLabel.append(selectRoomCheckbox, selectRoomText);
       card.append(selectRoomLabel);
@@ -1810,8 +1831,11 @@
     const movesRoot = $("appleHomeMoves");
     movesRoot.replaceChildren();
     const note = document.createElement("div");
-    note.className = appleRoomMapDirty() ? "draft-note" : "muted";
-    note.textContent = appleRoomMapDirty() ? t("apple.previewDraft") : t("apple.saved");
+    const configurationDirty = appleRoomMapDirty() || appleRoomSelectionDirty();
+    note.className = configurationDirty ? "draft-note" : "muted";
+    note.textContent = appleRoomSelectionDirty()
+      ? t("apple.selectionDraft")
+      : (appleRoomMapDirty() ? t("apple.previewDraft") : t("apple.saved"));
     movesRoot.append(note);
 
     const movesTitle = document.createElement("h3");
@@ -1885,18 +1909,31 @@
     const bridge = $("managementBridge").value;
     if (!inventory?.home?.id || !bridge) return;
     try {
-      const result = await api(
-        `/api/bridges/${encodeURIComponent(bridge)}/apple-home/room-map`,
-        {
-          method: "PUT",
-          body: JSON.stringify({
-            home_id: inventory.home.id,
-            room_map: state.appleRoomDraft,
-          }),
-        },
-      );
-      state.appleRoomSaved = { ...state.appleRoomDraft };
-      if (result.plan) renderAppleHomePlan(result.plan);
+      let result = null;
+      if (appleRoomMapDirty()) {
+        result = await api(
+          `/api/bridges/${encodeURIComponent(bridge)}/apple-home/room-map`,
+          {
+            method: "PUT",
+            body: JSON.stringify({
+              home_id: inventory.home.id,
+              room_map: state.appleRoomDraft,
+            }),
+          },
+        );
+        state.appleRoomSaved = { ...state.appleRoomDraft };
+      }
+      if (appleRoomSelectionDirty()) {
+        await persistAppleRoomSelection();
+      }
+      if (result?.plan) {
+        result.plan.selected_hue_room_ids = [...state.appleSelectedRoomIds];
+        renderAppleHomePlan(result.plan);
+      } else if (state.appleHomePlan) {
+        state.appleHomePlan.selected_hue_room_ids = [...state.appleSelectedRoomIds];
+        renderAppleHomePlan(state.appleHomePlan);
+      }
+      updateAppleSaveState();
       status(t("apple.savedDone"), "good");
     } catch (e) {
       status(e.message, "bad");
@@ -2550,6 +2587,8 @@
     refreshMonitor().catch(e => status(e.message, "bad"));
     state.appleHomePlan = null;
     state.appleSelectedRoomIds = new Set();
+    state.appleSelectedRoomSavedIds = new Set();
+    state.appleSelectionInitialized = false;
     state.appleRoomDraft = {};
     state.appleRoomSaved = {};
     state.applePreviewSeq += 1;
