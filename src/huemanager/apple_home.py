@@ -460,12 +460,6 @@ def build_learnable_apple_home_accessory_map(
     """
     room_map = room_map or {}
     accessory_map = accessory_map or {}
-    learnable = build_learnable_apple_home_accessory_map(
-        hue_tree,
-        inventory,
-        room_map=room_map,
-        accessory_map=accessory_map,
-    )
     plan = build_apple_home_sync_plan(
         hue_tree,
         inventory,
@@ -581,6 +575,12 @@ def build_apple_home_identity_diagnostics(
     """Compare every public Apple/Hue identity surface without using it to move devices."""
     room_map = room_map or {}
     accessory_map = accessory_map or {}
+    learnable = build_learnable_apple_home_accessory_map(
+        hue_tree,
+        inventory,
+        room_map=room_map,
+        accessory_map=accessory_map,
+    )
     plan = build_apple_home_sync_plan(
         hue_tree,
         inventory,
