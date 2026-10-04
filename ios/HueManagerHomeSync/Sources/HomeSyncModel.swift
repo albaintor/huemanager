@@ -278,6 +278,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         static let bridgeProfile = "bridgeProfile"
         static let selectedHomeID = "selectedHomeID"
         static let automaticSyncEnabled = "automaticSyncEnabled"
+        static let selectedHueRoomIDsPrefix = "selectedHueRoomIDs"
     }
 
     @Published var serverURL: String {
@@ -289,12 +290,18 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     @Published var bridgeProfile: String {
         didSet {
             UserDefaults.standard.set(bridgeProfile, forKey: DefaultsKey.bridgeProfile)
+            if bridgeProfile != oldValue {
+                clearPlanForContextChange()
+            }
         }
     }
 
     @Published var selectedHomeID: String {
         didSet {
             UserDefaults.standard.set(selectedHomeID, forKey: DefaultsKey.selectedHomeID)
+            if selectedHomeID != oldValue {
+                clearPlanForContextChange()
+            }
         }
     }
 
@@ -302,6 +309,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     @Published private(set) var bridges: [BridgeInfo] = []
     @Published private(set) var moves: [SyncMove] = []
     @Published private(set) var roomPlans: [SyncRoomPlan] = []
+    @Published private(set) var selectedHueRoomIDs: Set<String> = []
     @Published private(set) var planSummary: SyncSummary?
     @Published private(set) var status = "En attente de l’autorisation Apple Maison…"
     @Published private(set) var hasError = false
@@ -324,7 +332,22 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     private var automaticSyncRunning = false
     private var started = false
 
-    var pendingMoves: Int { moves.count }
+    var selectedMoves: [SyncMove] {
+        moves.filter { move in
+            guard let roomID = move.hueRoomID else { return false }
+            return selectedHueRoomIDs.contains(roomID)
+        }
+    }
+
+    var pendingMoves: Int { selectedMoves.count }
+
+    var selectedRoomCount: Int {
+        roomPlans.reduce(into: 0) { count, room in
+            if selectedHueRoomIDs.contains(room.hueRoomID) {
+                count += 1
+            }
+        }
+    }
 
     var homeKitDiagnostic: String {
         let raw = homeManager?.authorizationStatus.rawValue.description ?? "n/a"
@@ -339,6 +362,66 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         selectedHomeID = defaults.string(forKey: DefaultsKey.selectedHomeID) ?? ""
         automaticSyncEnabled = defaults.bool(forKey: DefaultsKey.automaticSyncEnabled)
         super.init()
+    }
+
+    private func roomSelectionDefaultsKey() -> String {
+        let bridge = bridgeProfile.trimmingCharacters(in: .whitespacesAndNewlines)
+        let homeID = selectedHomeID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return DefaultsKey.selectedHueRoomIDsPrefix + "." + bridge + "." + homeID
+    }
+
+    private func clearPlanForContextChange() {
+        moves = []
+        roomPlans = []
+        selectedHueRoomIDs = []
+        planSummary = nil
+    }
+
+    private func restoreRoomSelection(for rooms: [SyncRoomPlan]) {
+        let available = Set(rooms.map(\.hueRoomID))
+        let defaults = UserDefaults.standard
+        let key = roomSelectionDefaultsKey()
+
+        if defaults.object(forKey: key) != nil {
+            let stored = Set(defaults.stringArray(forKey: key) ?? [])
+            selectedHueRoomIDs = stored.intersection(available)
+        } else {
+            // Backward-compatible first use: keep the previous "all rooms" behavior,
+            // while exposing an explicit selection before anything is applied.
+            selectedHueRoomIDs = available
+        }
+    }
+
+    private func persistRoomSelection() {
+        UserDefaults.standard.set(
+            selectedHueRoomIDs.sorted(),
+            forKey: roomSelectionDefaultsKey()
+        )
+    }
+
+    func isRoomSelected(_ roomID: String) -> Bool {
+        selectedHueRoomIDs.contains(roomID)
+    }
+
+    func setRoomSelected(_ roomID: String, selected: Bool) {
+        var updated = selectedHueRoomIDs
+        if selected {
+            updated.insert(roomID)
+        } else {
+            updated.remove(roomID)
+        }
+        selectedHueRoomIDs = updated
+        persistRoomSelection()
+    }
+
+    func selectAllRooms() {
+        selectedHueRoomIDs = Set(roomPlans.map(\.hueRoomID))
+        persistRoomSelection()
+    }
+
+    func deselectAllRooms() {
+        selectedHueRoomIDs = []
+        persistRoomSelection()
     }
 
     func start() {
@@ -547,24 +630,37 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         defer { automaticSyncRunning = false }
 
         await loadPlan()
-        guard !hasError, let summary = planSummary else { return }
+        guard !hasError else { return }
 
+        let selectedPlans = roomPlans.filter {
+            selectedHueRoomIDs.contains($0.hueRoomID)
+        }
+        let blockingStatuses: Set<String> = [
+            "unmatched_accessory",
+            "ambiguous_accessory",
+            "missing_home_room",
+        ]
+        let selectedPlanHasBlockingIssue = selectedPlans.contains { room in
+            room.status != "mapped" ||
+                (room.hueDevices ?? []).contains { blockingStatuses.contains($0.status) }
+        }
+        let movesToApply = selectedMoves
         let safePlan =
-            summary.unmatchedAccessories == 0 &&
-            summary.ambiguousAccessories == 0 &&
-            summary.missingHomeRooms == 0 &&
-            moves.allSatisfy { accessoryMatchIsSafe($0) && roomMatchIsSafe($0) }
+            !selectedPlanHasBlockingIssue &&
+            movesToApply.allSatisfy {
+                accessoryMatchIsSafe($0) && roomMatchIsSafe($0)
+            }
 
         guard safePlan else {
-            if !moves.isEmpty {
+            if !movesToApply.isEmpty || selectedPlanHasBlockingIssue {
                 status =
-                    "Synchronisation automatique suspendue : correspondance ambiguë " +
-                    "ou confiance insuffisante."
+                    "Synchronisation automatique suspendue pour les pièces sélectionnées : " +
+                    "correspondance ambiguë ou confiance insuffisante."
             }
             return
         }
 
-        if !moves.isEmpty {
+        if !movesToApply.isEmpty {
             await applyPlan()
         }
     }
@@ -862,10 +958,15 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
                 devices: plan.devices ?? [],
                 moves: plan.actions
             )
+            restoreRoomSelection(for: roomPlans)
             planSummary = plan.summary
-            status = plan.actions.isEmpty
-                ? "Aucun déplacement nécessaire."
-                : "\(plan.actions.count) déplacement(s) proposé(s)."
+            if plan.actions.isEmpty {
+                status = "Aucun déplacement nécessaire."
+            } else {
+                status =
+                    "\(plan.actions.count) déplacement(s) proposé(s), " +
+                    "\(pendingMoves) dans les pièces sélectionnées."
+            }
             hasError = false
         } catch {
             status = error.localizedDescription
@@ -891,8 +992,11 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
             hasError = true
             return
         }
-        guard !moves.isEmpty else {
-            status = "Aucun déplacement à appliquer."
+        let movesToApply = selectedMoves
+        guard !movesToApply.isEmpty else {
+            status = selectedHueRoomIDs.isEmpty
+                ? "Aucune pièce sélectionnée."
+                : "Aucun déplacement à appliquer dans les pièces sélectionnées."
             return
         }
 
@@ -911,7 +1015,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         var failures: [[String: String]] = []
         status = "Application des affectations dans Apple Maison…"
 
-        for move in moves {
+        for move in movesToApply {
             guard let accessory = accessories[move.accessoryID],
                   let room = rooms[move.toRoomID] else {
                 failures.append([
