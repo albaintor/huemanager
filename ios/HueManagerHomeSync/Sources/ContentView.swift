@@ -9,6 +9,7 @@ struct ContentView: View {
                 connectionSection
                 serverActivitySection
                 syncSection
+                reassociationSection
                 roomAssociationsSection
                 proposedMovesSection
             }
@@ -275,6 +276,93 @@ struct ContentView: View {
                     value: "\(summary.ambiguousAccessories)"
                 )
             }
+        }
+    }
+
+    private var reassociationSection: some View {
+        Section("Réassociation Apple Home") {
+            Text(
+                "À utiliser avant de supprimer puis recréer la liaison Apple du Bridge. " +
+                "HueManager sauvegarde les associations accessoire/pièce sans dépendre " +
+                "uniquement des UUID Apple, qui peuvent être recréés."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            Button("1. Sauvegarder les pièces avant suppression") {
+                Task { await model.createReassociationBackup() }
+            }
+            .disabled(
+                !model.homeKitLoaded ||
+                model.homes.isEmpty ||
+                model.bridges.isEmpty ||
+                model.inventoryPublishing
+            )
+
+            Button("2. Après réassociation : analyser la restauration") {
+                Task { await model.loadReassociationPlan() }
+            }
+            .disabled(
+                !model.homeKitLoaded ||
+                model.homes.isEmpty ||
+                model.bridges.isEmpty ||
+                model.inventoryPublishing
+            )
+
+            Button("3. Restaurer les pièces Apple") {
+                Task { await model.applyReassociationPlan() }
+            }
+            .disabled(
+                !model.homeKitLoaded ||
+                model.homes.isEmpty ||
+                model.reassociationPendingMoves == 0
+            )
+
+            if model.reassociationBackupCount > 0 {
+                LabeledContent(
+                    "Sauvegarde",
+                    value: "\(model.reassociationBackupCount) accessoire(s)"
+                )
+                if let date = model.reassociationBackupAt {
+                    Text("Créée : \(date)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+
+            if let summary = model.reassociationSummary {
+                LabeledContent(
+                    "Accessoires reconnus",
+                    value: "\(summary.matchedAccessories)/\(summary.savedAccessories)"
+                )
+                LabeledContent(
+                    "Déplacements à restaurer",
+                    value: "\(summary.moves)"
+                )
+                LabeledContent(
+                    "Déjà dans la bonne pièce",
+                    value: "\(summary.alreadyCorrect)"
+                )
+                LabeledContent(
+                    "Non reconnus",
+                    value: "\(summary.unmatchedAccessories)"
+                )
+                if summary.missingRooms > 0 {
+                    LabeledContent(
+                        "Pièces cibles introuvables",
+                        value: "\(summary.missingRooms)"
+                    )
+                }
+            }
+
+            Text(
+                "La restauration est conservatrice : un accessoire ambigu n'est jamais déplacé. " +
+                "Les correspondances fortes utilisent notamment le numéro de série, les identifiants " +
+                "HomeKit/Matter disponibles et la position de l'accessoire derrière le pont."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 
