@@ -205,9 +205,14 @@ def _hue_identifier_candidates(device: dict) -> set[str]:
 
 
 def _hue_device_allows_fuzzy_match(device: dict) -> bool:
+    services = device.get("services")
+    if services is None:
+        # Preserve compatibility with older/incomplete inventory payloads that
+        # predate explicit service metadata.
+        return True
     service_types = {
         str(service.get("type") or "")
-        for service in device.get("services", [])
+        for service in services
         if service.get("type")
     }
     return bool(service_types & FUZZY_MATCHABLE_HUE_SERVICE_TYPES)
@@ -480,11 +485,18 @@ def build_apple_home_sync_plan(
                 candidates = list(serial_matches.values())
                 match_method = "serial"
             elif not serial_matches:
-                name_matches = [
-                    accessory
-                    for accessory in accessories_by_name.get(_normalise(device_name), [])
-                    if str(accessory.get("id")) not in matched_apple_ids
-                ]
+                name_matches = []
+                for accessory in accessories_by_name.get(_normalise(device_name), []):
+                    accessory_id = str(accessory.get("id"))
+                    if accessory_id in matched_apple_ids:
+                        continue
+                    current_apple_room_id = str(accessory.get("room_id") or "")
+                    owner_hue_room_id = hue_room_by_apple_room_id.get(
+                        current_apple_room_id
+                    )
+                    if owner_hue_room_id and owner_hue_room_id != hue_room_id:
+                        continue
+                    name_matches.append(accessory)
                 if len(name_matches) == 1:
                     candidates = name_matches
                     match_method = "name"
