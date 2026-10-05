@@ -239,6 +239,102 @@ def test_real_missing_local_v2_reference_is_still_reported() -> None:
     )
 
 
+def test_multiple_button_resources_can_share_one_v1_sensor() -> None:
+    resources = _healthy_resources()
+    resources[0]["services"].extend(
+        [
+            {"rid": "button-1", "rtype": "button"},
+            {"rid": "button-2", "rtype": "button"},
+        ]
+    )
+    resources.extend(
+        [
+            {
+                "id": "button-1",
+                "type": "button",
+                "id_v1": "/sensors/16",
+                "owner": {"rid": "device-1", "rtype": "device"},
+                "metadata": {"control_id": 1},
+            },
+            {
+                "id": "button-2",
+                "type": "button",
+                "id_v1": "/sensors/16",
+                "owner": {"rid": "device-1", "rtype": "device"},
+                "metadata": {"control_id": 2},
+            },
+        ]
+    )
+    v1 = _healthy_v1()
+    v1["sensors"]["16"] = {
+        "name": "Dimmer switch",
+        "type": "ZLLSwitch",
+        "uniqueid": "aa:bb:cc:dd:ee:ff:00:02-02-fc00",
+    }
+
+    result = deep_integrity_audit(FakeHueClient(v1, resources))  # type: ignore[arg-type]
+
+    assert not any(
+        item["code"] == "duplicate_id_v1_same_type"
+        and item.get("details", {}).get("resource_type") == "button"
+        for item in result["findings"]
+    )
+
+
+def test_v1_reference_regex_does_not_include_json_punctuation() -> None:
+    v1 = _healthy_v1()
+    v1["resourcelinks"]["18501"] = {
+        "name": "Example",
+        "links": [
+            "/groups/13",
+            "/scenes/6ToIyA5eT2FzZU6",
+        ],
+    }
+
+    result = deep_integrity_audit(FakeHueClient(v1, _healthy_resources()))  # type: ignore[arg-type]
+
+    finding = next(
+        item
+        for item in result["findings"]
+        if item["code"] == "broken_v1_reference"
+        and item["resource"] == "resourcelinks:18501"
+    )
+    assert finding["details"]["missing"] == [
+        "/groups/13",
+        "/scenes/6ToIyA5eT2FzZU6",
+    ]
+    assert not any(
+        any(char in path for char in ['"', ",", "]", "}"])
+        for path in finding["details"]["missing"]
+    )
+    assert finding["severity"] == "medium"
+
+
+def test_disabled_schedule_with_missing_reference_is_medium() -> None:
+    v1 = _healthy_v1()
+    v1["schedules"]["1"] = {
+        "name": "Old schedule",
+        "status": "disabled",
+        "command": {
+            "address": "/api/key/sensors/106/state",
+            "method": "PUT",
+            "body": {"status": 1},
+        },
+    }
+
+    result = deep_integrity_audit(FakeHueClient(v1, _healthy_resources()))  # type: ignore[arg-type]
+
+    finding = next(
+        item
+        for item in result["findings"]
+        if item["code"] == "broken_v1_reference"
+        and item["resource"] == "schedules:1"
+    )
+    assert finding["severity"] == "medium"
+    assert finding["details"]["missing"] == ["/sensors/106"]
+    assert finding["details"]["name"] == "Old schedule"
+
+
 def test_configuration_snapshot_ignores_normal_light_state_changes() -> None:
     before_client = FakeHueClient(_healthy_v1(), _healthy_resources())
 
