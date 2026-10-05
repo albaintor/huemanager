@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import logging
 import re
+import socket
 import threading
 import time
 import uuid
@@ -220,6 +221,141 @@ class DiagnosticMonitor:
 
     def stop(self) -> None:
         self._stop.set()
+
+    def _record_zigbee_sample(self, sample: dict[str, Any]) -> None:
+        with self._lock:
+            self.last_zigbee_probe_at = sample.get("at")
+            self.zigbee_health = copy.deepcopy(sample)
+            if self.zigbee_baseline is None:
+                self.zigbee_baseline = copy.deepcopy(sample)
+                self.zigbee_state = "normal"
+                return
+
+            degraded, evidence = _zigbee_sample_is_degraded(
+                sample,
+                self.zigbee_baseline,
+            )
+            previous = self.zigbee_state
+            current = "degraded" if degraded else "normal"
+            self.zigbee_state = current
+            if current == previous:
+                return
+
+            event_type = (
+                "zigbee_degraded"
+                if current == "degraded"
+                else "zigbee_restored"
+            )
+            event = {
+                "type": event_type,
+                "at": sample.get("at") or _utc_now(),
+                "api_state": self.current_state,
+                "sample": copy.deepcopy(sample),
+                "baseline": copy.deepcopy(self.zigbee_baseline),
+                "evidence": evidence,
+                "summary": (
+                    "Hue API remained reachable while the public Zigbee connectivity "
+                    "resources showed a broad loss relative to the monitor baseline."
+                    if current == "degraded"
+                    else "Zigbee connectivity counts returned near the monitor baseline."
+                ),
+            }
+            self.events.append(event)
+            LOGGER.warning(
+                "Hue Zigbee state transition bridge=%s state=%s evidence=%s",
+                self.bridge_name,
+                current,
+                evidence,
+            )
+
+    def _maybe_probe_zigbee(self, monotonic_now: float) -> None:
+        last = self._last_zigbee_probe_monotonic
+        if (
+            last is not None
+            and monotonic_now - last < self.zigbee_probe_interval_seconds
+        ):
+            return
+        self._last_zigbee_probe_monotonic = monotonic_now
+        try:
+            sample = collect_zigbee_health(self.client)
+        except (
+            HueApiError,
+            OSError,
+            ValueError,
+            KeyError,
+            IndexError,
+        ):
+            with self._lock:
+                self.zigbee_probe_errors += 1
+            return
+        self._record_zigbee_sample(sample)
+
+    def mark_zigbee_failure(self) -> dict[str, Any]:
+        """Record a user-observed Zigbee failure with immediate read-only probes."""
+        checked_at = _utc_now()
+        api_reachable = False
+        api_failure: dict[str, Any] | None = None
+        try:
+            self._probe()
+            api_reachable = True
+        except (
+            HueApiError,
+            OSError,
+            ValueError,
+            KeyError,
+            IndexError,
+        ) as exc:
+            api_failure = classify_service_failure(exc)
+
+        stack_forensics = probe_bridge_stack(self.client)
+        zigbee_sample: dict[str, Any] | None = None
+        zigbee_error: str | None = None
+        if api_reachable:
+            try:
+                zigbee_sample = collect_zigbee_health(self.client)
+                self._record_zigbee_sample(zigbee_sample)
+            except (
+                HueApiError,
+                OSError,
+                ValueError,
+                KeyError,
+                IndexError,
+            ) as exc:
+                zigbee_error = str(exc)
+
+        if api_reachable:
+            diagnosis = "API_ALIVE_DURING_USER_OBSERVED_ZIGBEE_FAILURE"
+            summary = (
+                "The user marked a physical Zigbee failure while the Hue API "
+                "bridge probe was still reachable. This favors a Zigbee-side "
+                "stall over a full Bridge reboot at this instant."
+            )
+        else:
+            diagnosis = "API_AND_USER_OBSERVED_ZIGBEE_FAILURE_COINCIDE"
+            summary = (
+                "The user-marked Zigbee failure coincided with an unavailable "
+                "Hue API, supporting a broader Bridge service or reboot event."
+            )
+
+        event = {
+            "type": "zigbee_manual_marker",
+            "at": checked_at,
+            "diagnosis": diagnosis,
+            "summary": summary,
+            "api_reachable": api_reachable,
+            "api_failure": api_failure,
+            "stack_forensics": stack_forensics,
+            "zigbee_health": zigbee_sample,
+            "zigbee_probe_error": zigbee_error,
+        }
+        with self._lock:
+            self.events.append(event)
+        LOGGER.warning(
+            "User-observed Zigbee failure marker bridge=%s diagnosis=%s",
+            self.bridge_name,
+            diagnosis,
+        )
+        return self.snapshot()
 
     def _run(self) -> None:
         started_monotonic = time.monotonic()
@@ -456,6 +592,261 @@ def classify_service_failure(exc: Exception) -> dict[str, Any]:
     )
 
 
+def _tcp_port_probe(host: str, port: int, timeout: float = 1.0) -> dict[str, Any]:
+    started = time.perf_counter()
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            latency = round((time.perf_counter() - started) * 1000.0, 1)
+            return {
+                "port": port,
+                "status": "connected",
+                "latency_ms": latency,
+                "network_stack_evidence": True,
+                "error": None,
+            }
+    except ConnectionRefusedError as exc:
+        latency = round((time.perf_counter() - started) * 1000.0, 1)
+        return {
+            "port": port,
+            "status": "refused",
+            "latency_ms": latency,
+            "network_stack_evidence": True,
+            "error": str(exc),
+        }
+    except TimeoutError as exc:
+        return {
+            "port": port,
+            "status": "timeout",
+            "latency_ms": None,
+            "network_stack_evidence": False,
+            "error": str(exc),
+        }
+    except OSError as exc:
+        lowered = str(exc).lower()
+        stack_evidence = any(
+            token in lowered
+            for token in ("connection reset", "connection refused", "errno 104", "errno 111")
+        )
+        if "no route to host" in lowered or "network is unreachable" in lowered:
+            status = "unreachable"
+        elif "connection reset" in lowered or "errno 104" in lowered:
+            status = "reset"
+        else:
+            status = "error"
+        return {
+            "port": port,
+            "status": status,
+            "latency_ms": None,
+            "network_stack_evidence": stack_evidence,
+            "error": str(exc),
+        }
+
+
+def probe_bridge_stack(
+    client: HueBridgeClient,
+    *,
+    tcp_timeout: float = 1.0,
+) -> dict[str, Any]:
+    """Collect low-level evidence only while the normal Hue API probe is failing."""
+    profile = getattr(client, "profile", None)
+    host = getattr(profile, "host", None)
+    if not host:
+        return {
+            "at": _utc_now(),
+            "status": "unavailable",
+            "diagnosis": "NO_HOST_INFORMATION",
+            "summary": "Bridge host information is unavailable for low-level probing.",
+        }
+
+    https = _tcp_port_probe(str(host), 443, timeout=tcp_timeout)
+    http = _tcp_port_probe(str(host), 80, timeout=tcp_timeout)
+    v1_config: dict[str, Any] = {"status": "not_probed"}
+
+    if https["status"] == "connected":
+        try:
+            payload = client.v1_get("/config")
+            if isinstance(payload, dict):
+                v1_config = {
+                    "status": "ok",
+                    "bridgeid": payload.get("bridgeid"),
+                    "modelid": payload.get("modelid"),
+                    "swversion": payload.get("swversion"),
+                    "apiversion": payload.get("apiversion"),
+                    "zigbeechannel": payload.get("zigbeechannel"),
+                }
+            else:
+                v1_config = {
+                    "status": "unexpected_response",
+                    "type": type(payload).__name__,
+                }
+        except (
+            HueApiError,
+            OSError,
+            ValueError,
+            KeyError,
+            IndexError,
+        ) as exc:
+            failure = classify_service_failure(exc)
+            v1_config = {
+                "status": "error",
+                "classification": failure.get("classification"),
+                "layer": failure.get("layer"),
+                "error": str(exc),
+            }
+
+    network_stack_evidence = bool(
+        https.get("network_stack_evidence") or http.get("network_stack_evidence")
+    )
+    if https["status"] == "refused":
+        diagnosis = "HOST_RESPONDING_HTTPS_LISTENER_DOWN"
+        summary = (
+            "The Bridge IP stack answered the TCP connection with an active refusal, "
+            "but no HTTPS listener accepted port 443 at this instant."
+        )
+    elif https["status"] == "connected" and v1_config.get("status") == "ok":
+        diagnosis = "WEB_STACK_ALIVE_V2_API_FAILURE"
+        summary = (
+            "TCP/443 and the legacy Hue v1 config endpoint were alive while the "
+            "normal v2 Bridge probe failed."
+        )
+    elif https["status"] == "connected":
+        diagnosis = "HTTPS_LISTENER_ALIVE_API_FAILURE"
+        summary = (
+            "The HTTPS listener accepted TCP connections, but Hue API requests "
+            "were not healthy."
+        )
+    elif (
+        https["status"] in {"timeout", "unreachable"}
+        and http["status"] in {"timeout", "unreachable"}
+    ):
+        diagnosis = "HOST_OR_NETWORK_PATH_UNRESPONSIVE"
+        summary = (
+            "Neither HTTP nor HTTPS produced TCP-level evidence that the Bridge "
+            "network stack was responding. This is consistent with a reboot, "
+            "power event, link loss, or network-path failure, but does not prove one."
+        )
+    elif network_stack_evidence:
+        diagnosis = "HOST_RESPONDING_HTTPS_UNAVAILABLE"
+        summary = (
+            "The Bridge host produced TCP-level evidence of life, while HTTPS "
+            "was unavailable."
+        )
+    else:
+        diagnosis = "LOW_LEVEL_PROBE_INCONCLUSIVE"
+        summary = "The low-level TCP probes did not provide a conclusive diagnosis."
+
+    return {
+        "at": _utc_now(),
+        "status": "ok",
+        "host": str(host),
+        "tcp_https_443": https,
+        "tcp_http_80": http,
+        "v1_config": v1_config,
+        "network_stack_evidence": network_stack_evidence,
+        "diagnosis": diagnosis,
+        "summary": summary,
+    }
+
+
+def summarize_outage_forensics(probes: list[dict[str, Any]]) -> dict[str, Any]:
+    usable = [probe for probe in probes if probe.get("status") == "ok"]
+    diagnoses = [str(probe.get("diagnosis")) for probe in usable if probe.get("diagnosis")]
+    if any(
+        diagnosis == "WEB_STACK_ALIVE_V2_API_FAILURE"
+        for diagnosis in diagnoses
+    ):
+        code = "APPLICATION_LAYER_FAILURE"
+        summary = (
+            "At least one outage probe found TCP/443 and Hue v1 alive while the "
+            "v2 service probe failed."
+        )
+    elif any(
+        diagnosis == "HOST_RESPONDING_HTTPS_LISTENER_DOWN"
+        for diagnosis in diagnoses
+    ):
+        code = "HOST_ALIVE_HTTPS_SERVICE_DOWN"
+        summary = (
+            "The Bridge network stack actively answered while HTTPS/443 was not "
+            "listening. This strongly favors an internal service/watchdog event "
+            "over a pure LAN outage at those probe instants."
+        )
+    elif usable and all(
+        diagnosis == "HOST_OR_NETWORK_PATH_UNRESPONSIVE"
+        for diagnosis in diagnoses
+    ):
+        code = "HOST_OR_PATH_DOWN"
+        summary = (
+            "All low-level probes were unresponsive. A full reboot, power event, "
+            "link loss, or network-path failure remains plausible."
+        )
+    elif diagnoses:
+        code = "MIXED_LOW_LEVEL_EVIDENCE"
+        summary = "The outage contained mixed low-level network/service evidence."
+    else:
+        code = "NO_LOW_LEVEL_EVIDENCE"
+        summary = "No usable low-level outage probes were captured."
+
+    return {
+        "code": code,
+        "summary": summary,
+        "probe_count": len(probes),
+        "usable_probe_count": len(usable),
+        "diagnoses": list(dict.fromkeys(diagnoses)),
+    }
+
+
+def collect_zigbee_health(client: HueBridgeClient) -> dict[str, Any]:
+    resources = client.v2_get("zigbee_connectivity")
+    counts = Counter(
+        str(resource.get("status") or "unknown")
+        for resource in resources
+    )
+    issues = [
+        {
+            "id": resource.get("id"),
+            "status": resource.get("status"),
+            "owner": resource.get("owner"),
+            "mac_address": resource.get("mac_address"),
+        }
+        for resource in resources
+        if resource.get("status") != "connected"
+    ][:25]
+    return {
+        "at": _utc_now(),
+        "total": len(resources),
+        "connected": counts.get("connected", 0),
+        "non_connected": len(resources) - counts.get("connected", 0),
+        "counts": dict(sorted(counts.items())),
+        "issues_sample": issues,
+    }
+
+
+def _zigbee_sample_is_degraded(
+    sample: dict[str, Any],
+    baseline: dict[str, Any] | None,
+) -> tuple[bool, dict[str, Any]]:
+    if not baseline:
+        return False, {"reason": "no_baseline"}
+
+    baseline_connected = int(baseline.get("connected") or 0)
+    current_connected = int(sample.get("connected") or 0)
+    if baseline_connected < 5:
+        return False, {
+            "reason": "baseline_too_small",
+            "baseline_connected": baseline_connected,
+        }
+
+    loss = max(0, baseline_connected - current_connected)
+    threshold = max(5, int(baseline_connected * 0.25))
+    degraded = loss >= threshold
+    return degraded, {
+        "baseline_connected": baseline_connected,
+        "current_connected": current_connected,
+        "connected_loss": loss,
+        "loss_threshold": threshold,
+    }
+
+
 @dataclass
 class ServiceConnectivityMonitor:
     """Continuously check the authenticated Hue API service with a lightweight call.
@@ -485,7 +876,15 @@ class ServiceConnectivityMonitor:
     _outage_failed_checks: int = field(default=0, repr=False)
     _outage_classifications: list[str] = field(default_factory=list, repr=False)
     _outage_last_error: str | None = field(default=None, repr=False)
+    _outage_forensics: list[dict[str, Any]] = field(default_factory=list, repr=False)
     _started_monotonic: float | None = field(default=None, repr=False)
+    _last_zigbee_probe_monotonic: float | None = field(default=None, repr=False)
+    zigbee_probe_interval_seconds: int = 30
+    last_zigbee_probe_at: str | None = None
+    zigbee_health: dict[str, Any] | None = None
+    zigbee_baseline: dict[str, Any] | None = None
+    zigbee_state: str = "unknown"
+    zigbee_probe_errors: int = 0
     _stop: threading.Event = field(default_factory=threading.Event, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _thread: threading.Thread | None = field(default=None, repr=False)
@@ -524,6 +923,7 @@ class ServiceConnectivityMonitor:
         monotonic_now: float,
         error: str | None = None,
         failure: dict[str, Any] | None = None,
+        forensic: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         with self._lock:
             previous = self.current_state
@@ -551,6 +951,13 @@ class ServiceConnectivityMonitor:
                         "last_error": self._outage_last_error,
                         "endpoint": self._endpoint(),
                     }
+                    if self._outage_forensics:
+                        event["outage_forensics"] = copy.deepcopy(
+                            self._outage_forensics
+                        )
+                        event["outage_diagnosis"] = summarize_outage_forensics(
+                            self._outage_forensics
+                        )
                     self.events.append(event)
                     LOGGER.info(
                         "Hue API service RESTORED bridge=%s downtime_seconds=%s "
@@ -569,6 +976,7 @@ class ServiceConnectivityMonitor:
                 self._outage_failed_checks = 0
                 self._outage_classifications = []
                 self._outage_last_error = None
+                self._outage_forensics = []
                 return event if previous == "down" else None
 
             failure = failure or {
@@ -589,6 +997,7 @@ class ServiceConnectivityMonitor:
                 self._outage_failed_checks = 1
                 self._outage_classifications = [classification]
                 self._outage_last_error = self.last_error
+                self._outage_forensics = [copy.deepcopy(forensic)] if forensic else []
                 event = {
                     "type": "down",
                     "at": checked_at,
@@ -599,6 +1008,11 @@ class ServiceConnectivityMonitor:
                     "endpoint": self._endpoint(),
                     "error": self.last_error,
                 }
+                if forensic:
+                    event["forensic"] = copy.deepcopy(forensic)
+                    event["preliminary_diagnosis"] = summarize_outage_forensics(
+                        self._outage_forensics
+                    )
                 self.events.append(event)
                 LOGGER.warning(
                     "Hue API service DOWN bridge=%s classification=%s layer=%s "
@@ -614,6 +1028,8 @@ class ServiceConnectivityMonitor:
                 self._outage_last_error = self.last_error
                 if classification not in self._outage_classifications:
                     self._outage_classifications.append(classification)
+                if forensic:
+                    self._outage_forensics.append(copy.deepcopy(forensic))
             self.current_state = "down"
             return None
 
@@ -637,12 +1053,14 @@ class ServiceConnectivityMonitor:
                     IndexError,
                 ) as exc:
                     failure = classify_service_failure(exc)
+                    forensic = probe_bridge_stack(self.client)
                     self._record_probe(
                         available=False,
                         checked_at=checked_at,
                         monotonic_now=monotonic_now,
                         error=str(exc),
                         failure=failure,
+                        forensic=forensic,
                     )
                 else:
                     restored_event = self._record_probe(
@@ -658,6 +1076,7 @@ class ServiceConnectivityMonitor:
                                 "Hue API post-recovery callback failed bridge=%s",
                                 self.bridge_name,
                             )
+                    self._maybe_probe_zigbee(monotonic_now)
 
                 if self._stop.wait(timeout=self.interval_seconds):
                     break
@@ -681,6 +1100,12 @@ class ServiceConnectivityMonitor:
             failed_checks = self.failed_checks
             finished_at = self.finished_at
             stop_reason = self.stop_reason
+            current_outage_forensics = copy.deepcopy(self._outage_forensics)
+            last_zigbee_probe_at = self.last_zigbee_probe_at
+            zigbee_health = copy.deepcopy(self.zigbee_health)
+            zigbee_baseline = copy.deepcopy(self.zigbee_baseline)
+            zigbee_state = self.zigbee_state
+            zigbee_probe_errors = self.zigbee_probe_errors
 
         elapsed_seconds = 0.0
         if self._started_monotonic is not None:
@@ -703,6 +1128,18 @@ class ServiceConnectivityMonitor:
             "successful_checks": successful_checks,
             "failed_checks": failed_checks,
             "events": events,
+            "current_outage_forensics": current_outage_forensics,
+            "current_outage_diagnosis": (
+                summarize_outage_forensics(current_outage_forensics)
+                if current_outage_forensics
+                else None
+            ),
+            "zigbee_probe_interval_seconds": self.zigbee_probe_interval_seconds,
+            "last_zigbee_probe_at": last_zigbee_probe_at,
+            "zigbee_health": zigbee_health,
+            "zigbee_baseline": zigbee_baseline,
+            "zigbee_state": zigbee_state,
+            "zigbee_probe_errors": zigbee_probe_errors,
         }
 
 
@@ -750,6 +1187,16 @@ class ServiceConnectivityMonitorManager:
         if thread is not None:
             thread.join(timeout=2.0)
         return monitor.snapshot()
+
+
+    def mark_zigbee_failure(self, bridge_name: str) -> dict[str, Any]:
+        with self._lock:
+            monitor = self._jobs.get(bridge_name)
+        if monitor is None:
+            raise KeyError(f"No API connectivity monitor found for Bridge: {bridge_name}")
+        if monitor.snapshot()["status"] not in {"starting", "running"}:
+            raise ValueError("The API connectivity monitor is not running")
+        return monitor.mark_zigbee_failure()
 
 
 class DiagnosticMonitorManager:

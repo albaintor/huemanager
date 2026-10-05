@@ -1076,6 +1076,14 @@ def stop_service_connectivity_monitor(bridge_name: str) -> dict:
         raise _api_error(exc) from exc
 
 
+@app.post("/api/bridges/{bridge_name}/diagnostics/service-monitor/mark-zigbee-failure")
+def mark_service_monitor_zigbee_failure(bridge_name: str) -> dict:
+    try:
+        return service_connectivity_monitors.mark_zigbee_failure(bridge_name)
+    except (HueApiError, OSError, ValueError, KeyError) as exc:
+        raise _api_error(exc) from exc
+
+
 @app.get("/api/bridges/{bridge_name}/diagnostics/integrity")
 def bridge_integrity_diagnostic(bridge_name: str) -> dict:
     try:

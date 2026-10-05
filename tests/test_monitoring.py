@@ -6,8 +6,11 @@ from requests import exceptions as requests_exceptions
 from huemanager.client import HueApiError
 from huemanager.monitoring import (
     ServiceConnectivityMonitor,
+    _zigbee_sample_is_degraded,
     classify_service_failure,
+    collect_zigbee_health,
     summarize_monitor_samples,
+    summarize_outage_forensics,
 )
 
 
@@ -239,3 +242,85 @@ def test_classify_connection_refused_has_explanatory_summary() -> None:
 
     assert result["classification"] == "CONNECTION_REFUSED"
     assert "actively refused" in result["summary"]
+
+
+def test_outage_forensics_identifies_host_alive_https_service_down() -> None:
+    result = summarize_outage_forensics(
+        [
+            {
+                "status": "ok",
+                "diagnosis": "HOST_RESPONDING_HTTPS_LISTENER_DOWN",
+            },
+            {
+                "status": "ok",
+                "diagnosis": "HOST_RESPONDING_HTTPS_LISTENER_DOWN",
+            },
+        ]
+    )
+
+    assert result["code"] == "HOST_ALIVE_HTTPS_SERVICE_DOWN"
+    assert result["probe_count"] == 2
+    assert "internal service/watchdog" in result["summary"]
+
+
+def test_outage_forensics_keeps_full_reboot_or_path_loss_plausible() -> None:
+    result = summarize_outage_forensics(
+        [
+            {
+                "status": "ok",
+                "diagnosis": "HOST_OR_NETWORK_PATH_UNRESPONSIVE",
+            },
+            {
+                "status": "ok",
+                "diagnosis": "HOST_OR_NETWORK_PATH_UNRESPONSIVE",
+            },
+        ]
+    )
+
+    assert result["code"] == "HOST_OR_PATH_DOWN"
+    assert "full reboot" in result["summary"]
+
+
+def test_zigbee_degradation_detects_broad_connected_loss() -> None:
+    degraded, evidence = _zigbee_sample_is_degraded(
+        {"connected": 60},
+        {"connected": 100},
+    )
+
+    assert degraded is True
+    assert evidence["connected_loss"] == 40
+    assert evidence["loss_threshold"] == 25
+
+
+def test_zigbee_degradation_ignores_small_variation() -> None:
+    degraded, evidence = _zigbee_sample_is_degraded(
+        {"connected": 96},
+        {"connected": 100},
+    )
+
+    assert degraded is False
+    assert evidence["connected_loss"] == 4
+
+
+class _FakeZigbeeClient(_FakeServiceClient):
+    def v2_get(self, resource_type: str) -> list[dict]:
+        self.calls.append(resource_type)
+        if resource_type == "zigbee_connectivity":
+            return [
+                {"id": "z1", "status": "connected", "owner": {"rid": "d1", "rtype": "device"}},
+                {"id": "z2", "status": "connectivity_issue", "owner": {"rid": "d2", "rtype": "device"}},
+            ]
+        return super().v2_get(resource_type)
+
+
+def test_collect_zigbee_health_summarizes_public_connectivity_resources() -> None:
+    result = collect_zigbee_health(_FakeZigbeeClient())  # type: ignore[arg-type]
+
+    assert result["total"] == 2
+    assert result["connected"] == 1
+    assert result["non_connected"] == 1
+    assert result["counts"] == {
+        "connected": 1,
+        "connectivity_issue": 1,
+    }
+    assert len(result["issues_sample"]) == 1

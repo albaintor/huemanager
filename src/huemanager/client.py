@@ -252,6 +252,9 @@ class HueBridgeClient:
             raise HueApiError("Unexpected CLIP v1 root response")
         return payload
 
+    def v1_get(self, path: str) -> Any:
+        return self._request_v1("GET", path)
+
     def v1_post(self, path: str, body: dict | None = None) -> Any:
         return self._request_v1("POST", path, body or {})
 
