@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from importlib.resources import files
@@ -41,6 +42,7 @@ from .backup import (
 from .client import HueApiError, HueBridgeClient
 from .config import BridgeProfile, ConfigStore
 from .diagnostics import diagnose_bridge
+from .integrity import CrashDiagnosticStore, deep_integrity_audit
 from .migration import (
     MigrationError,
     analyse,
@@ -170,9 +172,27 @@ def _store() -> ConfigStore:
     return ConfigStore()
 
 
+def _diagnostic_dir() -> Path:
+    path = _store().path.parent / "diagnostics"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _write_journal_path() -> Path:
+    return _diagnostic_dir() / "writes.jsonl"
+
+
+def _crash_store() -> CrashDiagnosticStore:
+    return CrashDiagnosticStore(_diagnostic_dir() / "crash-correlation")
+
+
 def _client(name: str) -> HueBridgeClient:
     try:
-        return HueBridgeClient(_store().get_bridge(name))
+        return HueBridgeClient(
+            _store().get_bridge(name),
+            bridge_name=name,
+            write_journal_path=_write_journal_path(),
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -1020,10 +1040,21 @@ def start_service_connectivity_monitor(
     request: ServiceConnectivityMonitorRequest,
 ) -> dict:
     try:
+        crash_store = _crash_store()
+
+        def on_restored(event: dict[str, Any]) -> None:
+            crash_store.schedule_post_crash(
+                bridge_name,
+                lambda: _client(bridge_name),
+                event,
+                delay_seconds=20,
+            )
+
         return service_connectivity_monitors.start(
             bridge_name,
             _client(bridge_name),
             interval_seconds=request.interval_seconds,
+            on_restored=on_restored,
         )
     except (HueApiError, OSError, ValueError, KeyError) as exc:
         raise _api_error(exc) from exc
@@ -1042,6 +1073,73 @@ def stop_service_connectivity_monitor(bridge_name: str) -> dict:
     try:
         return service_connectivity_monitors.stop(bridge_name)
     except KeyError as exc:
+        raise _api_error(exc) from exc
+
+
+@app.get("/api/bridges/{bridge_name}/diagnostics/integrity")
+def bridge_integrity_diagnostic(bridge_name: str) -> dict:
+    try:
+        return deep_integrity_audit(_client(bridge_name))
+    except (
+        HueApiError,
+        OSError,
+        ValueError,
+        KeyError,
+        IndexError,
+    ) as exc:
+        raise _api_error(exc) from exc
+
+
+@app.post("/api/bridges/{bridge_name}/diagnostics/crash-baseline")
+def capture_crash_baseline(bridge_name: str) -> dict:
+    try:
+        return _crash_store().capture_baseline(
+            bridge_name,
+            _client(bridge_name),
+        )
+    except (
+        HueApiError,
+        OSError,
+        ValueError,
+        KeyError,
+        IndexError,
+    ) as exc:
+        raise _api_error(exc) from exc
+
+
+@app.get("/api/bridges/{bridge_name}/diagnostics/crash-correlation")
+def crash_correlation_status(bridge_name: str) -> dict:
+    try:
+        _store().get_bridge(bridge_name)
+        return _crash_store().status(bridge_name)
+    except (OSError, ValueError, KeyError) as exc:
+        raise _api_error(exc) from exc
+
+
+@app.get("/api/bridges/{bridge_name}/diagnostics/write-journal")
+def hue_write_journal(bridge_name: str, limit: int = 200) -> dict:
+    try:
+        _store().get_bridge(bridge_name)
+        limit = max(1, min(int(limit), 1000))
+        path = _write_journal_path()
+        entries: list[dict[str, Any]] = []
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if entry.get("bridge") == bridge_name:
+                    entries.append(entry)
+        return {
+            "bridge": bridge_name,
+            "count": len(entries),
+            "returned": min(limit, len(entries)),
+            "entries": entries[-limit:],
+        }
+    except (OSError, ValueError, KeyError) as exc:
         raise _api_error(exc) from exc
 
 
