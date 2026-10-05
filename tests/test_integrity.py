@@ -1,0 +1,219 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from time import perf_counter
+
+from huemanager.client import HueBridgeClient
+from huemanager.config import BridgeProfile
+from huemanager.integrity import (
+    CrashDiagnosticStore,
+    collect_configuration_snapshot,
+    compare_configuration_snapshots,
+    deep_integrity_audit,
+)
+
+
+class FakeHueClient:
+    def __init__(self, v1: dict, resources: list[dict]) -> None:
+        self._v1 = v1
+        self._resources = resources
+
+    def v1_all(self) -> dict:
+        return self._v1
+
+    def v2_resources(self) -> list[dict]:
+        return self._resources
+
+
+def _healthy_v1() -> dict:
+    return {
+        "config": {
+            "name": "Bridge Pro",
+            "bridgeid": "001788FFFE000001",
+            "modelid": "BSB003",
+            "swversion": "6.2.2071537020",
+            "apiversion": "1.70.0",
+            "zigbeechannel": 25,
+            "mac": "00:11:22:33:44:55",
+        },
+        "lights": {
+            "1": {
+                "name": "Lamp",
+                "uniqueid": "aa:bb:cc:dd:ee:ff:00:01-0b",
+                "state": {"on": True, "reachable": True},
+            }
+        },
+        "sensors": {},
+        "groups": {},
+        "scenes": {},
+        "rules": {},
+        "schedules": {},
+        "resourcelinks": {},
+    }
+
+
+def _healthy_resources() -> list[dict]:
+    return [
+        {
+            "id": "device-1",
+            "type": "device",
+            "metadata": {"name": "Lamp"},
+            "services": [
+                {"rid": "light-1", "rtype": "light"},
+                {"rid": "zigbee-1", "rtype": "zigbee_connectivity"},
+            ],
+        },
+        {
+            "id": "light-1",
+            "type": "light",
+            "id_v1": "/lights/1",
+            "owner": {"rid": "device-1", "rtype": "device"},
+            "on": {"on": True},
+            "dimming": {"brightness": 50.0},
+        },
+        {
+            "id": "zigbee-1",
+            "type": "zigbee_connectivity",
+            "owner": {"rid": "device-1", "rtype": "device"},
+            "mac_address": "aa:bb:cc:dd:ee:ff:00:01",
+            "status": "connected",
+        },
+        {
+            "id": "room-1",
+            "type": "room",
+            "metadata": {"name": "Room"},
+            "children": [{"rid": "device-1", "rtype": "device"}],
+        },
+    ]
+
+
+def test_deep_integrity_audit_detects_missing_device_service() -> None:
+    resources = _healthy_resources()
+    resources[0]["services"].append({"rid": "missing", "rtype": "button"})
+
+    result = deep_integrity_audit(FakeHueClient(_healthy_v1(), resources))  # type: ignore[arg-type]
+
+    codes = [item["code"] for item in result["findings"]]
+    assert "missing_device_service" in codes
+    assert result["summary"]["critical"] >= 1
+    assert result["read_only"] is True
+
+
+def test_deep_integrity_audit_detects_duplicate_zigbee_mac() -> None:
+    resources = _healthy_resources()
+    resources.extend(
+        [
+            {
+                "id": "device-2",
+                "type": "device",
+                "services": [{"rid": "zigbee-2", "rtype": "zigbee_connectivity"}],
+            },
+            {
+                "id": "zigbee-2",
+                "type": "zigbee_connectivity",
+                "owner": {"rid": "device-2", "rtype": "device"},
+                "mac_address": "AA:BB:CC:DD:EE:FF:00:01",
+                "status": "connected",
+            },
+        ]
+    )
+
+    result = deep_integrity_audit(FakeHueClient(_healthy_v1(), resources))  # type: ignore[arg-type]
+
+    assert any(item["code"] == "duplicate_zigbee_mac" for item in result["findings"])
+
+
+def test_configuration_snapshot_ignores_normal_light_state_changes() -> None:
+    before_client = FakeHueClient(_healthy_v1(), _healthy_resources())
+
+    after_v1 = _healthy_v1()
+    after_v1["lights"]["1"]["state"]["on"] = False
+    after_resources = _healthy_resources()
+    after_resources[1]["on"] = {"on": False}
+    after_resources[1]["dimming"] = {"brightness": 10.0}
+    after_client = FakeHueClient(after_v1, after_resources)
+
+    before = collect_configuration_snapshot(before_client)  # type: ignore[arg-type]
+    after = collect_configuration_snapshot(after_client)  # type: ignore[arg-type]
+    comparison = compare_configuration_snapshots(before, after)
+
+    assert comparison["configuration_changed"] is False
+    assert comparison["summary"]["changed"] == 0
+
+
+def test_configuration_snapshot_keeps_zigbee_runtime_changes_separate() -> None:
+    before = collect_configuration_snapshot(  # type: ignore[arg-type]
+        FakeHueClient(_healthy_v1(), _healthy_resources())
+    )
+    after_resources = _healthy_resources()
+    after_resources[2]["status"] = "connectivity_issue"
+    after = collect_configuration_snapshot(  # type: ignore[arg-type]
+        FakeHueClient(_healthy_v1(), after_resources)
+    )
+
+    comparison = compare_configuration_snapshots(before, after)
+
+    assert comparison["configuration_changed"] is False
+    assert comparison["summary"]["runtime_changes"] >= 1
+
+
+def test_crash_store_persists_baseline_and_report(tmp_path: Path) -> None:
+    store = CrashDiagnosticStore(tmp_path)
+    healthy = FakeHueClient(_healthy_v1(), _healthy_resources())
+    store.capture_baseline("Bridge Pro", healthy)  # type: ignore[arg-type]
+
+    changed_resources = _healthy_resources()
+    changed_resources[3]["metadata"]["name"] = "Renamed room"
+    report = store.capture_post_crash(
+        "Bridge Pro",
+        FakeHueClient(_healthy_v1(), changed_resources),  # type: ignore[arg-type]
+        {
+            "type": "restored",
+            "downtime_seconds": 50.0,
+            "classifications": ["CONNECTION_REFUSED"],
+        },
+    )
+
+    assert report["comparison"]["configuration_changed"] is True
+    status = store.status("Bridge Pro")
+    assert status["post_crash_enabled"] is True
+    assert len(status["reports"]) == 1
+
+
+def test_write_journal_records_only_mutations_and_redacts_secrets(tmp_path: Path) -> None:
+    journal = tmp_path / "writes.jsonl"
+    client = HueBridgeClient(
+        BridgeProfile(host="192.168.1.40", app_key="secret"),
+        bridge_name="Bridge Pro",
+        write_journal_path=journal,
+    )
+
+    client._record_mutation(
+        api="clip_v2",
+        method="GET",
+        endpoint="/bridge",
+        body=None,
+        started=perf_counter(),
+        status_code=200,
+        result="success",
+    )
+    assert not journal.exists()
+
+    client._record_mutation(
+        api="clip_v2",
+        method="PUT",
+        endpoint="/matter/id",
+        body={"action": "matter_reset", "token": "do-not-store"},
+        started=perf_counter(),
+        status_code=500,
+        result="error",
+        error="Internal Server Error",
+    )
+
+    entry = json.loads(journal.read_text(encoding="utf-8").strip())
+    assert entry["bridge"] == "Bridge Pro"
+    assert entry["method"] == "PUT"
+    assert entry["body"]["action"] == "matter_reset"
+    assert entry["body"]["token"] == "<redacted>"
+    assert entry["status_code"] == 500
