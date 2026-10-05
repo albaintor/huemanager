@@ -7,9 +7,10 @@ import re
 import threading
 import time
 from collections import Counter
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from .client import HueBridgeClient
 
@@ -894,7 +895,7 @@ class CrashDiagnosticStore:
                     client_factory(),
                     outage_event,
                 )
-            except Exception:
+            except (OSError, ValueError, KeyError, RuntimeError, TypeError):
                 # Post-crash diagnostics must never interfere with the availability monitor.
                 return
 
