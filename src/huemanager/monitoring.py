@@ -222,141 +222,6 @@ class DiagnosticMonitor:
     def stop(self) -> None:
         self._stop.set()
 
-    def _record_zigbee_sample(self, sample: dict[str, Any]) -> None:
-        with self._lock:
-            self.last_zigbee_probe_at = sample.get("at")
-            self.zigbee_health = copy.deepcopy(sample)
-            if self.zigbee_baseline is None:
-                self.zigbee_baseline = copy.deepcopy(sample)
-                self.zigbee_state = "normal"
-                return
-
-            degraded, evidence = _zigbee_sample_is_degraded(
-                sample,
-                self.zigbee_baseline,
-            )
-            previous = self.zigbee_state
-            current = "degraded" if degraded else "normal"
-            self.zigbee_state = current
-            if current == previous:
-                return
-
-            event_type = (
-                "zigbee_degraded"
-                if current == "degraded"
-                else "zigbee_restored"
-            )
-            event = {
-                "type": event_type,
-                "at": sample.get("at") or _utc_now(),
-                "api_state": self.current_state,
-                "sample": copy.deepcopy(sample),
-                "baseline": copy.deepcopy(self.zigbee_baseline),
-                "evidence": evidence,
-                "summary": (
-                    "Hue API remained reachable while the public Zigbee connectivity "
-                    "resources showed a broad loss relative to the monitor baseline."
-                    if current == "degraded"
-                    else "Zigbee connectivity counts returned near the monitor baseline."
-                ),
-            }
-            self.events.append(event)
-            LOGGER.warning(
-                "Hue Zigbee state transition bridge=%s state=%s evidence=%s",
-                self.bridge_name,
-                current,
-                evidence,
-            )
-
-    def _maybe_probe_zigbee(self, monotonic_now: float) -> None:
-        last = self._last_zigbee_probe_monotonic
-        if (
-            last is not None
-            and monotonic_now - last < self.zigbee_probe_interval_seconds
-        ):
-            return
-        self._last_zigbee_probe_monotonic = monotonic_now
-        try:
-            sample = collect_zigbee_health(self.client)
-        except (
-            HueApiError,
-            OSError,
-            ValueError,
-            KeyError,
-            IndexError,
-        ):
-            with self._lock:
-                self.zigbee_probe_errors += 1
-            return
-        self._record_zigbee_sample(sample)
-
-    def mark_zigbee_failure(self) -> dict[str, Any]:
-        """Record a user-observed Zigbee failure with immediate read-only probes."""
-        checked_at = _utc_now()
-        api_reachable = False
-        api_failure: dict[str, Any] | None = None
-        try:
-            self._probe()
-            api_reachable = True
-        except (
-            HueApiError,
-            OSError,
-            ValueError,
-            KeyError,
-            IndexError,
-        ) as exc:
-            api_failure = classify_service_failure(exc)
-
-        stack_forensics = probe_bridge_stack(self.client)
-        zigbee_sample: dict[str, Any] | None = None
-        zigbee_error: str | None = None
-        if api_reachable:
-            try:
-                zigbee_sample = collect_zigbee_health(self.client)
-                self._record_zigbee_sample(zigbee_sample)
-            except (
-                HueApiError,
-                OSError,
-                ValueError,
-                KeyError,
-                IndexError,
-            ) as exc:
-                zigbee_error = str(exc)
-
-        if api_reachable:
-            diagnosis = "API_ALIVE_DURING_USER_OBSERVED_ZIGBEE_FAILURE"
-            summary = (
-                "The user marked a physical Zigbee failure while the Hue API "
-                "bridge probe was still reachable. This favors a Zigbee-side "
-                "stall over a full Bridge reboot at this instant."
-            )
-        else:
-            diagnosis = "API_AND_USER_OBSERVED_ZIGBEE_FAILURE_COINCIDE"
-            summary = (
-                "The user-marked Zigbee failure coincided with an unavailable "
-                "Hue API, supporting a broader Bridge service or reboot event."
-            )
-
-        event = {
-            "type": "zigbee_manual_marker",
-            "at": checked_at,
-            "diagnosis": diagnosis,
-            "summary": summary,
-            "api_reachable": api_reachable,
-            "api_failure": api_failure,
-            "stack_forensics": stack_forensics,
-            "zigbee_health": zigbee_sample,
-            "zigbee_probe_error": zigbee_error,
-        }
-        with self._lock:
-            self.events.append(event)
-        LOGGER.warning(
-            "User-observed Zigbee failure marker bridge=%s diagnosis=%s",
-            self.bridge_name,
-            diagnosis,
-        )
-        return self.snapshot()
-
     def _run(self) -> None:
         started_monotonic = time.monotonic()
         with self._lock:
@@ -1032,6 +897,141 @@ class ServiceConnectivityMonitor:
                     self._outage_forensics.append(copy.deepcopy(forensic))
             self.current_state = "down"
             return None
+
+    def _record_zigbee_sample(self, sample: dict[str, Any]) -> None:
+        with self._lock:
+            self.last_zigbee_probe_at = sample.get("at")
+            self.zigbee_health = copy.deepcopy(sample)
+            if self.zigbee_baseline is None:
+                self.zigbee_baseline = copy.deepcopy(sample)
+                self.zigbee_state = "normal"
+                return
+
+            degraded, evidence = _zigbee_sample_is_degraded(
+                sample,
+                self.zigbee_baseline,
+            )
+            previous = self.zigbee_state
+            current = "degraded" if degraded else "normal"
+            self.zigbee_state = current
+            if current == previous:
+                return
+
+            event_type = (
+                "zigbee_degraded"
+                if current == "degraded"
+                else "zigbee_restored"
+            )
+            event = {
+                "type": event_type,
+                "at": sample.get("at") or _utc_now(),
+                "api_state": self.current_state,
+                "sample": copy.deepcopy(sample),
+                "baseline": copy.deepcopy(self.zigbee_baseline),
+                "evidence": evidence,
+                "summary": (
+                    "Hue API remained reachable while the public Zigbee connectivity "
+                    "resources showed a broad loss relative to the monitor baseline."
+                    if current == "degraded"
+                    else "Zigbee connectivity counts returned near the monitor baseline."
+                ),
+            }
+            self.events.append(event)
+            LOGGER.warning(
+                "Hue Zigbee state transition bridge=%s state=%s evidence=%s",
+                self.bridge_name,
+                current,
+                evidence,
+            )
+
+    def _maybe_probe_zigbee(self, monotonic_now: float) -> None:
+        last = self._last_zigbee_probe_monotonic
+        if (
+            last is not None
+            and monotonic_now - last < self.zigbee_probe_interval_seconds
+        ):
+            return
+        self._last_zigbee_probe_monotonic = monotonic_now
+        try:
+            sample = collect_zigbee_health(self.client)
+        except (
+            HueApiError,
+            OSError,
+            ValueError,
+            KeyError,
+            IndexError,
+        ):
+            with self._lock:
+                self.zigbee_probe_errors += 1
+            return
+        self._record_zigbee_sample(sample)
+
+    def mark_zigbee_failure(self) -> dict[str, Any]:
+        """Record a user-observed Zigbee failure with immediate read-only probes."""
+        checked_at = _utc_now()
+        api_reachable = False
+        api_failure: dict[str, Any] | None = None
+        try:
+            self._probe()
+            api_reachable = True
+        except (
+            HueApiError,
+            OSError,
+            ValueError,
+            KeyError,
+            IndexError,
+        ) as exc:
+            api_failure = classify_service_failure(exc)
+
+        stack_forensics = probe_bridge_stack(self.client)
+        zigbee_sample: dict[str, Any] | None = None
+        zigbee_error: str | None = None
+        if api_reachable:
+            try:
+                zigbee_sample = collect_zigbee_health(self.client)
+                self._record_zigbee_sample(zigbee_sample)
+            except (
+                HueApiError,
+                OSError,
+                ValueError,
+                KeyError,
+                IndexError,
+            ) as exc:
+                zigbee_error = str(exc)
+
+        if api_reachable:
+            diagnosis = "API_ALIVE_DURING_USER_OBSERVED_ZIGBEE_FAILURE"
+            summary = (
+                "The user marked a physical Zigbee failure while the Hue API "
+                "bridge probe was still reachable. This favors a Zigbee-side "
+                "stall over a full Bridge reboot at this instant."
+            )
+        else:
+            diagnosis = "API_AND_USER_OBSERVED_ZIGBEE_FAILURE_COINCIDE"
+            summary = (
+                "The user-marked Zigbee failure coincided with an unavailable "
+                "Hue API, supporting a broader Bridge service or reboot event."
+            )
+
+        event = {
+            "type": "zigbee_manual_marker",
+            "at": checked_at,
+            "diagnosis": diagnosis,
+            "summary": summary,
+            "api_reachable": api_reachable,
+            "api_failure": api_failure,
+            "stack_forensics": stack_forensics,
+            "zigbee_health": zigbee_sample,
+            "zigbee_probe_error": zigbee_error,
+        }
+        with self._lock:
+            self.events.append(event)
+        LOGGER.warning(
+            "User-observed Zigbee failure marker bridge=%s diagnosis=%s",
+            self.bridge_name,
+            diagnosis,
+        )
+        return self.snapshot()
 
     def _run(self) -> None:
         self._started_monotonic = time.monotonic()
