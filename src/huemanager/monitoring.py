@@ -7,6 +7,7 @@ import threading
 import time
 import uuid
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from statistics import median
@@ -208,6 +209,7 @@ class DiagnosticMonitor:
     _stop: threading.Event = field(default_factory=threading.Event, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _thread: threading.Thread | None = field(default=None, repr=False)
+    on_restored: Callable[[dict[str, Any]], None] | None = field(default=None, repr=False)
 
     def start(self) -> None:
         self._thread = threading.Thread(
@@ -522,7 +524,7 @@ class ServiceConnectivityMonitor:
         monotonic_now: float,
         error: str | None = None,
         failure: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> dict[str, Any] | None:
         with self._lock:
             previous = self.current_state
             self.checks += 1
@@ -567,7 +569,7 @@ class ServiceConnectivityMonitor:
                 self._outage_failed_checks = 0
                 self._outage_classifications = []
                 self._outage_last_error = None
-                return
+                return event if previous == "down" else None
 
             failure = failure or {
                 "classification": "UNKNOWN_ERROR",
@@ -613,6 +615,7 @@ class ServiceConnectivityMonitor:
                 if classification not in self._outage_classifications:
                     self._outage_classifications.append(classification)
             self.current_state = "down"
+            return None
 
     def _run(self) -> None:
         self._started_monotonic = time.monotonic()
@@ -642,11 +645,19 @@ class ServiceConnectivityMonitor:
                         failure=failure,
                     )
                 else:
-                    self._record_probe(
+                    restored_event = self._record_probe(
                         available=True,
                         checked_at=checked_at,
                         monotonic_now=monotonic_now,
                     )
+                    if restored_event is not None and self.on_restored is not None:
+                        try:
+                            self.on_restored(copy.deepcopy(restored_event))
+                        except (OSError, ValueError, KeyError, RuntimeError):
+                            LOGGER.exception(
+                                "Hue API post-recovery callback failed bridge=%s",
+                                self.bridge_name,
+                            )
 
                 if self._stop.wait(timeout=self.interval_seconds):
                     break
@@ -706,6 +717,7 @@ class ServiceConnectivityMonitorManager:
         client: HueBridgeClient,
         *,
         interval_seconds: int = 10,
+        on_restored: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         with self._lock:
             current = self._jobs.get(bridge_name)
@@ -717,6 +729,7 @@ class ServiceConnectivityMonitorManager:
                 bridge_name=bridge_name,
                 client=client,
                 interval_seconds=interval_seconds,
+                on_restored=on_restored,
             )
             self._jobs[bridge_name] = monitor
             monitor.start()
