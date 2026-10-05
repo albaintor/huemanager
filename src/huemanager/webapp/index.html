@@ -505,6 +505,30 @@
         <div id="serviceMonitorEvents"></div>
 
         <hr style="margin:18px 0">
+        <h3 data-i18n="integrity.title">Intégrité du Bridge et corrélation des crashs</h3>
+        <p class="muted" data-i18n="integrity.description">
+          Audit structurel entièrement en lecture seule. Une baseline saine permet de comparer
+          automatiquement la configuration 20 secondes après chaque rétablissement de l'API.
+        </p>
+        <div class="row">
+          <button id="runIntegrity" class="primary" data-i18n="integrity.run">Audit d'intégrité approfondi</button>
+          <button id="captureCrashBaseline" data-i18n="integrity.baseline">Capturer la baseline saine</button>
+          <button id="refreshCrashCorrelation" data-i18n="integrity.refreshCrash">Relire les crashs</button>
+          <button id="refreshWriteJournal" data-i18n="integrity.refreshWrites">Relire les écritures HueManager</button>
+        </div>
+        <div id="integritySummary" class="audit-summary"></div>
+        <div id="integrityFindings"></div>
+        <div id="crashCorrelationStatus" class="muted" style="margin-top:10px"></div>
+        <div id="crashCorrelationReports"></div>
+        <details style="margin-top:10px">
+          <summary data-i18n="integrity.writesTitle">Journal des écritures HueManager vers le Bridge</summary>
+          <p class="muted" data-i18n="integrity.writesHelp">
+            Seules les requêtes POST, PUT et DELETE sont persistées. Les GET de diagnostic ne sont pas journalisés.
+          </p>
+          <div id="writeJournal"></div>
+        </details>
+
+        <hr style="margin:18px 0">
         <h3 data-i18n="monitor.title">Surveillance Zigbee dans le temps</h3>
         <p class="muted" data-i18n="monitor.description">
           Échantillonne périodiquement la connectivité et la latence locale. La surveillance s'arrête
@@ -624,6 +648,14 @@
       "serviceMonitor.start": "Démarrer",
       "serviceMonitor.stop": "Arrêter",
       "serviceMonitor.copy": "Copier le journal",
+      "integrity.title": "Intégrité du Bridge et corrélation des crashs",
+      "integrity.description": "Audit structurel entièrement en lecture seule. Une baseline saine permet de comparer automatiquement la configuration 20 secondes après chaque rétablissement de l’API.",
+      "integrity.run": "Audit d’intégrité approfondi",
+      "integrity.baseline": "Capturer la baseline saine",
+      "integrity.refreshCrash": "Relire les crashs",
+      "integrity.refreshWrites": "Relire les écritures HueManager",
+      "integrity.writesTitle": "Journal des écritures HueManager vers le Bridge",
+      "integrity.writesHelp": "Seules les requêtes POST, PUT et DELETE sont persistées. Les GET de diagnostic ne sont pas journalisés.",
       "monitor.title": "Surveillance Zigbee dans le temps",
       "monitor.description": "Échantillonne périodiquement la connectivité et la latence locale. La surveillance s’arrête automatiquement à la fin de la durée choisie et peut être arrêtée manuellement à tout moment.",
       "monitor.duration": "Durée maximale",
@@ -797,6 +829,14 @@
       "serviceMonitor.start": "Start",
       "serviceMonitor.stop": "Stop",
       "serviceMonitor.copy": "Copy log",
+      "integrity.title": "Bridge integrity and crash correlation",
+      "integrity.description": "Fully read-only structural audit. A healthy baseline automatically compares configuration 20 seconds after each API recovery.",
+      "integrity.run": "Run deep integrity audit",
+      "integrity.baseline": "Capture healthy baseline",
+      "integrity.refreshCrash": "Reload crash reports",
+      "integrity.refreshWrites": "Reload HueManager writes",
+      "integrity.writesTitle": "HueManager write journal to the Bridge",
+      "integrity.writesHelp": "Only POST, PUT and DELETE requests are persisted. Diagnostic GET requests are not logged.",
       "monitor.title": "Longitudinal Zigbee monitoring",
       "monitor.description": "Periodically samples connectivity and local API latency. Monitoring stops automatically after the selected duration and can be stopped manually at any time.",
       "monitor.duration": "Maximum duration",
@@ -949,6 +989,9 @@
     monitorPollTimer: null,
     serviceMonitor: null,
     serviceMonitorPollTimer: null,
+    integrity: null,
+    crashCorrelation: null,
+    writeJournal: null,
     matterFabrics: null,
     homeKitState: null,
     appleHome: null,
@@ -1722,6 +1765,216 @@
     status("Exclusions de diagnostic réinitialisées.", "good");
   }
 
+  function renderIntegrity(data) {
+    state.integrity = data;
+    const summary = data?.summary || {};
+    const summaryRoot = $("integritySummary");
+    summaryRoot.replaceChildren();
+
+    const chips = [
+      ["CRITICAL " + (summary.critical || 0), summary.critical ? "warn" : "good"],
+      ["HIGH " + (summary.high || 0), summary.high ? "warn" : "good"],
+      ["MEDIUM " + (summary.medium || 0), summary.medium ? "warn" : ""],
+      ["Suspicion score " + (summary.suspicion_score || 0), summary.suspicion_score ? "warn" : "good"],
+      ["v2 resources " + (data?.counts?.v2_total || 0), ""],
+    ];
+    for (const [label, cls] of chips) {
+      const chip = document.createElement("span");
+      chip.className = ("pill " + cls).trim();
+      chip.textContent = label;
+      summaryRoot.append(chip);
+    }
+
+    const root = $("integrityFindings");
+    root.replaceChildren();
+    const findings = data?.findings || [];
+    if (!findings.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "No structural inconsistency detected by the public Hue APIs.";
+      root.append(empty);
+      return;
+    }
+
+    for (const finding of findings) {
+      const box = document.createElement("div");
+      box.className = ["critical", "high", "medium"].includes(finding.severity)
+        ? "audit-issue warning"
+        : "audit-issue";
+      const title = document.createElement("h3");
+      title.textContent =
+        "[" + String(finding.severity || "?").toUpperCase() + "] " + (finding.code || "finding");
+      const message = document.createElement("p");
+      message.textContent =
+        (finding.resource ? finding.resource + " · " : "") + (finding.message || "");
+      box.append(title, message);
+
+      if (finding.details != null || finding.raw != null) {
+        const details = document.createElement("details");
+        const summaryEl = document.createElement("summary");
+        summaryEl.textContent = "Raw diagnostic data";
+        const pre = document.createElement("pre");
+        pre.textContent = JSON.stringify(
+          {details: finding.details, raw: finding.raw},
+          null,
+          2
+        );
+        details.append(summaryEl, pre);
+        box.append(details);
+      }
+      root.append(box);
+    }
+  }
+
+  async function runIntegrity() {
+    const bridge = $("managementBridge").value;
+    if (!bridge) return;
+    $("runIntegrity").disabled = true;
+    status("Deep read-only Bridge integrity audit in progress…");
+    try {
+      const data = await api(
+        "/api/bridges/" + encodeURIComponent(bridge) + "/diagnostics/integrity"
+      );
+      renderIntegrity(data);
+      status("Deep Bridge integrity audit completed.", "good");
+    } finally {
+      $("runIntegrity").disabled = false;
+    }
+  }
+
+  function renderCrashCorrelation(data) {
+    state.crashCorrelation = data;
+    const statusRoot = $("crashCorrelationStatus");
+    const reportsRoot = $("crashCorrelationReports");
+    reportsRoot.replaceChildren();
+
+    if (!data?.baseline) {
+      statusRoot.textContent =
+        "Post-crash capture disabled: capture a healthy baseline first.";
+    } else {
+      statusRoot.textContent =
+        "Healthy baseline: " + (data.baseline.captured_at || "?")
+        + " · hash " + String(data.baseline.configuration_hash || "").slice(0, 12) + "…"
+        + " · post-crash capture ENABLED (20 s after API recovery).";
+    }
+
+    const reports = data?.reports || [];
+    if (!reports.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = data?.baseline
+        ? "No post-crash comparison captured yet."
+        : "No crash correlation data.";
+      reportsRoot.append(empty);
+      return;
+    }
+
+    for (const report of [...reports].reverse()) {
+      const comparison = report.comparison || {};
+      const summary = comparison.summary || {};
+      const outage = report.outage || {};
+      const box = document.createElement("div");
+      box.className = comparison.configuration_changed ? "audit-issue warning" : "audit-issue";
+
+      const title = document.createElement("h3");
+      title.textContent =
+        "Post-crash snapshot · " + (report.captured_at || "?")
+        + (comparison.configuration_changed ? " · CONFIG CHANGED" : " · config unchanged");
+
+      const detail = document.createElement("p");
+      detail.textContent =
+        "Outage ~" + (outage.downtime_seconds ?? "?") + " s"
+        + " · " + ((outage.classifications || []).join(", ") || "unknown")
+        + " · added=" + (summary.added || 0)
+        + " removed=" + (summary.removed || 0)
+        + " changed=" + (summary.changed || 0)
+        + " runtime=" + (summary.runtime_changes || 0);
+      box.append(title, detail);
+
+      const details = document.createElement("details");
+      const summaryEl = document.createElement("summary");
+      summaryEl.textContent = "Configuration and runtime delta";
+      const pre = document.createElement("pre");
+      pre.textContent = JSON.stringify(report, null, 2);
+      details.append(summaryEl, pre);
+      box.append(details);
+      reportsRoot.append(box);
+    }
+  }
+
+  async function refreshCrashCorrelation() {
+    const bridge = $("managementBridge").value;
+    if (!bridge) return;
+    const data = await api(
+      "/api/bridges/" + encodeURIComponent(bridge) + "/diagnostics/crash-correlation"
+    );
+    renderCrashCorrelation(data);
+  }
+
+  async function captureCrashBaseline() {
+    const bridge = $("managementBridge").value;
+    if (!bridge) return;
+    $("captureCrashBaseline").disabled = true;
+    status("Capturing healthy Bridge configuration baseline…");
+    try {
+      await api(
+        "/api/bridges/" + encodeURIComponent(bridge) + "/diagnostics/crash-baseline",
+        {method: "POST"}
+      );
+      await refreshCrashCorrelation();
+      status("Healthy baseline captured. Post-crash comparison is now enabled.", "good");
+    } finally {
+      $("captureCrashBaseline").disabled = false;
+    }
+  }
+
+  function renderWriteJournal(data) {
+    state.writeJournal = data;
+    const root = $("writeJournal");
+    root.replaceChildren();
+    const entries = data?.entries || [];
+    if (!entries.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "No HueManager write request recorded for this Bridge.";
+      root.append(empty);
+      return;
+    }
+
+    for (const entry of [...entries].reverse()) {
+      const box = document.createElement("div");
+      box.className = entry.result === "success" ? "audit-issue" : "audit-issue warning";
+      const title = document.createElement("h3");
+      title.textContent =
+        (entry.at || "?") + " · " + (entry.method || "?") + " " + (entry.endpoint || "?")
+        + " · " + (entry.status_code ?? "no HTTP status") + " · " + (entry.result || "?");
+      const detail = document.createElement("p");
+      detail.textContent =
+        (entry.api || "?") + " · " + (entry.duration_ms ?? "?") + " ms"
+        + (entry.error ? " · " + entry.error : "");
+      box.append(title, detail);
+
+      const details = document.createElement("details");
+      const summaryEl = document.createElement("summary");
+      summaryEl.textContent = "Request body";
+      const pre = document.createElement("pre");
+      pre.textContent = JSON.stringify(entry.body, null, 2);
+      details.append(summaryEl, pre);
+      box.append(details);
+      root.append(box);
+    }
+  }
+
+  async function refreshWriteJournal() {
+    const bridge = $("managementBridge").value;
+    if (!bridge) return;
+    const data = await api(
+      "/api/bridges/" + encodeURIComponent(bridge) + "/diagnostics/write-journal?limit=200"
+    );
+    renderWriteJournal(data);
+  }
+
+
   function stopServiceMonitorPolling() {
     if (state.serviceMonitorPollTimer) {
       clearTimeout(state.serviceMonitorPollTimer);
@@ -1857,6 +2110,7 @@
       "/api/bridges/" + encodeURIComponent(bridge) + "/diagnostics/service-monitor"
     );
     renderServiceMonitor(data);
+    refreshCrashCorrelation().catch(() => {});
     stopServiceMonitorPolling();
     if (["starting", "running"].includes(data.status)) {
       state.serviceMonitorPollTimer = setTimeout(() => {
@@ -3219,6 +3473,19 @@
   $("clearIgnoredDiagnostics").addEventListener("click", () => {
     clearIgnoredDiagnostics().catch(e => status(e.message, "bad"));
   });
+  $("runIntegrity").addEventListener("click", () => {
+    runIntegrity().catch(e => status(e.message, "bad"));
+  });
+  $("captureCrashBaseline").addEventListener("click", () => {
+    captureCrashBaseline().catch(e => status(e.message, "bad"));
+  });
+  $("refreshCrashCorrelation").addEventListener("click", () => {
+    refreshCrashCorrelation().catch(e => status(e.message, "bad"));
+  });
+  $("refreshWriteJournal").addEventListener("click", () => {
+    refreshWriteJournal().catch(e => status(e.message, "bad"));
+  });
+
   $("startServiceMonitor").addEventListener("click", () => {
     startServiceMonitor().catch(e => status(e.message, "bad"));
   });
@@ -3880,6 +4147,14 @@
     state.ignoredDeviceIds = new Set();
     state.monitor = null;
     state.serviceMonitor = null;
+    state.integrity = null;
+    state.crashCorrelation = null;
+    state.writeJournal = null;
+    $("integritySummary").replaceChildren();
+    $("integrityFindings").replaceChildren();
+    $("crashCorrelationStatus").textContent = "";
+    $("crashCorrelationReports").replaceChildren();
+    $("writeJournal").replaceChildren();
     $("serviceMonitorStatus").textContent = "";
     $("serviceMonitorEvents").replaceChildren();
     $("startServiceMonitor").disabled = false;
@@ -3943,6 +4218,8 @@
       loadIgnoredDiagnostics(),
       refreshMonitor(),
       refreshServiceMonitor(),
+      refreshCrashCorrelation(),
+      refreshWriteJournal(),
       loadMatterFabrics(),
       loadHomeKitState(),
     ]))
