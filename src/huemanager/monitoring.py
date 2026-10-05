@@ -613,7 +613,7 @@ def _tcp_port_probe(host: str, port: int, timeout: float = 1.0) -> dict[str, Any
             "network_stack_evidence": True,
             "error": str(exc),
         }
-    except (TimeoutError, socket.timeout) as exc:
+    except TimeoutError as exc:
         return {
             "port": port,
             "status": "timeout",
