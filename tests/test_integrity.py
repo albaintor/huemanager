@@ -124,6 +124,121 @@ def test_deep_integrity_audit_detects_duplicate_zigbee_mac() -> None:
     assert any(item["code"] == "duplicate_zigbee_mac" for item in result["findings"])
 
 
+def test_shared_id_v1_across_different_v2_types_is_normal() -> None:
+    resources = _healthy_resources()
+    resources[0]["id_v1"] = "/lights/1"
+    resources[2]["id_v1"] = "/lights/1"
+
+    result = deep_integrity_audit(FakeHueClient(_healthy_v1(), resources))  # type: ignore[arg-type]
+
+    assert not any(
+        item["code"] in {"duplicate_id_v1", "duplicate_id_v1_same_type"}
+        for item in result["findings"]
+    )
+
+
+def test_duplicate_id_v1_within_same_v2_type_is_reported() -> None:
+    resources = _healthy_resources()
+    resources.append(
+        {
+            "id": "light-2",
+            "type": "light",
+            "id_v1": "/lights/1",
+            "owner": {"rid": "device-1", "rtype": "device"},
+        }
+    )
+
+    result = deep_integrity_audit(FakeHueClient(_healthy_v1(), resources))  # type: ignore[arg-type]
+
+    assert any(
+        item["code"] == "duplicate_id_v1_same_type"
+        for item in result["findings"]
+    )
+
+
+def test_groups_zero_is_valid_v1_counterpart_for_bridge_home_services() -> None:
+    resources = _healthy_resources()
+    resources.extend(
+        [
+            {
+                "id": "bridge-home-1",
+                "type": "bridge_home",
+                "id_v1": "/groups/0",
+                "services": [
+                    {"rid": "grouped-all-1", "rtype": "grouped_light"},
+                ],
+            },
+            {
+                "id": "grouped-all-1",
+                "type": "grouped_light",
+                "id_v1": "/groups/0",
+                "owner": {"rid": "bridge-home-1", "rtype": "bridge_home"},
+            },
+        ]
+    )
+
+    result = deep_integrity_audit(FakeHueClient(_healthy_v1(), resources))  # type: ignore[arg-type]
+
+    assert not any(
+        item["code"] == "missing_v1_counterpart"
+        and item.get("details", {}).get("id_v1") == "/groups/0"
+        for item in result["findings"]
+    )
+
+
+def test_opaque_public_image_and_recipe_references_are_not_dangling() -> None:
+    resources = _healthy_resources()
+    resources.extend(
+        [
+            {
+                "id": "scene-1",
+                "type": "scene",
+                "metadata": {
+                    "name": "Scene",
+                    "image": {"rid": "catalog-image-1", "rtype": "public_image"},
+                },
+                "group": {"rid": "room-1", "rtype": "room"},
+                "actions": [],
+            },
+            {
+                "id": "behavior-1",
+                "type": "behavior_instance",
+                "configuration": {
+                    "recipe": {"rid": "recipe-1", "rtype": "recipe"},
+                },
+            },
+        ]
+    )
+
+    result = deep_integrity_audit(FakeHueClient(_healthy_v1(), resources))  # type: ignore[arg-type]
+
+    assert not any(
+        item["code"] == "missing_v2_reference"
+        and item.get("details", {}).get("rtype") in {"public_image", "recipe"}
+        for item in result["findings"]
+    )
+
+
+def test_real_missing_local_v2_reference_is_still_reported() -> None:
+    resources = _healthy_resources()
+    resources.append(
+        {
+            "id": "scene-1",
+            "type": "scene",
+            "group": {"rid": "missing-room", "rtype": "room"},
+            "actions": [],
+        }
+    )
+
+    result = deep_integrity_audit(FakeHueClient(_healthy_v1(), resources))  # type: ignore[arg-type]
+
+    assert any(
+        item["code"] == "missing_v2_reference"
+        and item.get("details", {}).get("rtype") == "room"
+        for item in result["findings"]
+    )
+
+
 def test_configuration_snapshot_ignores_normal_light_state_changes() -> None:
     before_client = FakeHueClient(_healthy_v1(), _healthy_resources())
 
