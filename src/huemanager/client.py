@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+import threading
+from datetime import UTC, datetime
+from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 import requests
@@ -9,16 +14,87 @@ from .config import BridgeProfile
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+_WRITE_JOURNAL_LOCK = threading.Lock()
+_SENSITIVE_KEYS = {
+    "app_key",
+    "client_key",
+    "username",
+    "password",
+    "token",
+    "setup_code",
+    "pairing_code",
+    "manual_code",
+    "install_code",
+}
+
 
 class HueApiError(RuntimeError):
     pass
 
 
 class HueBridgeClient:
-    def __init__(self, profile: BridgeProfile, timeout: float = 10.0) -> None:
+    def __init__(
+        self,
+        profile: BridgeProfile,
+        timeout: float = 10.0,
+        *,
+        bridge_name: str | None = None,
+        write_journal_path: Path | None = None,
+    ) -> None:
         self.profile = profile
         self.timeout = timeout
+        self.bridge_name = bridge_name
+        self.write_journal_path = write_journal_path
         self.session = requests.Session()
+
+    @staticmethod
+    def _redact_journal_value(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                key: (
+                    "<redacted>"
+                    if str(key).casefold() in _SENSITIVE_KEYS
+                    else HueBridgeClient._redact_journal_value(child)
+                )
+                for key, child in value.items()
+            }
+        if isinstance(value, list):
+            return [HueBridgeClient._redact_journal_value(child) for child in value]
+        return value
+
+    def _record_mutation(
+        self,
+        *,
+        api: str,
+        method: str,
+        endpoint: str,
+        body: dict | None,
+        started: float,
+        status_code: int | None,
+        result: str,
+        error: str | None = None,
+    ) -> None:
+        if method.upper() == "GET" or self.write_journal_path is None:
+            return
+        entry = {
+            "at": datetime.now(UTC).isoformat(),
+            "bridge": self.bridge_name or self.profile.host,
+            "host": self.profile.host,
+            "api": api,
+            "method": method.upper(),
+            "endpoint": endpoint,
+            "status_code": status_code,
+            "result": result,
+            "duration_ms": round((perf_counter() - started) * 1000.0, 1),
+            "body": self._redact_journal_value(body) if body is not None else None,
+            "error": error,
+        }
+        path = self.write_journal_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n"
+        with _WRITE_JOURNAL_LOCK:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(line)
 
     @staticmethod
     def discover(timeout: float = 8.0) -> list[dict]:
@@ -61,63 +137,115 @@ class HueBridgeClient:
 
     def _request_v1(self, method: str, path: str = "", json_body: dict | None = None) -> Any:
         url = f"https://{self.profile.host}/api/{self.profile.app_key}{path}"
-        response = self.session.request(
-            method,
-            url,
-            json=json_body,
-            timeout=self.timeout,
-            verify=self.profile.verify_tls,
+        started = perf_counter()
+        response: requests.Response | None = None
+        try:
+            response = self.session.request(
+                method,
+                url,
+                json=json_body,
+                timeout=self.timeout,
+                verify=self.profile.verify_tls,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            self._raise_v1_errors(payload)
+        except (requests.RequestException, HueApiError, ValueError) as exc:
+            self._record_mutation(
+                api="clip_v1",
+                method=method,
+                endpoint=path or "/",
+                body=json_body,
+                started=started,
+                status_code=response.status_code if response is not None else None,
+                result="error",
+                error=str(exc),
+            )
+            raise
+
+        self._record_mutation(
+            api="clip_v1",
+            method=method,
+            endpoint=path or "/",
+            body=json_body,
+            started=started,
+            status_code=response.status_code,
+            result="success",
         )
-        response.raise_for_status()
-        payload = response.json()
-        self._raise_v1_errors(payload)
         return payload
 
     def _request_v2(self, method: str, path: str = "", json_body: dict | None = None) -> Any:
         url = f"https://{self.profile.host}/clip/v2/resource{path}"
-        response = self.session.request(
-            method,
-            url,
-            headers={"hue-application-key": self.profile.app_key},
-            json=json_body,
-            timeout=self.timeout,
-            verify=self.profile.verify_tls,
-        )
+        started = perf_counter()
+        response: requests.Response | None = None
+        try:
+            response = self.session.request(
+                method,
+                url,
+                headers={"hue-application-key": self.profile.app_key},
+                json=json_body,
+                timeout=self.timeout,
+                verify=self.profile.verify_tls,
+            )
 
-        payload: Any = None
-        if response.content:
-            try:
-                payload = response.json()
-            except ValueError:
-                payload = None
+            payload: Any = None
+            if response.content:
+                try:
+                    payload = response.json()
+                except ValueError:
+                    payload = None
 
-        if isinstance(payload, dict):
-            errors = payload.get("errors") or []
-            if errors:
-                descriptions = "; ".join(
-                    str(error.get("description", error))
-                    for error in errors
-                )
+            if isinstance(payload, dict):
+                errors = payload.get("errors") or []
+                if errors:
+                    descriptions = "; ".join(
+                        str(error.get("description", error))
+                        for error in errors
+                    )
+                    raise HueApiError(
+                        f"Hue API {response.status_code} {method} {path}: {descriptions}"
+                    )
+
+            if not response.ok:
+                detail = response.text.strip()
+                if len(detail) > 500:
+                    detail = detail[:500] + "…"
                 raise HueApiError(
-                    f"Hue API {response.status_code} {method} {path}: {descriptions}"
+                    f"Hue API {response.status_code} {method} {path}"
+                    + (f": {detail}" if detail else "")
                 )
 
-        if not response.ok:
-            detail = response.text.strip()
-            if len(detail) > 500:
-                detail = detail[:500] + "…"
-            raise HueApiError(
-                f"Hue API {response.status_code} {method} {path}"
-                + (f": {detail}" if detail else "")
+            if not response.content:
+                result: Any = []
+            elif not isinstance(payload, dict):
+                raise HueApiError(
+                    f"Unexpected CLIP v2 response for {method} {path}"
+                )
+            else:
+                result = payload.get("data", [])
+        except (requests.RequestException, HueApiError, ValueError) as exc:
+            self._record_mutation(
+                api="clip_v2",
+                method=method,
+                endpoint=path or "/",
+                body=json_body,
+                started=started,
+                status_code=response.status_code if response is not None else None,
+                result="error",
+                error=str(exc),
             )
+            raise
 
-        if not response.content:
-            return []
-        if not isinstance(payload, dict):
-            raise HueApiError(
-                f"Unexpected CLIP v2 response for {method} {path}"
-            )
-        return payload.get("data", [])
+        self._record_mutation(
+            api="clip_v2",
+            method=method,
+            endpoint=path or "/",
+            body=json_body,
+            started=started,
+            status_code=response.status_code,
+            result="success",
+        )
+        return result
 
     def v1_all(self) -> dict:
         payload = self._request_v1("GET")
