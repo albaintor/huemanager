@@ -27,6 +27,12 @@ V1_REF_RE = re.compile(
     r"/(lights|sensors|groups|scenes|rules|schedules|resourcelinks)/([^/\s]+)"
 )
 
+# Some ResourceIdentifier values intentionally point to Hue catalog/internal objects
+# that are not enumerated by GET /clip/v2/resource. Treating them as dangling
+# references creates false positives (notably scene metadata.image/public_image and
+# behavior recipe references).
+OPAQUE_V2_REFERENCE_TYPES = {"public_image", "recipe"}
+
 _RUNTIME_FIELDS_BY_V2_TYPE: dict[str, set[str]] = {
     "zigbee_connectivity": {"status"},
     "device_software_update": {"status"},
@@ -95,6 +101,10 @@ def _canonical_hash(value: Any) -> str:
 
 
 def _v1_path_exists(v1: dict[str, Any], path: str) -> bool:
+    # /groups/0 is the implicit all-lights group. It is a valid id_v1 target for
+    # bridge_home/grouped_light even when it is not materialized in v1["groups"].
+    if path == "/groups/0":
+        return True
     match = V1_REF_RE.fullmatch(path)
     if not match:
         return False
@@ -437,6 +447,8 @@ def deep_integrity_audit(client: HueBridgeClient) -> dict[str, Any]:
             rtype = ref["rtype"]
             if rid == source_id:
                 continue
+            if rtype in OPAQUE_V2_REFERENCE_TYPES:
+                continue
             target = by_id.get(rid)
             if target is None:
                 add(
@@ -637,14 +649,18 @@ def deep_integrity_audit(client: HueBridgeClient) -> dict[str, Any]:
                 raw=resource,
             )
 
-    # v1/v2 linkage and duplicate identifiers.
-    id_v1_map: dict[str, list[str]] = {}
+    # v1/v2 linkage. Sharing id_v1 across DIFFERENT v2 resource types is normal:
+    # e.g. a device, light, zigbee_connectivity and entertainment service can all
+    # map to /lights/N. Only duplicate id_v1 values within the SAME v2 type are
+    # suspicious enough to report.
+    id_v1_by_type: dict[tuple[str, str], list[str]] = {}
     for resource in resources:
         id_v1 = resource.get("id_v1")
         if not isinstance(id_v1, str) or not id_v1:
             continue
-        key = f"{resource.get('type')}:{resource.get('id')}"
-        id_v1_map.setdefault(id_v1, []).append(key)
+        resource_type = str(resource.get("type") or "unknown")
+        key = f"{resource_type}:{resource.get('id')}"
+        id_v1_by_type.setdefault((resource_type, id_v1), []).append(key)
         if not _v1_path_exists(v1, id_v1):
             add(
                 "high",
@@ -655,13 +671,20 @@ def deep_integrity_audit(client: HueBridgeClient) -> dict[str, Any]:
                 raw=resource,
             )
 
-    for id_v1, resource_keys in sorted(id_v1_map.items()):
+    for (resource_type, id_v1), resource_keys in sorted(id_v1_by_type.items()):
         if len(resource_keys) > 1:
             add(
                 "high",
-                "duplicate_id_v1",
-                "Multiple v2 resources share the same id_v1.",
-                details={"id_v1": id_v1, "resources": resource_keys},
+                "duplicate_id_v1_same_type",
+                (
+                    f"Multiple {resource_type} resources share the same id_v1. "
+                    "Sharing id_v1 across different v2 types is normal and is not reported."
+                ),
+                details={
+                    "id_v1": id_v1,
+                    "resource_type": resource_type,
+                    "resources": resource_keys,
+                },
             )
 
     v1_uniqueids: dict[str, list[str]] = {}
@@ -707,7 +730,11 @@ def deep_integrity_audit(client: HueBridgeClient) -> dict[str, Any]:
                 add(
                     severity,
                     "broken_v1_reference",
-                    f"{section[:-1].capitalize()} references missing v1 resources.",
+                    (
+                        f"{section[:-1].capitalize()} references missing v1 resources: "
+                        + ", ".join(missing[:6])
+                        + (" …" if len(missing) > 6 else "")
+                    ),
                     resource=f"{section}:{resource_id}",
                     details={"missing": missing, "status": resource.get("status")},
                     raw=resource,
