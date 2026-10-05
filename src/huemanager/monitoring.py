@@ -950,11 +950,14 @@ class ServiceConnectivityMonitor:
                         "classifications": list(self._outage_classifications),
                         "last_error": self._outage_last_error,
                         "endpoint": self._endpoint(),
-                        "outage_forensics": copy.deepcopy(self._outage_forensics),
-                        "outage_diagnosis": summarize_outage_forensics(
-                            self._outage_forensics
-                        ),
                     }
+                    if self._outage_forensics:
+                        event["outage_forensics"] = copy.deepcopy(
+                            self._outage_forensics
+                        )
+                        event["outage_diagnosis"] = summarize_outage_forensics(
+                            self._outage_forensics
+                        )
                     self.events.append(event)
                     LOGGER.info(
                         "Hue API service RESTORED bridge=%s downtime_seconds=%s "
@@ -1004,13 +1007,12 @@ class ServiceConnectivityMonitor:
                     "http_status": failure.get("http_status"),
                     "endpoint": self._endpoint(),
                     "error": self.last_error,
-                    "forensic": copy.deepcopy(forensic) if forensic else None,
-                    "preliminary_diagnosis": (
-                        summarize_outage_forensics(self._outage_forensics)
-                        if self._outage_forensics
-                        else None
-                    ),
                 }
+                if forensic:
+                    event["forensic"] = copy.deepcopy(forensic)
+                    event["preliminary_diagnosis"] = summarize_outage_forensics(
+                        self._outage_forensics
+                    )
                 self.events.append(event)
                 LOGGER.warning(
                     "Hue API service DOWN bridge=%s classification=%s layer=%s "
