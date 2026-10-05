@@ -475,9 +475,9 @@
         <hr style="margin:18px 0">
         <h3 data-i18n="serviceMonitor.title">Surveillance du service API Hue</h3>
         <p class="muted" data-i18n="serviceMonitor.description">
-          Vérifie l'API Hue locale authentifiée, sans ping et sans charger l'inventaire complet.
-          La surveillance continue jusqu'à un arrêt manuel. Seules les coupures et les reprises
-          de service sont conservées dans le journal.
+          Vérifie l'API Hue locale authentifiée et échantillonne l'état Zigbee. Pendant une
+          coupure API, HueManager teste ponctuellement les ports TCP 443/80 et le endpoint v1
+          léger si HTTPS répond, afin de distinguer un host hors ligne d'un service Hue arrêté.
         </p>
         <div class="row">
           <div class="grow">
@@ -499,6 +499,10 @@
           <div>
             <label>&nbsp;</label>
             <button id="copyServiceMonitor" disabled data-i18n="serviceMonitor.copy">Copier le journal</button>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="markZigbeeFailure" disabled data-i18n="serviceMonitor.markZigbee">Marquer panne Zigbee maintenant</button>
           </div>
         </div>
         <div id="serviceMonitorStatus" class="muted" style="margin-top:10px"></div>
@@ -644,11 +648,12 @@
       "diagnostics.saveIgnored": "Enregistrer les exclusions",
       "diagnostics.clearIgnored": "Réinitialiser les exclusions",
       "serviceMonitor.title": "Surveillance du service API Hue",
-      "serviceMonitor.description": "Vérifie l’API Hue locale authentifiée, sans ping et sans charger l’inventaire complet. La surveillance continue jusqu’à un arrêt manuel. Seules les coupures et les reprises de service sont conservées dans le journal.",
+      "serviceMonitor.description": "Vérifie l’API Hue locale authentifiée et échantillonne l’état Zigbee. Pendant une coupure API, HueManager teste ponctuellement TCP 443/80 et l’API v1 légère si HTTPS répond pour distinguer host hors ligne et service Hue arrêté.",
       "serviceMonitor.interval": "Intervalle",
       "serviceMonitor.start": "Démarrer",
       "serviceMonitor.stop": "Arrêter",
       "serviceMonitor.copy": "Copier le journal",
+      "serviceMonitor.markZigbee": "Marquer panne Zigbee maintenant",
       "integrity.title": "Intégrité du Bridge et corrélation des crashs",
       "integrity.description": "Audit structurel entièrement en lecture seule. Une baseline saine permet de comparer automatiquement la configuration 20 secondes après chaque rétablissement de l’API.",
       "integrity.run": "Audit d’intégrité approfondi",
@@ -826,11 +831,12 @@
       "diagnostics.saveIgnored": "Save exclusions",
       "diagnostics.clearIgnored": "Reset exclusions",
       "serviceMonitor.title": "Hue API service monitoring",
-      "serviceMonitor.description": "Checks the authenticated local Hue API without pinging and without loading the full inventory. Monitoring continues until manually stopped. Only outages and service restorations are retained in the log.",
+      "serviceMonitor.description": "Checks the authenticated local Hue API and samples Zigbee health. During an API outage, HueManager briefly probes TCP 443/80 and the lightweight v1 endpoint when HTTPS answers to separate a host outage from a Hue service outage.",
       "serviceMonitor.interval": "Interval",
       "serviceMonitor.start": "Start",
       "serviceMonitor.stop": "Stop",
       "serviceMonitor.copy": "Copy log",
+      "serviceMonitor.markZigbee": "Mark Zigbee failure now",
       "integrity.title": "Bridge integrity and crash correlation",
       "integrity.description": "Fully read-only structural audit. A healthy baseline automatically compares configuration 20 seconds after each API recovery.",
       "integrity.run": "Run deep integrity audit",
@@ -2092,15 +2098,25 @@
   function serviceMonitorLogText(data) {
     return (data?.events || []).map(event => {
       if (event.type === "down") {
+        const forensic = event.forensic || {};
         const fields = [
           event.at || "?",
           "DOWN",
           event.classification || "UNKNOWN_ERROR",
-          event.layer ? `layer=${event.layer}` : null,
-          event.http_status ? `http_status=${event.http_status}` : null,
+          event.layer ? "layer=" + event.layer : null,
+          event.http_status ? "http_status=" + event.http_status : null,
           event.summary || null,
-          event.endpoint ? `endpoint=${event.endpoint}` : null,
-          event.error ? `raw_error=${event.error}` : null,
+          event.preliminary_diagnosis?.code
+            ? "diagnosis=" + event.preliminary_diagnosis.code
+            : null,
+          forensic.tcp_https_443?.status
+            ? "tcp443=" + forensic.tcp_https_443.status
+            : null,
+          forensic.tcp_http_80?.status
+            ? "tcp80=" + forensic.tcp_http_80.status
+            : null,
+          event.endpoint ? "endpoint=" + event.endpoint : null,
+          event.error ? "raw_error=" + event.error : null,
         ].filter(Boolean);
         return fields.join(" | ");
       }
@@ -2110,21 +2126,56 @@
           "RESTORED",
           event.downtime_seconds == null
             ? null
-            : `downtime=${event.downtime_seconds}s`,
+            : "downtime=" + event.downtime_seconds + "s",
           event.failed_checks == null
             ? null
-            : `failed_checks=${event.failed_checks}`,
+            : "failed_checks=" + event.failed_checks,
           (event.classifications || []).length
-            ? `classifications=${event.classifications.join(",")}`
+            ? "classifications=" + event.classifications.join(",")
+            : null,
+          event.outage_diagnosis?.code
+            ? "diagnosis=" + event.outage_diagnosis.code
+            : null,
+          event.outage_diagnosis?.probe_count != null
+            ? "forensic_probes=" + event.outage_diagnosis.probe_count
             : null,
           event.outage_started_at
-            ? `outage_started_at=${event.outage_started_at}`
+            ? "outage_started_at=" + event.outage_started_at
             : null,
-          event.endpoint ? `endpoint=${event.endpoint}` : null,
+          event.endpoint ? "endpoint=" + event.endpoint : null,
         ].filter(Boolean);
         return fields.join(" | ");
       }
-      return `${event.at || "?"} | ${event.type || "event"}`;
+      if (event.type === "zigbee_degraded" || event.type === "zigbee_restored") {
+        const sample = event.sample || {};
+        return [
+          event.at || "?",
+          event.type.toUpperCase(),
+          "api_state=" + (event.api_state || "?"),
+          "connected=" + (sample.connected ?? "?") + "/" + (sample.total ?? "?"),
+          event.summary || null,
+        ].filter(Boolean).join(" | ");
+      }
+      if (event.type === "zigbee_manual_marker") {
+        const stack = event.stack_forensics || {};
+        return [
+          event.at || "?",
+          "ZIGBEE_MANUAL_MARKER",
+          "api_reachable=" + String(Boolean(event.api_reachable)),
+          "diagnosis=" + (event.diagnosis || "?"),
+          stack.tcp_https_443?.status
+            ? "tcp443=" + stack.tcp_https_443.status
+            : null,
+          stack.tcp_http_80?.status
+            ? "tcp80=" + stack.tcp_http_80.status
+            : null,
+          event.zigbee_health
+            ? "zigbee_connected=" + event.zigbee_health.connected + "/" + event.zigbee_health.total
+            : null,
+          event.summary || null,
+        ].filter(Boolean).join(" | ");
+      }
+      return (event.at || "?") + " | " + (event.type || "event");
     }).join("\n");
   }
 
@@ -2134,6 +2185,7 @@
     $("startServiceMonitor").disabled = running;
     $("stopServiceMonitor").disabled = !running;
     $("copyServiceMonitor").disabled = !(data?.events || []).length;
+    $("markZigbeeFailure").disabled = !running;
 
     const statusRoot = $("serviceMonitorStatus");
     const eventsRoot = $("serviceMonitorEvents");
@@ -2149,12 +2201,22 @@
       : data.current_state === "down"
         ? "API indisponible"
         : "état en attente";
+    const zigbee = data.zigbee_health;
+    const zigbeeText = zigbee
+      ? " · Zigbee " + (data.zigbee_state || "unknown")
+        + " " + (zigbee.connected ?? "?") + "/" + (zigbee.total ?? "?") + " connected"
+      : "";
+    const outageDiagnosis = data.current_outage_diagnosis?.code
+      ? " · diagnostic=" + data.current_outage_diagnosis.code
+      : "";
     statusRoot.textContent =
-      `État : ${data.status} · ${stateLabel} · ${data.checks || 0} vérification(s)`
-      + ` · intervalle ${data.interval_seconds || 10} s`
-      + (data.last_check_at ? ` · dernière vérification ${data.last_check_at}` : "")
+      "État : " + data.status + " · " + stateLabel + " · " + (data.checks || 0) + " vérification(s)"
+      + " · intervalle " + (data.interval_seconds || 10) + " s"
+      + zigbeeText
+      + outageDiagnosis
+      + (data.last_check_at ? " · dernière vérification " + data.last_check_at : "")
       + (data.last_error && data.current_state === "down"
-        ? ` · erreur : ${data.last_error}`
+        ? " · erreur : " + data.last_error
         : "");
 
     const events = data.events || [];
@@ -2162,48 +2224,115 @@
       const empty = document.createElement("p");
       empty.className = "muted";
       empty.textContent = running
-        ? "Aucune coupure détectée depuis le démarrage."
-        : "Aucune coupure détectée pendant cette surveillance.";
+        ? "Aucune coupure ni anomalie Zigbee détectée depuis le démarrage."
+        : "Aucune coupure ni anomalie Zigbee détectée pendant cette surveillance.";
       eventsRoot.append(empty);
       return;
     }
 
     for (const event of [...events].reverse()) {
       const box = document.createElement("div");
-      box.className = event.type === "down" ? "audit-issue warning" : "audit-issue";
+      const warning = ["down", "zigbee_degraded", "zigbee_manual_marker"].includes(event.type);
+      box.className = warning ? "audit-issue warning" : "audit-issue";
       const title = document.createElement("h3");
-      title.textContent = event.type === "down"
-        ? "Hue API service DOWN"
-        : "Hue API service RESTORED";
       const detail = document.createElement("p");
+
       if (event.type === "down") {
+        title.textContent = "Hue API service DOWN";
         const classification = event.classification || "UNKNOWN_ERROR";
-        const layer = event.layer ? ` · layer=${event.layer}` : "";
-        const statusCode = event.http_status ? ` · HTTP ${event.http_status}` : "";
+        const layer = event.layer ? " · layer=" + event.layer : "";
+        const statusCode = event.http_status ? " · HTTP " + event.http_status : "";
+        const forensic = event.forensic || {};
+        const forensicText = forensic.diagnosis
+          ? " · " + forensic.diagnosis
+            + " · TCP443=" + (forensic.tcp_https_443?.status || "?")
+            + " · TCP80=" + (forensic.tcp_http_80?.status || "?")
+          : "";
         detail.textContent =
-          `${event.at || "?"} · ${classification}${layer}${statusCode}`
-          + (event.summary ? ` · ${event.summary}` : "")
-          + (event.endpoint ? ` · ${event.endpoint}` : "");
+          (event.at || "?") + " · " + classification + layer + statusCode
+          + (event.summary ? " · " + event.summary : "")
+          + forensicText
+          + (event.endpoint ? " · " + event.endpoint : "");
         if (event.error) {
           const raw = document.createElement("pre");
           raw.textContent = event.error;
           box.append(title, detail, raw);
+          const forensicDetails = document.createElement("details");
+          const forensicSummary = document.createElement("summary");
+          forensicSummary.textContent = "Low-level outage forensics";
+          const pre = document.createElement("pre");
+          pre.textContent = JSON.stringify(forensic, null, 2);
+          forensicDetails.append(forensicSummary, pre);
+          box.append(forensicDetails);
           eventsRoot.append(box);
           continue;
         }
-      } else {
+      } else if (event.type === "restored") {
+        title.textContent = "Hue API service RESTORED";
         const duration = event.downtime_seconds == null
           ? "downtime unknown"
-          : `downtime ~${event.downtime_seconds} s`;
+          : "downtime ~" + event.downtime_seconds + " s";
         const failedChecks = event.failed_checks == null
           ? ""
-          : ` · failed checks=${event.failed_checks}`;
+          : " · failed checks=" + event.failed_checks;
         const classifications = (event.classifications || []).length
-          ? ` · classifications=${event.classifications.join(", ")}`
+          ? " · classifications=" + event.classifications.join(", ")
+          : "";
+        const diagnosis = event.outage_diagnosis?.code
+          ? " · diagnosis=" + event.outage_diagnosis.code
           : "";
         detail.textContent =
-          `${event.at || "?"} · ${duration}${failedChecks}${classifications}`
-          + (event.outage_started_at ? ` · outage started ${event.outage_started_at}` : "");
+          (event.at || "?") + " · " + duration + failedChecks + classifications + diagnosis
+          + (event.outage_started_at ? " · outage started " + event.outage_started_at : "");
+        if (event.outage_diagnosis || (event.outage_forensics || []).length) {
+          const forensicDetails = document.createElement("details");
+          const forensicSummary = document.createElement("summary");
+          forensicSummary.textContent = "Outage diagnosis and low-level probes";
+          const pre = document.createElement("pre");
+          pre.textContent = JSON.stringify(
+            {
+              diagnosis: event.outage_diagnosis,
+              probes: event.outage_forensics || [],
+            },
+            null,
+            2
+          );
+          forensicDetails.append(forensicSummary, pre);
+          box.append(title, detail, forensicDetails);
+          eventsRoot.append(box);
+          continue;
+        }
+      } else if (event.type === "zigbee_degraded" || event.type === "zigbee_restored") {
+        title.textContent = event.type === "zigbee_degraded"
+          ? "Zigbee connectivity DEGRADED"
+          : "Zigbee connectivity RESTORED";
+        const sample = event.sample || {};
+        detail.textContent =
+          (event.at || "?")
+          + " · API=" + (event.api_state || "?")
+          + " · connected=" + (sample.connected ?? "?") + "/" + (sample.total ?? "?")
+          + (event.summary ? " · " + event.summary : "");
+      } else if (event.type === "zigbee_manual_marker") {
+        title.textContent = "USER-OBSERVED ZIGBEE FAILURE";
+        const stack = event.stack_forensics || {};
+        detail.textContent =
+          (event.at || "?")
+          + " · API reachable=" + String(Boolean(event.api_reachable))
+          + " · " + (event.diagnosis || "?")
+          + " · TCP443=" + (stack.tcp_https_443?.status || "?")
+          + " · TCP80=" + (stack.tcp_http_80?.status || "?");
+        const details = document.createElement("details");
+        const summaryEl = document.createElement("summary");
+        summaryEl.textContent = "Marker diagnostic details";
+        const pre = document.createElement("pre");
+        pre.textContent = JSON.stringify(event, null, 2);
+        details.append(summaryEl, pre);
+        box.append(title, detail, details);
+        eventsRoot.append(box);
+        continue;
+      } else {
+        title.textContent = event.type || "Diagnostic event";
+        detail.textContent = event.at || "?";
       }
       box.append(title, detail);
       eventsRoot.append(box);
@@ -2245,6 +2374,27 @@
       refreshServiceMonitor().catch(e => status(e.message, "bad"));
     }, 10000);
   }
+
+  async function markZigbeeFailure() {
+    const bridge = $("managementBridge").value;
+    if (!bridge) return;
+    $("markZigbeeFailure").disabled = true;
+    status("Capturing user-observed Zigbee failure evidence…");
+    try {
+      const data = await api(
+        "/api/bridges/" + encodeURIComponent(bridge)
+        + "/diagnostics/service-monitor/mark-zigbee-failure",
+        {method: "POST"}
+      );
+      renderServiceMonitor(data);
+      status("Zigbee failure marker captured.", "good");
+    } finally {
+      if (["starting", "running"].includes(state.serviceMonitor?.status)) {
+        $("markZigbeeFailure").disabled = false;
+      }
+    }
+  }
+
 
   async function stopServiceMonitor() {
     const bridge = $("managementBridge").value;
@@ -3595,6 +3745,10 @@
   });
   $("refreshWriteJournal").addEventListener("click", () => {
     refreshWriteJournal().catch(e => status(e.message, "bad"));
+  });
+
+  $("markZigbeeFailure").addEventListener("click", () => {
+    markZigbeeFailure().catch(e => status(e.message, "bad"));
   });
 
   $("startServiceMonitor").addEventListener("click", () => {
