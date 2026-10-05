@@ -92,9 +92,8 @@ class HueBridgeClient:
         path = self.write_journal_path
         path.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n"
-        with _WRITE_JOURNAL_LOCK:
-            with path.open("a", encoding="utf-8") as handle:
-                handle.write(line)
+        with _WRITE_JOURNAL_LOCK, path.open("a", encoding="utf-8") as handle:
+            handle.write(line)
 
     @staticmethod
     def discover(timeout: float = 8.0) -> list[dict]:
