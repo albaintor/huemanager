@@ -5,6 +5,7 @@ from requests import exceptions as requests_exceptions
 
 from huemanager.client import HueApiError
 from huemanager.monitoring import (
+    DiagnosticMonitor,
     ServiceConnectivityMonitor,
     _zigbee_sample_is_degraded,
     classify_service_failure,
@@ -324,3 +325,19 @@ def test_collect_zigbee_health_summarizes_public_connectivity_resources() -> Non
         "connectivity_issue": 1,
     }
     assert len(result["issues_sample"]) == 1
+
+
+def test_zigbee_forensics_are_attached_to_service_monitor() -> None:
+    client = _FakeZigbeeClient()
+    monitor = ServiceConnectivityMonitor(
+        bridge_name="Bridge Pro",
+        client=client,  # type: ignore[arg-type]
+        interval_seconds=10,
+    )
+
+    monitor._maybe_probe_zigbee(0.0)
+
+    assert monitor.zigbee_baseline is not None
+    assert monitor.zigbee_health is not None
+    assert monitor.zigbee_state == "normal"
+    assert not hasattr(DiagnosticMonitor, "_maybe_probe_zigbee")
