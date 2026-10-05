@@ -728,9 +728,7 @@ def deep_integrity_audit(client: HueBridgeClient) -> dict[str, Any]:
             missing = sorted(ref for ref in refs if ref not in existing_v1)
             if missing:
                 status = resource.get("status")
-                if section == "resourcelinks":
-                    severity = "medium"
-                elif status == "disabled":
+                if section == "resourcelinks" or status == "disabled":
                     severity = "medium"
                 else:
                     severity = "high"
