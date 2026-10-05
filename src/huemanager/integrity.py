@@ -24,8 +24,13 @@ V1_SECTIONS = (
     "resourcelinks",
 )
 V1_REF_RE = re.compile(
-    r"/(lights|sensors|groups|scenes|rules|schedules|resourcelinks)/([^/\s]+)"
+    r"/(lights|sensors|groups|scenes|rules|schedules|resourcelinks)/([A-Za-z0-9_-]+)"
 )
+
+# Legacy Hue API v1 represented a multi-button remote as a single switch sensor,
+# while API v2 exposes each physical button as its own button resource. Those
+# button resources can therefore legitimately share one id_v1 (/sensors/N).
+MULTI_SERVICE_ID_V1_TYPES = {"button", "bell_button", "relative_rotary"}
 
 # Some ResourceIdentifier values intentionally point to Hue catalog/internal objects
 # that are not enumerated by GET /clip/v2/resource. Treating them as dangling
@@ -672,20 +677,22 @@ def deep_integrity_audit(client: HueBridgeClient) -> dict[str, Any]:
             )
 
     for (resource_type, id_v1), resource_keys in sorted(id_v1_by_type.items()):
-        if len(resource_keys) > 1:
-            add(
-                "high",
-                "duplicate_id_v1_same_type",
-                (
-                    f"Multiple {resource_type} resources share the same id_v1. "
-                    "Sharing id_v1 across different v2 types is normal and is not reported."
-                ),
-                details={
-                    "id_v1": id_v1,
-                    "resource_type": resource_type,
-                    "resources": resource_keys,
-                },
-            )
+        if len(resource_keys) <= 1 or resource_type in MULTI_SERVICE_ID_V1_TYPES:
+            continue
+        add(
+            "high",
+            "duplicate_id_v1_same_type",
+            (
+                f"Multiple {resource_type} resources share the same id_v1. "
+                "Sharing id_v1 is expected for multi-service switch resources "
+                "such as button, bell_button and relative_rotary, which are excluded."
+            ),
+            details={
+                "id_v1": id_v1,
+                "resource_type": resource_type,
+                "resources": resource_keys,
+            },
+        )
 
     v1_uniqueids: dict[str, list[str]] = {}
     for section in ("lights", "sensors"):
@@ -718,25 +725,35 @@ def deep_integrity_audit(client: HueBridgeClient) -> dict[str, Any]:
                 f"/{ref_section}/{ref_id}"
                 for ref_section, ref_id in V1_REF_RE.findall(text)
             }
-            if section == "resourcelinks":
-                refs.update(
-                    ref
-                    for ref in resource.get("links", [])
-                    if isinstance(ref, str)
-                )
             missing = sorted(ref for ref in refs if ref not in existing_v1)
             if missing:
-                severity = "high"
+                status = resource.get("status")
+                if section == "resourcelinks":
+                    severity = "medium"
+                elif status == "disabled":
+                    severity = "medium"
+                else:
+                    severity = "high"
+                name = resource.get("name")
+                prefix = (
+                    f"{name} · " if isinstance(name, str) and name.strip() else ""
+                )
                 add(
                     severity,
                     "broken_v1_reference",
                     (
-                        f"{section[:-1].capitalize()} references missing v1 resources: "
+                        prefix
+                        + f"{section[:-1].capitalize()} references missing v1 resources: "
                         + ", ".join(missing[:6])
                         + (" …" if len(missing) > 6 else "")
                     ),
                     resource=f"{section}:{resource_id}",
-                    details={"missing": missing, "status": resource.get("status")},
+                    details={
+                        "missing": missing,
+                        "status": status,
+                        "name": name,
+                        "owner": resource.get("owner"),
+                    },
                     raw=resource,
                 )
 
