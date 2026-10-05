@@ -209,7 +209,6 @@ class DiagnosticMonitor:
     _stop: threading.Event = field(default_factory=threading.Event, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _thread: threading.Thread | None = field(default=None, repr=False)
-    on_restored: Callable[[dict[str, Any]], None] | None = field(default=None, repr=False)
 
     def start(self) -> None:
         self._thread = threading.Thread(
@@ -490,6 +489,7 @@ class ServiceConnectivityMonitor:
     _stop: threading.Event = field(default_factory=threading.Event, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _thread: threading.Thread | None = field(default=None, repr=False)
+    on_restored: Callable[[dict[str, Any]], None] | None = field(default=None, repr=False)
 
     def start(self) -> None:
         self._thread = threading.Thread(
