@@ -317,6 +317,7 @@ def normalize_home_assistant_inventory(
             {
                 "id": area["id"],
                 "name": area.get("name") or area["id"],
+                "aliases": list(area.get("aliases") or []),
                 "devices": room_devices,
             }
         )
@@ -420,14 +421,24 @@ def build_home_assistant_apple_home_sync_plan(
                 method = "name"
                 confidence = 1.0
             else:
-                desired, confidence, suggestions = _best_fuzzy_match(
-                    source_name,
-                    apple_rooms,
-                    room=True,
-                    threshold=0.72,
-                    ambiguity_gap=0.08,
-                )
-                method = "heuristic" if desired else None
+                alias_matches = {
+                    str(match.get("id")): match
+                    for alias in room.get("aliases", [])
+                    if (match := apple_rooms_by_name.get(_normalise(str(alias))))
+                }
+                if len(alias_matches) == 1:
+                    desired = next(iter(alias_matches.values()))
+                    method = "alias"
+                    confidence = 1.0
+                else:
+                    desired, confidence, suggestions = _best_fuzzy_match(
+                        source_name,
+                        apple_rooms,
+                        room=True,
+                        threshold=0.72,
+                        ambiguity_gap=0.08,
+                    )
+                    method = "heuristic" if desired else None
 
         row = {
             "source_room_id": source_room_id,
@@ -673,8 +684,11 @@ def build_home_assistant_apple_home_sync_plan(
         }
 
     status_counts: dict[str, int] = {}
+    match_method_counts: dict[str, int] = {}
     for row in device_rows:
         status_counts[row["status"]] = status_counts.get(row["status"], 0) + 1
+        method = str(row.get("match_method") or "unmatched")
+        match_method_counts[method] = match_method_counts.get(method, 0) + 1
 
     return {
         "source_kind": "home_assistant",
@@ -702,6 +716,10 @@ def build_home_assistant_apple_home_sync_plan(
             "unmatched_accessories": status_counts.get("unmatched_accessory", 0),
             "ambiguous_accessories": status_counts.get("ambiguous_accessory", 0),
             "missing_home_rooms": status_counts.get("missing_home_room", 0),
+            "match_methods": match_method_counts,
+            "identity_matches": match_method_counts.get("serial", 0),
+            "name_model_matches": match_method_counts.get("name_model", 0),
+            "manual_matches": match_method_counts.get("manual_accessory", 0),
         },
     }
 
