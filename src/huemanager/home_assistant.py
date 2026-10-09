@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import ssl
 import urllib.parse
 from datetime import UTC, datetime
@@ -14,7 +15,6 @@ import websocket
 from .apple_home import (
     _best_fuzzy_match,
     _normalise,
-    _normalise_identifier,
     _unique_index,
 )
 from .config import HomeAssistantProfile
@@ -136,6 +136,12 @@ class HomeAssistantClient:
         )
 
 
+def _normalize_external_id(value: str | None) -> str:
+    if not value:
+        return ""
+    return re.sub(r"[^a-z0-9]+", "", str(value).lower())
+
+
 def _flatten_pairs(values: Any) -> list[str]:
     result: list[str] = []
     for item in values or []:
@@ -219,6 +225,8 @@ def normalize_home_assistant_inventory(
 
     normalized_devices: list[dict[str, Any]] = []
     for device_id, device in device_by_id.items():
+        if str(device.get("entry_type") or "").lower() == "service":
+            continue
         area_id, area_source = _device_area(
             device,
             device_by_id=device_by_id,
@@ -263,6 +271,7 @@ def normalize_home_assistant_inventory(
                 "config_entry_id": device.get("config_entry_id")
                 or device.get("primary_config_entry"),
                 "disabled": bool(device.get("disabled_by")),
+                "entry_type": device.get("entry_type"),
             }
         )
 
@@ -335,10 +344,10 @@ def normalize_home_assistant_inventory(
 def _ha_identifier_candidates(device: dict[str, Any]) -> set[str]:
     result: set[str] = set()
     for value in device.get("identifiers", []):
-        normalized = _normalise_identifier(str(value))
+        normalized = _normalize_external_id(str(value))
         if normalized:
             result.add(normalized)
-    serial = _normalise_identifier(str(device.get("serial_number") or ""))
+    serial = _normalize_external_id(str(device.get("serial_number") or ""))
     if serial:
         result.add(serial)
     return result
@@ -384,7 +393,7 @@ def build_home_assistant_apple_home_sync_plan(
     accessories_by_id = {str(item["id"]): item for item in accessories}
     accessories_by_serial: dict[str, list[dict[str, Any]]] = {}
     for accessory in accessories:
-        serial = _normalise_identifier(str(accessory.get("serial_number") or ""))
+        serial = _normalize_external_id(str(accessory.get("serial_number") or ""))
         if serial:
             accessories_by_serial.setdefault(serial, []).append(accessory)
 
@@ -484,22 +493,22 @@ def build_home_assistant_apple_home_sync_plan(
                     name_key = _normalise(device_name)
                     model_key = _normalise(device.get("model"))
                     exact = []
-                    for accessory in accessories:
-                        accessory_id = str(accessory.get("id") or "")
-                        if not accessory_id or accessory_id in matched_apple_ids:
-                            continue
-                        if _normalise(accessory.get("name")) != name_key:
-                            continue
-                        accessory_model = _normalise(accessory.get("model"))
-                        if model_key and accessory_model and accessory_model != model_key:
-                            continue
-                        exact.append(accessory)
+                    if name_key and model_key:
+                        for accessory in accessories:
+                            accessory_id = str(accessory.get("id") or "")
+                            if not accessory_id or accessory_id in matched_apple_ids:
+                                continue
+                            if _normalise(accessory.get("name")) != name_key:
+                                continue
+                            if _normalise(accessory.get("model")) != model_key:
+                                continue
+                            exact.append(accessory)
                     if len(exact) == 1:
                         candidates = exact
-                        match_method = "name_model" if model_key else "name"
+                        match_method = "name_model"
                     elif len(exact) > 1:
                         candidates = exact
-                        match_method = "name_ambiguous"
+                        match_method = "name_model_ambiguous"
 
             if len(candidates) != 1:
                 device_rows.append(
