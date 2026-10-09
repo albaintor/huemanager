@@ -382,6 +382,30 @@
         </div>
       </div>
 
+
+      <div class="card span-12">
+        <h2 data-i18n="updates.title">Mises à jour logicielles Hue</h2>
+        <p class="muted" data-i18n="updates.description">
+          Lit la version et les informations de mise à jour renvoyées par le Bridge.
+          Le serveur Philips Hue décide quels firmwares sont éligibles, y compris en bêta.
+        </p>
+        <div id="softwareUpdateSummary" class="audit-summary"></div>
+        <div class="row" style="margin-top:12px">
+          <button id="refreshSoftwareUpdate" type="button" data-i18n="updates.refresh">Relire l'état</button>
+          <button id="checkSoftwareUpdate" type="button" class="primary" disabled data-i18n="updates.check">Rechercher les mises à jour</button>
+          <button id="installSoftwareUpdate" type="button" disabled data-i18n="updates.install">Installer les mises à jour prêtes</button>
+        </div>
+        <p id="softwareUpdateMessage" class="muted" aria-live="polite" style="margin-top:10px"></p>
+        <p class="risk-note" data-i18n="updates.warning">
+          L'installation peut rendre le pont et ses accessoires temporairement indisponibles.
+          La recherche seule ne déclenche pas d'installation immédiate.
+        </p>
+        <details>
+          <summary data-i18n="updates.details">Voir les états techniques et les mises à jour des appareils</summary>
+          <pre id="softwareUpdateDetails" style="white-space:pre-wrap;overflow:auto;max-height:350px"></pre>
+        </details>
+      </div>
+
       <div class="card span-12">
         <h2 data-i18n="matter.title">Associations Matter du Bridge</h2>
         <p class="muted" data-i18n="matter.description">
@@ -619,6 +643,31 @@
       "tab.management": "Gestion",
       "tab.appleAudit": "Apple Maison",
       "tab.migration": "Migration",
+      "updates.title": "Mises à jour logicielles Hue",
+      "updates.description": "Version, disponibilité et planification retournées par le Bridge. Le service Philips Hue décide de l’éligibilité des firmwares, y compris en bêta.",
+      "updates.refresh": "Relire l’état",
+      "updates.check": "Rechercher les mises à jour",
+      "updates.install": "Installer les mises à jour prêtes",
+      "updates.warning": "Une installation peut interrompre temporairement le fonctionnement du pont et des appareils. La vérification seule n’installe rien immédiatement.",
+      "updates.details": "Voir les états techniques et les mises à jour des appareils",
+      "updates.unsupported": "Le firmware ne fournit pas d’état swupdate2 via l’API locale.",
+      "updates.ready": "Mise à jour prête à être installée",
+      "updates.notReady": "Aucune installation manuelle disponible actuellement",
+      "updates.confirm": "Lancer maintenant l’installation des mises à jour prêtes sur le Bridge ",
+      "updates.acceptedCheck": "Recherche demandée au Bridge. Relis l’état dans quelques instants.",
+      "updates.acceptedInstall": "Installation demandée. Le Bridge peut redémarrer.",
+      "updates.unknown": "Non communiqué",
+      "updates.installed": "Firmware installé",
+      "updates.state": "État global",
+      "updates.bridgeState": "État du pont",
+      "updates.auto": "Installation automatique",
+      "updates.schedule": "Heure programmée",
+      "updates.lastChange": "Dernier changement",
+      "updates.lastInstall": "Dernière installation",
+      "updates.internet": "Connexion au service de mise à jour",
+      "updates.devices": "Mises à jour des appareils",
+      "updates.on": "Activée",
+      "updates.off": "Désactivée",
       "management.title": "Gestion du Bridge",
       "management.bridge": "Bridge à analyser",
       "management.analyze": "Analyser",
@@ -802,6 +851,31 @@
       "tab.management": "Management",
       "tab.appleAudit": "Apple Home",
       "tab.migration": "Migration",
+      "updates.title": "Hue software updates",
+      "updates.description": "Firmware version, update availability and scheduling reported by the Bridge. Philips Hue determines which releases each Bridge is eligible to receive, including beta releases.",
+      "updates.refresh": "Refresh status",
+      "updates.check": "Check for updates",
+      "updates.install": "Install ready updates",
+      "updates.warning": "Installing updates can temporarily disconnect the Bridge or accessories. Checking alone does not start an immediate installation.",
+      "updates.details": "Show technical states and device updates",
+      "updates.unsupported": "This Bridge firmware does not expose swupdate2 through the local API.",
+      "updates.ready": "Update ready to install",
+      "updates.notReady": "No manual installation is currently available",
+      "updates.confirm": "Start installing the ready updates on Bridge ",
+      "updates.acceptedCheck": "Update check requested. Refresh the status in a moment.",
+      "updates.acceptedInstall": "Installation requested. The Bridge may restart.",
+      "updates.unknown": "Not reported",
+      "updates.installed": "Installed firmware",
+      "updates.state": "Overall state",
+      "updates.bridgeState": "Bridge state",
+      "updates.auto": "Automatic installation",
+      "updates.schedule": "Scheduled time",
+      "updates.lastChange": "Last state change",
+      "updates.lastInstall": "Last installation",
+      "updates.internet": "Update service connection",
+      "updates.devices": "Device updates",
+      "updates.on": "Enabled",
+      "updates.off": "Disabled",
       "management.title": "Bridge management",
       "management.bridge": "Bridge to analyze",
       "management.analyze": "Analyze",
@@ -1001,6 +1075,7 @@
     integrity: null,
     crashCorrelation: null,
     writeJournal: null,
+    softwareUpdate: null,
     matterFabrics: null,
     homeKitState: null,
     appleHome: null,
@@ -1030,6 +1105,9 @@
     $("languageSelect").value = state.language;
     for (const el of document.querySelectorAll("[data-i18n]")) {
       el.textContent = t(el.dataset.i18n);
+    }
+    if (state.softwareUpdate) {
+      renderSoftwareUpdate(state.softwareUpdate);
     }
     if (state.diagnostics) {
       renderDiagnostics(state.diagnostics);
@@ -1409,6 +1487,91 @@
     status(`Analyse de ${bridge} terminée.`, "good");
   }
 
+
+
+  function renderSoftwareUpdate(data) {
+    state.softwareUpdate = data;
+    const update = data.updates || {};
+    const bridge = data.bridge || {};
+    const device = data.devices || {};
+    const root = $("softwareUpdateSummary");
+    root.replaceChildren();
+    function field(key, value, cssClass) {
+      const pill = document.createElement("span");
+      pill.className = "pill" + (cssClass ? " " + cssClass : "");
+      pill.textContent = t(key) + " : " + (value == null || value === "" ? t("updates.unknown") : String(value));
+      root.append(pill);
+    }
+    field("updates.installed", bridge.software_version);
+    field("updates.state", update.state);
+    field("updates.bridgeState", update.bridge_state);
+    if (update.supported) {
+      const automatic = update.automatic_install;
+      field("updates.auto", automatic == null ? null : t(automatic ? "updates.on" : "updates.off"));
+      field("updates.schedule", update.automatic_install_time);
+      field("updates.lastChange", update.last_change);
+      field("updates.lastInstall", update.last_install);
+    }
+    field("updates.internet", (data.internet || {}).software_update);
+    if (device.supported) field("updates.devices", (device.items || []).length);
+    const ready = !!update.supported && !!update.ready_to_install;
+    $("checkSoftwareUpdate").disabled = !update.supported || !!update.check_in_progress;
+    $("installSoftwareUpdate").disabled = !ready;
+    $("softwareUpdateMessage").textContent = !update.supported
+      ? t("updates.unsupported")
+      : t(ready ? "updates.ready" : "updates.notReady");
+    $("softwareUpdateDetails").textContent = JSON.stringify(data, null, 2);
+  }
+
+  async function loadSoftwareUpdate() {
+    const bridge = $("managementBridge").value;
+    if (!bridge) {
+      state.softwareUpdate = null;
+      $("softwareUpdateSummary").replaceChildren();
+      $("softwareUpdateMessage").textContent = t("updates.unknown");
+      $("softwareUpdateDetails").textContent = "";
+      $("checkSoftwareUpdate").disabled = true;
+      $("installSoftwareUpdate").disabled = true;
+      return;
+    }
+    $("softwareUpdateMessage").textContent = "…";
+    try {
+      const data = await api("/api/bridges/" + encodeURIComponent(bridge) + "/software-update");
+      if ($("managementBridge").value !== bridge) return;
+      renderSoftwareUpdate(data);
+    } catch (e) {
+      if ($("managementBridge").value !== bridge) return;
+      state.softwareUpdate = null;
+      $("softwareUpdateSummary").replaceChildren();
+      $("softwareUpdateDetails").textContent = "";
+      $("checkSoftwareUpdate").disabled = true;
+      $("installSoftwareUpdate").disabled = true;
+      $("softwareUpdateMessage").textContent = e.message;
+    }
+  }
+
+  async function runSoftwareUpdateAction(action) {
+    const bridge = $("managementBridge").value;
+    if (!bridge || !["check", "install"].includes(action)) return;
+    if (action === "install" && !window.confirm(t("updates.confirm") + bridge + " ?")) return;
+    $("checkSoftwareUpdate").disabled = true;
+    $("installSoftwareUpdate").disabled = true;
+    try {
+      await api("/api/bridges/" + encodeURIComponent(bridge) + "/software-update/" + action, {
+        method: "POST"
+      });
+      if ($("managementBridge").value !== bridge) return;
+      await loadSoftwareUpdate();
+      $("softwareUpdateMessage").textContent = t(
+        action === "check" ? "updates.acceptedCheck" : "updates.acceptedInstall"
+      );
+    } catch (e) {
+      if ($("managementBridge").value === bridge) {
+        await loadSoftwareUpdate();
+        $("softwareUpdateMessage").textContent = e.message;
+      }
+    }
+  }
 
   function renderMatterFabrics(data) {
     state.matterFabrics = data;
@@ -4383,6 +4546,16 @@
   });
   $("saveAppleRoomMap").addEventListener("click", saveAppleRoomMap);
 
+  $("refreshSoftwareUpdate").addEventListener("click", () => {
+    loadSoftwareUpdate().catch(e => status(e.message, "bad"));
+  });
+  $("checkSoftwareUpdate").addEventListener("click", () => {
+    runSoftwareUpdateAction("check").catch(e => status(e.message, "bad"));
+  });
+  $("installSoftwareUpdate").addEventListener("click", () => {
+    runSoftwareUpdateAction("install").catch(e => status(e.message, "bad"));
+  });
+
   $("refreshMatterFabrics").addEventListener("click", () => {
     loadMatterFabrics().catch(e => status(e.message, "bad"));
   });
@@ -4401,6 +4574,13 @@
   $("managementBridge").addEventListener("change", () => {
     stopMonitorPolling();
     stopServiceMonitorPolling();
+    state.softwareUpdate = null;
+    $("softwareUpdateSummary").replaceChildren();
+    $("softwareUpdateDetails").textContent = "";
+    $("softwareUpdateMessage").textContent = "";
+    $("checkSoftwareUpdate").disabled = true;
+    $("installSoftwareUpdate").disabled = true;
+    loadSoftwareUpdate().catch(e => status(e.message, "bad"));
     state.matterFabrics = null;
     state.homeKitState = null;
     $("matterFabricStatus").textContent = "";
@@ -4487,6 +4667,7 @@
       refreshWriteJournal(),
       loadMatterFabrics(),
       loadHomeKitState(),
+      loadSoftwareUpdate(),
     ]))
     .catch(e => status(e.message, "bad"));
 })();

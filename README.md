@@ -39,6 +39,43 @@ The web UI can:
 - verify that every physical resource has been found on the destination;
 - recreate rooms, scenes, Hue v2 `behavior_instance` graphs, virtual CLIP sensors, rules and relevant resource-link metadata.
 
+## Mises à jour logicielles du Bridge
+
+L'onglet **Gestion** affiche désormais l'état des mises à jour pour le Bridge sélectionné :
+
+- la version du firmware installé, le modèle et l'identifiant du Bridge ;
+- l'état `swupdate2` et l'état spécifique du pont, les dates de dernier
+  changement et d'installation ;
+- l'installation automatique (activée/désactivée) et l'heure programmée ;
+- la connexion du Bridge au service de mises à jour ;
+- les ressources `device_software_update` CLIP v2 quand le firmware les expose.
+
+**Relire l'état** ne déclenche aucun changement sur le Bridge. **Rechercher les
+mises à jour** demande explicitement une vérification au service Hue via
+`PUT /api/<key>/config` avec
+`{"swupdate2":{"checkforupdate":true}}`. La recherche est asynchrone :
+relire l'état plus tard pour en voir le résultat.
+
+**Installer les mises à jour prêtes** n'est disponible que si `swupdate2`
+signale une mise à jour installable. Une confirmation est requise ; la commande
+`{"swupdate2":{"install":true}}` peut installer plusieurs mises à jour prêtes
+(pont et/ou appareils) et entraîner des interruptions/redémarrages. HueManager
+ne télécharge pas lui-même les firmwares et ne permet pas de choisir un canal
+public/bêta ou de forcer une version qui n'a pas été proposée par Philips.
+
+Les API correspondantes sont :
+
+```text
+GET  /api/bridges/{bridge_name}/software-update
+POST /api/bridges/{bridge_name}/software-update/check
+POST /api/bridges/{bridge_name}/software-update/install
+```
+
+Les commandes sont tracées dans le journal des écritures existant. Les réponses
+ne divulguent pas les clés et utilisateurs enregistrés dans la configuration du
+Bridge. Si le firmware n'expose pas `swupdate2`, aucune commande de mise à jour
+n'est proposée.
+
 ## Diagnostics réseau / Zigbee
 
 L'onglet **Gestion** contient un diagnostic en lecture seule pour distinguer un problème de
