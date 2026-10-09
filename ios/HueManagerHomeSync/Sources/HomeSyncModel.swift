@@ -396,6 +396,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     private enum DefaultsKey {
         static let serverURL = "serverURL"
         static let bridgeProfile = "bridgeProfile"
+        static let syncSource = "syncSource"
         static let selectedHomeID = "selectedHomeID"
         static let automaticSyncEnabled = "automaticSyncEnabled"
         static let selectedHueRoomIDsPrefix = "selectedHueRoomIDs"
@@ -414,6 +415,23 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
                 clearPlanForContextChange()
             }
         }
+    }
+
+    @Published var syncSource: String {
+        didSet {
+            UserDefaults.standard.set(syncSource, forKey: DefaultsKey.syncSource)
+            if syncSource != oldValue {
+                clearPlanForContextChange()
+            }
+        }
+    }
+
+    var usesHomeAssistantSource: Bool {
+        syncSource == "home_assistant"
+    }
+
+    var sourceDisplayName: String {
+        usesHomeAssistantSource ? "Home Assistant" : "Philips Hue"
     }
 
     @Published var selectedHomeID: String {
@@ -509,6 +527,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         let defaults = UserDefaults.standard
         serverURL = defaults.string(forKey: DefaultsKey.serverURL) ?? ""
         bridgeProfile = defaults.string(forKey: DefaultsKey.bridgeProfile) ?? ""
+        syncSource = defaults.string(forKey: DefaultsKey.syncSource) ?? "hue"
         selectedHomeID = defaults.string(forKey: DefaultsKey.selectedHomeID) ?? ""
         automaticSyncEnabled = defaults.bool(forKey: DefaultsKey.automaticSyncEnabled)
         super.init()
@@ -517,7 +536,8 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     private func roomSelectionDefaultsKey() -> String {
         let bridge = bridgeProfile.trimmingCharacters(in: .whitespacesAndNewlines)
         let homeID = selectedHomeID.trimmingCharacters(in: .whitespacesAndNewlines)
-        return DefaultsKey.selectedHueRoomIDsPrefix + "." + bridge + "." + homeID
+        let source = usesHomeAssistantSource ? "home_assistant" : "hue." + bridge
+        return DefaultsKey.selectedHueRoomIDsPrefix + "." + source + "." + homeID
     }
 
     private func clearPlanForContextChange() {
@@ -579,15 +599,21 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
 
     private func publishRoomSelection() async {
         guard let home = selectedHome else { return }
-        let bridge = bridgeProfile.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !bridge.isEmpty else { return }
+        let path: String
+        if usesHomeAssistantSource {
+            path = "/api/home-assistant/apple-home/selection"
+        } else {
+            let bridge = bridgeProfile.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !bridge.isEmpty else { return }
+            let encodedBridge =
+                bridge.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+                ?? bridge
+            path = "/api/bridges/\(encodedBridge)/apple-home/selection"
+        }
 
-        let encodedBridge =
-            bridge.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
-            ?? bridge
         do {
             _ = try await send(
-                path: "/api/bridges/\(encodedBridge)/apple-home/selection",
+                path: path,
                 method: "PUT",
                 body: RoomSelectionRequest(
                     homeID: home.uniqueIdentifier.uuidString,
@@ -758,7 +784,9 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     }
 
     private func accessoryMatchIsSafe(_ move: SyncMove) -> Bool {
-        if move.matchMethod == "serial" || move.matchMethod == "name" {
+        if move.matchMethod == "serial" ||
+            move.matchMethod == "name" ||
+            move.matchMethod == "name_model" {
             return true
         }
         if move.matchMethod.hasPrefix("heuristic:"),
@@ -797,7 +825,10 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
               !automaticSyncRunning,
               !homes.isEmpty,
               !serverURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !bridgeProfile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+              (
+                usesHomeAssistantSource ||
+                !bridgeProfile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+              )
         else {
             return
         }
@@ -1474,7 +1505,9 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
                 method: "POST",
                 body: SyncResult(
                     homeID: home.uniqueIdentifier.uuidString,
-                    bridgeProfile: bridgeProfile,
+                    bridgeProfile: usesHomeAssistantSource
+                        ? "__home_assistant__"
+                        : bridgeProfile,
                     moved: moved,
                     failed: failures
                 )
@@ -1496,7 +1529,8 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     }
 
     func loadPlan() async {
-        guard !bridgeProfile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        if !usesHomeAssistantSource &&
+            bridgeProfile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             status = "Indique le nom du profil Bridge HueManager."
             hasError = true
             return
@@ -1506,13 +1540,18 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         guard !hasError else { return }
 
         do {
-            status = "Analyse des correspondances Hue ↔ Maison…"
-            let encodedBridge =
-                bridgeProfile.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
-                ?? bridgeProfile
-            let data = try await get(
-                path: "/api/bridges/\(encodedBridge)/apple-home/plan"
-            )
+            status = "Analyse des correspondances \(sourceDisplayName) ↔ Maison…"
+            let planPath: String
+            if usesHomeAssistantSource {
+                planPath = "/api/home-assistant/apple-home/plan"
+            } else {
+                let encodedBridge =
+                    bridgeProfile.addingPercentEncoding(
+                        withAllowedCharacters: .urlPathAllowed
+                    ) ?? bridgeProfile
+                planPath = "/api/bridges/\(encodedBridge)/apple-home/plan"
+            }
+            let data = try await get(path: planPath)
             let plan = try JSONDecoder().decode(SyncPlan.self, from: data)
             moves = plan.actions
             roomPlans = enrichedRoomPlans(
