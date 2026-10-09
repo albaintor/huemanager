@@ -3383,15 +3383,26 @@
 
   function updateAppleSourceUi() {
     $("appleSyncSource").value = state.appleSyncSource;
-    $("homeAssistantAppleConfig").classList.toggle(
-      "hidden",
-      !isHomeAssistantAppleSource()
-    );
-    const hueOnly = !isHomeAssistantAppleSource();
+    const haSource = isHomeAssistantAppleSource();
+    $("homeAssistantAppleConfig").classList.toggle("hidden", !haSource);
+
+    const hueOnly = !haSource;
+    for (const id of [
+      "diagnoseAppleIdentity",
+      "learnAppleIdentity",
+      "copyAppleIdentity",
+    ]) {
+      $(id).classList.toggle("hidden", !hueOnly);
+    }
     $("diagnoseAppleIdentity").disabled = !hueOnly || !state.appleHome?.inventory;
     $("learnAppleIdentity").disabled = !hueOnly || !state.appleIdentityDiagnostics;
     $("copyAppleIdentity").disabled = !hueOnly || !state.appleIdentityDiagnostics;
-    $("planAppleHome").textContent = isHomeAssistantAppleSource()
+
+    const hasAppleInventory = Boolean(state.appleHome?.inventory);
+    const haConfigured = Boolean(state.homeAssistantConfig?.configured);
+    $("planAppleHome").disabled =
+      !hasAppleInventory || (haSource && !haConfigured);
+    $("planAppleHome").textContent = haSource
       ? "Analyser Home Assistant ↔ Maison"
       : "Analyser Philips Hue ↔ Maison";
   }
@@ -3405,6 +3416,7 @@
     $("homeAssistantStatus").textContent = data.configured
       ? "Configuré · " + (data.url || "") + " · source=" + (data.source || "saved")
       : "Home Assistant non configuré.";
+    updateAppleSourceUi();
     return data;
   }
 
@@ -3423,6 +3435,7 @@
       "Connecté à " + (data.connection?.name || "Home Assistant")
       + " · version " + (data.connection?.version || "?")
       + " · timezone " + (data.connection?.time_zone || "?");
+    updateAppleSourceUi();
     status("Connexion Home Assistant enregistrée.", "good");
     return data;
   }
