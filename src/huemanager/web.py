@@ -531,6 +531,7 @@ def _home_assistant_apple_plan(
     *,
     room_map: dict[str, str] | None = None,
     accessory_map: dict[str, str] | None = None,
+    refresh_inventory: bool = False,
 ) -> dict:
     state = _load_apple_home()
     apple_inventory = state.get("inventory")
@@ -539,7 +540,7 @@ def _home_assistant_apple_plan(
             "No Apple Home inventory available. Open HueManager Home Sync on an Apple device first."
         )
     return build_home_assistant_apple_home_sync_plan(
-        _load_home_assistant_inventory(refresh=False),
+        _load_home_assistant_inventory(refresh=refresh_inventory),
         apple_inventory,
         room_map=room_map,
         accessory_map=accessory_map,
@@ -559,6 +560,7 @@ def home_assistant_apple_home_plan() -> dict:
         plan = _home_assistant_apple_plan(
             room_map=get_room_map(state, HOME_ASSISTANT_SCOPE, home_id),
             accessory_map=get_accessory_map(state, HOME_ASSISTANT_SCOPE, home_id),
+            refresh_inventory=True,
         )
         selected = get_room_selection(state, HOME_ASSISTANT_SCOPE, home_id)
         if selected is None:
