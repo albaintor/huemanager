@@ -24,6 +24,18 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _base_url(profile: HomeAssistantProfile) -> str:
+    return profile.url.rstrip("/")
+
+
+def _websocket_url(profile: HomeAssistantProfile) -> str:
+    parsed = urllib.parse.urlparse(_base_url(profile))
+    scheme = "wss" if parsed.scheme == "https" else "ws"
+    return urllib.parse.urlunparse(
+        (scheme, parsed.netloc, "/api/websocket", "", "", "")
+    )
+
+
 class HomeAssistantApiError(RuntimeError):
     pass
 
@@ -42,7 +54,7 @@ class HomeAssistantClient:
 
     def rest_get(self, path: str) -> Any:
         response = self.session.get(
-            self.profile.base_url + path,
+            _base_url(self.profile) + path,
             headers=self._headers(),
             timeout=self.timeout,
             verify=self.profile.verify_tls,
@@ -66,12 +78,12 @@ class HomeAssistantClient:
 
     def _ws_connect(self) -> websocket.WebSocket:
         sslopt: dict[str, Any] = {}
-        if self.profile.websocket_url.startswith("wss://") and not self.profile.verify_tls:
+        if _websocket_url(self.profile).startswith("wss://") and not self.profile.verify_tls:
             sslopt["cert_reqs"] = ssl.CERT_NONE
             sslopt["check_hostname"] = False
 
         ws = websocket.create_connection(
-            self.profile.websocket_url,
+            _websocket_url(self.profile),
             timeout=self.timeout,
             sslopt=sslopt,
         )
