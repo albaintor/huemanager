@@ -3343,6 +3343,98 @@
     status("Diagnostic d’identifiants copié.", "good");
   }
 
+  function isHomeAssistantAppleSource() {
+    return state.appleSyncSource === "home_assistant";
+  }
+
+  function appleSourceLabel() {
+    return isHomeAssistantAppleSource() ? "Home Assistant" : "Philips Hue";
+  }
+
+  function appleSourcePlanBase() {
+    if (isHomeAssistantAppleSource()) {
+      return "/api/home-assistant/apple-home";
+    }
+    const bridge = $("managementBridge").value;
+    return bridge
+      ? "/api/bridges/" + encodeURIComponent(bridge) + "/apple-home"
+      : null;
+  }
+
+  function clearApplePlanForSourceChange() {
+    state.appleHomePlan = null;
+    state.appleIdentityDiagnostics = null;
+    state.appleSelectedRoomIds = new Set();
+    state.appleSelectedRoomSavedIds = new Set();
+    state.appleSelectionInitialized = false;
+    state.appleRoomDraft = {};
+    state.appleRoomSaved = {};
+    state.appleAccessoryDraft = {};
+    state.appleAccessorySaved = {};
+    $("appleHomeSummary").replaceChildren();
+    $("appleIdentitySummary").replaceChildren();
+    $("appleIdentityFindings").replaceChildren();
+    $("appleIdentityResult").classList.add("hidden");
+    $("appleHomeRoomMap").replaceChildren();
+    $("appleHomeMoves").replaceChildren();
+  }
+
+  function updateAppleSourceUi() {
+    $("appleSyncSource").value = state.appleSyncSource;
+    $("homeAssistantAppleConfig").classList.toggle(
+      "hidden",
+      !isHomeAssistantAppleSource()
+    );
+    const hueOnly = !isHomeAssistantAppleSource();
+    $("diagnoseAppleIdentity").disabled = !hueOnly || !state.appleHome?.inventory;
+    $("learnAppleIdentity").disabled = !hueOnly || !state.appleIdentityDiagnostics;
+    $("copyAppleIdentity").disabled = !hueOnly || !state.appleIdentityDiagnostics;
+    $("planAppleHome").textContent = isHomeAssistantAppleSource()
+      ? "Analyser Home Assistant ↔ Maison"
+      : "Analyser Philips Hue ↔ Maison";
+  }
+
+  async function loadHomeAssistantConfig() {
+    const data = await api("/api/home-assistant/config");
+    state.homeAssistantConfig = data;
+    $("homeAssistantUrl").value = data.url || "http://homeassistant.local:8123";
+    $("homeAssistantVerifyTls").value = String(Boolean(data.verify_tls));
+    $("homeAssistantToken").value = "";
+    $("homeAssistantStatus").textContent = data.configured
+      ? "Configuré · " + (data.url || "") + " · source=" + (data.source || "saved")
+      : "Home Assistant non configuré.";
+    return data;
+  }
+
+  async function saveHomeAssistantConfig() {
+    const data = await api("/api/home-assistant/config", {
+      method: "PUT",
+      body: JSON.stringify({
+        url: $("homeAssistantUrl").value.trim(),
+        token: $("homeAssistantToken").value.trim() || null,
+        verify_tls: $("homeAssistantVerifyTls").value === "true",
+      }),
+    });
+    state.homeAssistantConfig = data;
+    $("homeAssistantToken").value = "";
+    $("homeAssistantStatus").textContent =
+      "Connecté à " + (data.connection?.name || "Home Assistant")
+      + " · version " + (data.connection?.version || "?")
+      + " · timezone " + (data.connection?.time_zone || "?");
+    status("Connexion Home Assistant enregistrée.", "good");
+    return data;
+  }
+
+  async function testHomeAssistantConfig() {
+    const data = await api("/api/home-assistant/test", {method: "POST"});
+    $("homeAssistantStatus").textContent =
+      "Connexion OK · " + (data.name || "Home Assistant")
+      + " · version " + (data.version || "?")
+      + " · timezone " + (data.time_zone || "?");
+    status("Connexion Home Assistant valide.", "good");
+    return data;
+  }
+
   function canonicalRoomMap(map) {
     return JSON.stringify(Object.entries(map || {}).sort(([a], [b]) => a.localeCompare(b)));
   }
