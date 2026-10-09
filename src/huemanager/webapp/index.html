@@ -3870,6 +3870,13 @@
       [`${summary.unmatched_accessories || 0} accessoire(s) non reconnu(s)`, summary.unmatched_accessories ? "warn" : ""],
       [`${summary.ambiguous_accessories || 0} correspondance(s) ambiguë(s)`, summary.ambiguous_accessories ? "warn" : ""],
     ];
+    if (isHomeAssistantAppleSource()) {
+      chips.push(
+        [`${summary.identity_matches || 0} identifiant(s) exact(s)`, summary.identity_matches ? "good" : "warn"],
+        [`${summary.name_model_matches || 0} nom+modèle exact(s)`, summary.name_model_matches ? "" : "warn"],
+        [`${summary.manual_matches || 0} association(s) manuelle(s)`, ""],
+      );
+    }
     for (const [label, cls] of chips) {
       const chip = document.createElement("span");
       chip.className = `pill ${cls}`.trim();
