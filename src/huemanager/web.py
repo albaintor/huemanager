@@ -40,8 +40,14 @@ from .backup import (
     save_bridge_backup,
 )
 from .client import HueApiError, HueBridgeClient
-from .config import BridgeProfile, ConfigStore
+from .config import BridgeProfile, ConfigStore, HomeAssistantProfile
 from .diagnostics import diagnose_bridge
+from .home_assistant import (
+    HomeAssistantApiError,
+    HomeAssistantClient,
+    build_home_assistant_apple_home_sync_plan,
+    profile_from_environment,
+)
 from .integrity import CrashDiagnosticStore, deep_integrity_audit
 from .migration import (
     MigrationError,
@@ -85,6 +91,7 @@ APPLE_MATTER_VENDOR_IDS = {
 MATTER_VENDOR_NAMES = {
     **APPLE_MATTER_VENDOR_IDS,
 }
+HOME_ASSISTANT_SCOPE = "__home_assistant__"
 diagnostic_monitors = DiagnosticMonitorManager()
 service_connectivity_monitors = ServiceConnectivityMonitorManager()
 
@@ -143,6 +150,12 @@ class ServiceConnectivityMonitorRequest(BaseModel):
     interval_seconds: int = Field(default=10, ge=5, le=300)
 
 
+class HomeAssistantConfigRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=500)
+    token: str | None = Field(default=None, max_length=4096)
+    verify_tls: bool = False
+
+
 class AppleHomeInventoryRequest(BaseModel):
     home: dict[str, Any]
     rooms: list[dict[str, Any]] = Field(default_factory=list)
@@ -175,6 +188,45 @@ class AppleHomeSyncResultRequest(BaseModel):
 
 def _store() -> ConfigStore:
     return ConfigStore()
+
+
+def _home_assistant_profile() -> HomeAssistantProfile:
+    store = _store()
+    try:
+        return store.get_home_assistant()
+    except KeyError:
+        env_profile = profile_from_environment()
+        if env_profile is not None:
+            return env_profile
+        raise KeyError(
+            "Home Assistant is not configured. Enter its URL and a Long-Lived Access Token."
+        )
+
+
+def _home_assistant_client() -> HomeAssistantClient:
+    return HomeAssistantClient(_home_assistant_profile())
+
+
+def _home_assistant_inventory_path() -> Path:
+    return _store().path.parent / "home-assistant-inventory.json"
+
+
+def _save_home_assistant_inventory(inventory: dict[str, Any]) -> None:
+    path = _home_assistant_inventory_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(inventory, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _load_home_assistant_inventory(*, refresh: bool = False) -> dict[str, Any]:
+    path = _home_assistant_inventory_path()
+    if refresh or not path.exists():
+        inventory = _home_assistant_client().registry_inventory()
+        _save_home_assistant_inventory(inventory)
+        return inventory
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _diagnostic_dir() -> Path:
@@ -395,6 +447,237 @@ def apple_home_multi_bridge_audit() -> dict:
         )
         return report
     except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@app.get("/api/home-assistant/config")
+def home_assistant_config() -> dict:
+    store = _store()
+    saved = store.home_assistant_status()
+    env_profile = profile_from_environment()
+    if saved.get("configured"):
+        return {
+            **saved,
+            "source": "saved",
+        }
+    if env_profile is not None:
+        return {
+            "configured": True,
+            "url": env_profile.url,
+            "verify_tls": env_profile.verify_tls,
+            "has_token": True,
+            "source": "environment",
+        }
+    return {
+        **saved,
+        "source": "none",
+    }
+
+
+@app.put("/api/home-assistant/config")
+def update_home_assistant_config(request: HomeAssistantConfigRequest) -> dict:
+    try:
+        store = _store()
+        token = (request.token or "").strip()
+        if not token:
+            try:
+                token = store.get_home_assistant().token
+            except KeyError:
+                env_profile = profile_from_environment()
+                token = env_profile.token if env_profile is not None else ""
+        if not token:
+            raise ValueError("A Home Assistant Long-Lived Access Token is required.")
+
+        profile = HomeAssistantProfile(
+            url=request.url.strip().rstrip("/"),
+            token=token,
+            verify_tls=request.verify_tls,
+        )
+        # Validate before persisting a new/changed endpoint or token.
+        result = HomeAssistantClient(profile).test_connection()
+        store.save_home_assistant(profile)
+        inventory_path = _home_assistant_inventory_path()
+        if inventory_path.exists():
+            inventory_path.unlink()
+        return {
+            "ok": True,
+            "configured": True,
+            "url": profile.url,
+            "verify_tls": profile.verify_tls,
+            "has_token": True,
+            "connection": result,
+        }
+    except (HomeAssistantApiError, OSError, ValueError, KeyError) as exc:
+        raise _api_error(exc) from exc
+
+
+@app.post("/api/home-assistant/test")
+def test_home_assistant() -> dict:
+    try:
+        return _home_assistant_client().test_connection()
+    except (HomeAssistantApiError, OSError, ValueError, KeyError) as exc:
+        raise _api_error(exc) from exc
+
+
+@app.get("/api/home-assistant/inventory")
+def home_assistant_inventory(refresh: bool = False) -> dict:
+    try:
+        return _load_home_assistant_inventory(refresh=refresh)
+    except (HomeAssistantApiError, OSError, ValueError, KeyError) as exc:
+        raise _api_error(exc) from exc
+
+
+def _home_assistant_apple_plan(
+    *,
+    room_map: dict[str, str] | None = None,
+    accessory_map: dict[str, str] | None = None,
+) -> dict:
+    state = _load_apple_home()
+    apple_inventory = state.get("inventory")
+    if not apple_inventory:
+        raise MigrationError(
+            "No Apple Home inventory available. Open HueManager Home Sync on an Apple device first."
+        )
+    return build_home_assistant_apple_home_sync_plan(
+        _load_home_assistant_inventory(refresh=False),
+        apple_inventory,
+        room_map=room_map,
+        accessory_map=accessory_map,
+    )
+
+
+@app.get("/api/home-assistant/apple-home/plan")
+def home_assistant_apple_home_plan() -> dict:
+    try:
+        state = _load_apple_home()
+        inventory = state.get("inventory")
+        if not inventory:
+            raise MigrationError(
+                "No Apple Home inventory available. Open HueManager Home Sync on an Apple device first."
+            )
+        home_id = str((inventory.get("home") or {}).get("id") or "")
+        plan = _home_assistant_apple_plan(
+            room_map=get_room_map(state, HOME_ASSISTANT_SCOPE, home_id),
+            accessory_map=get_accessory_map(state, HOME_ASSISTANT_SCOPE, home_id),
+        )
+        selected = get_room_selection(state, HOME_ASSISTANT_SCOPE, home_id)
+        if selected is None:
+            selected = [room["hue_room_id"] for room in plan.get("rooms", [])]
+        plan["selected_hue_room_ids"] = selected
+        return plan
+    except (HomeAssistantApiError, MigrationError, OSError, ValueError, KeyError) as exc:
+        raise _api_error(exc) from exc
+
+
+@app.post("/api/home-assistant/apple-home/preview")
+def preview_home_assistant_apple_home(
+    request: AppleHomeRoomMapRequest,
+) -> dict:
+    try:
+        state = _load_apple_home()
+        inventory = state.get("inventory")
+        if not inventory:
+            raise MigrationError("No Apple Home inventory available.")
+        inventory_home_id = str((inventory.get("home") or {}).get("id") or "")
+        if inventory_home_id != request.home_id:
+            raise MigrationError(
+                "The Apple Home inventory changed. Refresh it before previewing."
+            )
+        plan = _home_assistant_apple_plan(
+            room_map=request.room_map,
+            accessory_map=request.accessory_map,
+        )
+        selected = get_room_selection(state, HOME_ASSISTANT_SCOPE, request.home_id)
+        if selected is None:
+            selected = [room["hue_room_id"] for room in plan.get("rooms", [])]
+        plan["selected_hue_room_ids"] = selected
+        return plan
+    except (HomeAssistantApiError, MigrationError, OSError, ValueError, KeyError) as exc:
+        raise _api_error(exc) from exc
+
+
+@app.put("/api/home-assistant/apple-home/room-map")
+def update_home_assistant_apple_room_map(
+    request: AppleHomeRoomMapRequest,
+) -> dict:
+    try:
+        state = store_room_map(
+            _load_apple_home(),
+            HOME_ASSISTANT_SCOPE,
+            request.home_id,
+            request.room_map,
+        )
+        _save_apple_home(state)
+        return {"ok": True, "room_map": request.room_map}
+    except (OSError, ValueError, KeyError) as exc:
+        raise _api_error(exc) from exc
+
+
+@app.put("/api/home-assistant/apple-home/accessory-map")
+def update_home_assistant_apple_accessory_map(
+    request: AppleHomeAccessoryMapRequest,
+) -> dict:
+    try:
+        state = _load_apple_home()
+        inventory = state.get("inventory")
+        if not inventory:
+            raise MigrationError("No Apple Home inventory available.")
+        valid_accessory_ids = {
+            str(item.get("id"))
+            for item in inventory.get("accessories", [])
+            if item.get("id")
+        }
+        cleaned = {
+            str(source_id): str(apple_id)
+            for source_id, apple_id in request.accessory_map.items()
+            if str(source_id) and str(apple_id) in valid_accessory_ids
+        }
+        if len(set(cleaned.values())) != len(cleaned):
+            raise MigrationError(
+                "The same Apple Home accessory cannot be associated with multiple Home Assistant devices."
+            )
+        state = store_accessory_map(
+            state,
+            HOME_ASSISTANT_SCOPE,
+            request.home_id,
+            cleaned,
+        )
+        _save_apple_home(state)
+        return {
+            "ok": True,
+            "home_id": request.home_id,
+            "accessory_map": get_accessory_map(
+                state,
+                HOME_ASSISTANT_SCOPE,
+                request.home_id,
+            ),
+        }
+    except (MigrationError, OSError, ValueError, KeyError) as exc:
+        raise _api_error(exc) from exc
+
+
+@app.put("/api/home-assistant/apple-home/selection")
+def update_home_assistant_apple_selection(
+    request: AppleHomeRoomSelectionRequest,
+) -> dict:
+    try:
+        state = store_room_selection(
+            _load_apple_home(),
+            HOME_ASSISTANT_SCOPE,
+            request.home_id,
+            request.hue_room_ids,
+        )
+        _save_apple_home(state)
+        return {
+            "ok": True,
+            "home_id": request.home_id,
+            "hue_room_ids": get_room_selection(
+                state,
+                HOME_ASSISTANT_SCOPE,
+                request.home_id,
+            ) or [],
+        }
+    except (OSError, ValueError, KeyError) as exc:
         raise _api_error(exc) from exc
 
 
