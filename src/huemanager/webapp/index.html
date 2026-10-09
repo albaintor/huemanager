@@ -3219,6 +3219,7 @@
       (lastSync ? ` · dernier apply: ${lastSync.moved || 0} déplacé(s), ${lastSync.failed?.length || 0} échec(s)` : "");
     $("planAppleHome").disabled = false;
     $("diagnoseAppleIdentity").disabled = false;
+    updateAppleSourceUi();
   }
 
   async function loadAppleHomeStatus() {
@@ -4079,6 +4080,7 @@
     applyLanguage($("languageSelect").value);
   });
   applyLanguage(state.language);
+  updateAppleSourceUi();
 
   $("migrationTab").addEventListener("click", () => showView("migration"));
   $("appleAuditTab").addEventListener("click", () => {
@@ -4739,6 +4741,22 @@
   $("appleAuditSearch").addEventListener("input", renderAppleAuditRows);
   $("appleAuditFilter").addEventListener("change", renderAppleAuditRows);
 
+  $("appleSyncSource").addEventListener("change", () => {
+    state.appleSyncSource = $("appleSyncSource").value;
+    localStorage.setItem("huemanager.appleSyncSource", state.appleSyncSource);
+    clearApplePlanForSourceChange();
+    updateAppleSourceUi();
+    if (isHomeAssistantAppleSource()) {
+      loadHomeAssistantConfig().catch(e => status(e.message, "bad"));
+    }
+  });
+  $("saveHomeAssistantConfig").addEventListener("click", () => {
+    saveHomeAssistantConfig().catch(e => status(e.message, "bad"));
+  });
+  $("testHomeAssistantConfig").addEventListener("click", () => {
+    testHomeAssistantConfig().catch(e => status(e.message, "bad"));
+  });
+
   $("refreshAppleHome").addEventListener("click", () => {
     loadAppleHomeStatus()
       .then(() => status("Dernier inventaire Apple Maison reçu relu.", "good"))
@@ -4868,7 +4886,13 @@
   });
 
   showView("management");
-  Promise.all([loadBridges(), loadBackups(), loadSnapshots(), loadAppleHomeStatus()])
+  Promise.all([
+    loadBridges(),
+    loadBackups(),
+    loadSnapshots(),
+    loadAppleHomeStatus(),
+    loadHomeAssistantConfig().catch(() => null),
+  ])
     .then(() => Promise.all([
       loadIgnoredDiagnostics(),
       refreshMonitor(),
