@@ -218,6 +218,14 @@ private struct HealthResponse: Codable {
     let version: String
 }
 
+private struct AppleHomeSourceResponse: Codable {
+    let source: String
+}
+
+private struct AppleHomeSourceRequest: Codable {
+    let source: String
+}
+
 private struct RoomSelectionRequest: Codable {
     let homeID: String
     let hueRoomIDs: [String]
@@ -422,6 +430,9 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
             UserDefaults.standard.set(syncSource, forKey: DefaultsKey.syncSource)
             if syncSource != oldValue {
                 clearPlanForContextChange()
+                if started && !loadingSyncSource {
+                    Task { await publishSyncSource() }
+                }
             }
         }
     }
@@ -481,6 +492,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     private var homeManager: HMHomeManager?
     private var automaticTimer: Timer?
     private var automaticSyncRunning = false
+    private var loadingSyncSource = false
     private var activeServerRequests = 0
     private var started = false
 
@@ -626,6 +638,43 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         }
     }
 
+    func loadSyncSource() async {
+        guard !serverURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return }
+        do {
+            let data = try await get(path: "/api/apple-home/source")
+            let response = try JSONDecoder().decode(
+                AppleHomeSourceResponse.self,
+                from: data
+            )
+            guard response.source == "hue" || response.source == "home_assistant"
+            else { return }
+            loadingSyncSource = true
+            syncSource = response.source
+            loadingSyncSource = false
+        } catch {
+            loadingSyncSource = false
+            // Keep the locally selected source when the server is temporarily unavailable.
+        }
+    }
+
+    private func publishSyncSource() async {
+        guard !serverURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return }
+        do {
+            _ = try await send(
+                path: "/api/apple-home/source",
+                method: "PUT",
+                body: AppleHomeSourceRequest(source: syncSource)
+            )
+        } catch {
+            status =
+                "Source de synchronisation non enregistrée sur HueManager : " +
+                error.localizedDescription
+            hasError = true
+        }
+    }
+
     func start() {
         guard !started else {
             updateBackgroundRefreshStatus()
@@ -642,6 +691,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
 
         if !serverURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             Task {
+                await loadSyncSource()
                 await loadBridges()
             }
         }
