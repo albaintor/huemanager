@@ -1189,6 +1189,16 @@
     }).format(parsed);
   }
 
+  function formatHueTimeOnly(value, fallback = "?") {
+    if (value == null || value === "") return fallback;
+    const text = String(value).trim();
+    const match = text.match(/^T?(\d{2}):(\d{2})(?::(\d{2}))?$/);
+    if (!match) return text;
+    return match[3]
+      ? match[1] + ":" + match[2] + ":" + match[3]
+      : match[1] + ":" + match[2];
+  }
+
   function t(key) {
     return I18N[state.language]?.[key] || I18N.fr[key] || key;
   }
@@ -1606,7 +1616,10 @@
     if (update.supported) {
       const automatic = update.automatic_install;
       field("updates.auto", automatic == null ? null : t(automatic ? "updates.on" : "updates.off"));
-      field("updates.schedule", update.automatic_install_time);
+      field(
+        "updates.schedule",
+        formatHueTimeOnly(update.automatic_install_time, t("updates.unknown"))
+      );
       field("updates.lastChange", formatLocalDateTime(update.last_change, t("updates.unknown")));
       field("updates.lastInstall", formatLocalDateTime(update.last_install, t("updates.unknown")));
     }
