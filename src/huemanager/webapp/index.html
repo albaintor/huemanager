@@ -3291,7 +3291,8 @@
       renderAppleIdentityDiagnostics(data);
       status("Diagnostic des identifiants terminé.", "good");
     } finally {
-      $("diagnoseAppleIdentity").disabled = !state.appleHome?.inventory;
+      $("diagnoseAppleIdentity").disabled =
+        isHomeAssistantAppleSource() || !state.appleHome?.inventory;
     }
   }
 
@@ -3306,7 +3307,7 @@
         { method: "POST" },
       );
       const plan = await api(
-        base + "/plan"
+        `/api/bridges/${encodeURIComponent(bridge)}/apple-home/plan`
       );
       renderAppleHomePlan(plan, { resetDraft: true });
       await runAppleIdentityDiagnostics();
