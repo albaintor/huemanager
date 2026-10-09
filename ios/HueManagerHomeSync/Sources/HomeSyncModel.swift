@@ -848,7 +848,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
 
     private func roomMatchIsSafe(_ move: SyncMove) -> Bool {
         switch move.roomMatchMethod {
-        case "manual", "name":
+        case "manual", "name", "alias":
             return true
         case "heuristic":
             return (move.roomMatchConfidence ?? 0) >= 0.85
