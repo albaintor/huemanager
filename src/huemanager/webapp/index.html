@@ -3500,6 +3500,11 @@
         .map(([, accessoryId]) => accessoryId)
     );
 
+    const bridgeIds = new Set(
+      (state.appleHome?.inventory?.bridges || [])
+        .map(item => item.id)
+        .filter(Boolean)
+    );
     const isHueLike = accessory => {
       const fields = [
         accessory.manufacturer,
@@ -3515,8 +3520,9 @@
     return accessories
       .filter(accessory =>
         accessory.id &&
+        !bridgeIds.has(accessory.id) &&
         !usedElsewhere.has(accessory.id) &&
-        isHueLike(accessory)
+        (isHomeAssistantAppleSource() || isHueLike(accessory))
       )
       .sort((a, b) => {
         const aPreferred = a.room_id === preferredRoomId ? 0 : 1;
@@ -3534,7 +3540,9 @@
     if (!devices.length) {
       const empty = document.createElement("p");
       empty.className = "muted";
-      empty.textContent = t("apple.noHueDevice");
+      empty.textContent = isHomeAssistantAppleSource()
+        ? "Aucun appareil Home Assistant dans cette zone."
+        : t("apple.noHueDevice");
       root.append(empty);
       return;
     }
@@ -3579,6 +3587,7 @@
           identity.textContent = t("apple.manualAssociation");
         } else if (
           device.match_method === "name" ||
+          device.match_method === "name_model" ||
           String(device.match_method || "").startsWith("heuristic:")
         ) {
           identity.textContent = t("apple.nameFallback");
@@ -3632,7 +3641,7 @@
     detail.className = "muted";
     const lines = [];
     if (accessory.matched_hue_device_name) {
-      lines.push(`↔ Hue: ${accessory.matched_hue_device_name}`);
+      lines.push(`↔ ${appleSourceLabel()}: ${accessory.matched_hue_device_name}`);
     } else if (accessory.origin === "hue") {
       lines.push(t("apple.unmatched"));
     }
@@ -3664,10 +3673,14 @@
 
     const accessories = room.apple_accessories || [];
     const hueAccessories = accessories.filter(
-      accessory => accessory.origin === "hue" || accessory.matched_hue_device_id
+      accessory => isHomeAssistantAppleSource()
+        ? Boolean(accessory.matched_hue_device_id)
+        : (accessory.origin === "hue" || accessory.matched_hue_device_id)
     );
     const otherAccessories = accessories.filter(
-      accessory => !(accessory.origin === "hue" || accessory.matched_hue_device_id)
+      accessory => isHomeAssistantAppleSource()
+        ? !accessory.matched_hue_device_id
+        : !(accessory.origin === "hue" || accessory.matched_hue_device_id)
     );
 
     if (!hueAccessories.length) {
@@ -3710,7 +3723,9 @@
     const hueColumn = document.createElement("div");
     hueColumn.className = "room-impact-column";
     const hueTitle = document.createElement("h4");
-    hueTitle.textContent = `${t("apple.hueContents")} (${room.hue_devices?.length || 0})`;
+    hueTitle.textContent = isHomeAssistantAppleSource()
+      ? `Home Assistant (${room.hue_devices?.length || 0})`
+      : `${t("apple.hueContents")} (${room.hue_devices?.length || 0})`;
     hueColumn.append(hueTitle);
     renderHueRoomDevices(room, hueColumn);
 
@@ -3718,7 +3733,9 @@
     appleColumn.className = "room-impact-column";
     const appleTitle = document.createElement("h4");
     const hueAppleCount = (room.apple_accessories || []).filter(
-      accessory => accessory.origin === "hue" || accessory.matched_hue_device_id
+      accessory => isHomeAssistantAppleSource()
+        ? Boolean(accessory.matched_hue_device_id)
+        : (accessory.origin === "hue" || accessory.matched_hue_device_id)
     ).length;
     appleTitle.textContent =
       `${t("apple.homeContents")} (${hueAppleCount})`;
@@ -3808,7 +3825,7 @@
     const summaryRoot = $("appleHomeSummary");
     summaryRoot.replaceChildren();
     const chips = [
-      [`${summary.mapped_rooms || 0}/${summary.hue_rooms || 0} pièce(s) associée(s)`, summary.unmapped_rooms ? "warn" : "good"],
+      [`${summary.mapped_rooms || 0}/${summary.source_rooms ?? summary.hue_rooms ?? 0} pièce(s) associée(s)`, summary.unmapped_rooms ? "warn" : "good"],
       [`${state.appleSelectedRoomIds.size}/${(plan.rooms || []).length} pièce(s) sélectionnée(s)`, state.appleSelectedRoomIds.size ? "good" : "warn"],
       [`${selectedMoves.length}/${summary.moves || 0} déplacement(s) sélectionné(s)`, selectedMoves.length ? "warn" : "good"],
       [`${summary.already_correct || 0} déjà correct(s)`, "good"],
