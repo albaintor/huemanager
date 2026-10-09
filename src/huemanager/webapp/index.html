@@ -4066,9 +4066,7 @@
         await persistAppleRoomSelection();
       }
 
-      const plan = await api(
-        `/api/bridges/${encodeURIComponent(bridge)}/apple-home/plan`
-      );
+      const plan = await api(base + "/plan");
       renderAppleHomePlan(plan, { resetDraft: true });
       updateAppleSaveState();
       status(t("apple.savedDone"), "good");
