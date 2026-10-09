@@ -9,7 +9,9 @@ struct ContentView: View {
                 connectionSection
                 serverActivitySection
                 syncSection
-                reassociationSection
+                if !model.usesHomeAssistantSource {
+                    reassociationSection
+                }
                 roomAssociationsSection
                 proposedMovesSection
             }
@@ -50,7 +52,20 @@ struct ContentView: View {
                 .keyboardType(.URL)
                 .autocorrectionDisabled()
 
-            if model.bridges.isEmpty {
+            Picker("Source de référence", selection: $model.syncSource) {
+                Text("Philips Hue").tag("hue")
+                Text("Home Assistant").tag("home_assistant")
+            }
+
+            if model.usesHomeAssistantSource {
+                LabeledContent("Source", value: "Home Assistant via HueManager")
+                Text(
+                    "L’URL et le Long-Lived Access Token Home Assistant se configurent " +
+                    "dans l’onglet Apple Maison de l’interface web HueManager."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            } else if model.bridges.isEmpty {
                 LabeledContent("Bridge Hue") {
                     HStack(spacing: 8) {
                         ProgressView()
@@ -226,7 +241,7 @@ struct ContentView: View {
             .disabled(
                 !model.homeKitLoaded ||
                 model.homes.isEmpty ||
-                model.bridges.isEmpty
+                (!model.usesHomeAssistantSource && model.bridges.isEmpty)
             )
 
             Button("Appliquer les déplacements") {
@@ -256,7 +271,10 @@ struct ContentView: View {
             statusView
 
             if let summary = model.planSummary {
-                LabeledContent("Pièces Hue", value: "\(summary.hueRooms)")
+                LabeledContent(
+                    "Pièces \(model.sourceDisplayName)",
+                    value: "\(summary.hueRooms)"
+                )
                 LabeledContent("Pièces associées", value: "\(summary.mappedRooms)")
                 LabeledContent(
                     "Pièces sélectionnées",
@@ -382,7 +400,7 @@ struct ContentView: View {
 
                 Text(
                     "Seules les pièces cochées seront modifiées dans Apple Maison. " +
-                    "La sélection est mémorisée pour ce Bridge et cette Maison."
+                    "La sélection est mémorisée pour cette source et cette Maison."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -410,7 +428,7 @@ struct ContentView: View {
 
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Hue · \(room.hueRoomName)")
+                    Text("\(model.sourceDisplayName) · \(room.hueRoomName)")
                         .font(.headline)
                     Text("\(hueDevices.count) accessoire(s)")
                         .font(.caption)
@@ -444,7 +462,7 @@ struct ContentView: View {
             GroupBox {
                 VStack(alignment: .leading, spacing: 8) {
                     if hueDevices.isEmpty {
-                        Text("Aucun accessoire Hue dans cette pièce.")
+                        Text("Aucun appareil \(model.sourceDisplayName) dans cette pièce.")
                             .foregroundStyle(.secondary)
                     } else {
                         ForEach(hueDevices) { device in
@@ -455,7 +473,7 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             } label: {
                 Label(
-                    "Présents côté Philips Hue",
+                    "Présents côté \(model.sourceDisplayName)",
                     systemImage: "lightbulb.2"
                 )
             }
@@ -473,11 +491,14 @@ struct ContentView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(accessory.name)
                                 if let hueName = accessory.matchedHueDeviceName {
-                                    Text("↔ Hue : \(hueName)")
+                                    Text("↔ \(model.sourceDisplayName) : \(hueName)")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 } else {
-                                    Text("Non associé à un appareil Hue de cette analyse")
+                                    Text(
+                                        "Non associé à un appareil " +
+                                        "\(model.sourceDisplayName) de cette analyse"
+                                    )
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -505,7 +526,10 @@ struct ContentView: View {
                                     "\(move.toRoomName)"
                                 )
                                 .font(.subheadline)
-                                Text("Correspond à Hue : \(move.hueDeviceName)")
+                                Text(
+                                    "Correspond à \(model.sourceDisplayName) : " +
+                                    "\(move.hueDeviceName)"
+                                )
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
