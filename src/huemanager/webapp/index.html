@@ -608,14 +608,57 @@
       </div>
 
       <div class="card span-12">
-        <h2 data-i18n="apple.title">Apple Maison — synchronisation des pièces Hue</h2>
+        <h2 data-i18n="apple.title">Apple Maison — synchronisation des pièces</h2>
         <p class="muted" data-i18n="apple.description">
-          L’inventaire Apple Maison est publié par l’app iOS HueManager Home Sync.
-          Ici, tu peux relire le dernier inventaire reçu puis vérifier les correspondances de pièces et leur impact.
+          Compare Apple Maison avec Philips Hue ou Home Assistant, puis prévisualise les déplacements avant synchronisation.
         </p>
-        <div class="row">
+        <div class="row" style="align-items:end">
+          <div class="grow">
+            <label for="appleSyncSource" data-i18n="apple.source">Source de référence</label>
+            <select id="appleSyncSource">
+              <option value="hue">Philips Hue</option>
+              <option value="home_assistant">Home Assistant</option>
+            </select>
+          </div>
+        </div>
+        <div id="homeAssistantAppleConfig" class="audit-issue hidden" style="margin-top:12px">
+          <h3 data-i18n="apple.haConfigTitle">Connexion Home Assistant</h3>
+          <p class="muted" data-i18n="apple.haConfigHelp">
+            HueManager lit les registres Areas, Devices et Entities via l’API WebSocket Home Assistant.
+            Le jeton est conservé côté serveur et n’est jamais renvoyé au navigateur.
+          </p>
+          <div class="row">
+            <div class="grow">
+              <label for="homeAssistantUrl">URL</label>
+              <input id="homeAssistantUrl" type="url" placeholder="http://homeassistant.local:8123">
+            </div>
+            <div class="grow">
+              <label for="homeAssistantToken" data-i18n="apple.haToken">Long-Lived Access Token</label>
+              <input id="homeAssistantToken" type="password" autocomplete="new-password"
+                     data-i18n-placeholder="apple.haTokenPlaceholder"
+                     placeholder="Laisser vide pour conserver le jeton enregistré">
+            </div>
+            <div>
+              <label for="homeAssistantVerifyTls">TLS</label>
+              <select id="homeAssistantVerifyTls">
+                <option value="false">Certificat local / non vérifié</option>
+                <option value="true">Vérifier le certificat</option>
+              </select>
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <button id="saveHomeAssistantConfig" class="primary" data-i18n="apple.haSave">Enregistrer et tester</button>
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <button id="testHomeAssistantConfig" data-i18n="apple.haTest">Tester</button>
+            </div>
+          </div>
+          <div id="homeAssistantStatus" class="muted"></div>
+        </div>
+        <div class="row" style="margin-top:12px">
           <button id="refreshAppleHome" data-i18n="apple.refresh">Relire l’inventaire reçu</button>
-          <button id="planAppleHome" class="primary" disabled data-i18n="apple.analyze">Analyser Hue ↔ Maison</button>
+          <button id="planAppleHome" class="primary" disabled data-i18n="apple.analyze">Analyser la source ↔ Maison</button>
           <button id="diagnoseAppleIdentity" disabled data-i18n="apple.identityAnalyze">Diagnostiquer les identifiants</button>
           <button id="learnAppleIdentity" disabled data-i18n="apple.identityLearn">Mémoriser les correspondances sûres</button>
           <button id="copyAppleIdentity" disabled data-i18n="apple.identityCopy">Copier le diagnostic</button>
@@ -786,10 +829,17 @@
       "appleAudit.statusAmbiguous": "Correspondance ambiguë",
       "appleAudit.statusUnmapped": "Bridge Apple non associé",
       "appleAudit.statusUnresolved": "À identifier",
-      "apple.title": "Apple Maison — synchronisation des pièces Hue",
-      "apple.description": "L’inventaire Apple Maison est publié par l’app iOS HueManager Home Sync. Ici, tu peux relire le dernier inventaire reçu, puis sélectionner une pièce Apple pour chaque pièce Hue et vérifier l’impact avant enregistrement.",
+      "apple.title": "Apple Maison — synchronisation des pièces",
+      "apple.source": "Source de référence",
+      "apple.haConfigTitle": "Connexion Home Assistant",
+      "apple.haConfigHelp": "HueManager lit les registres Areas, Devices et Entities via l’API WebSocket Home Assistant. Le jeton est conservé côté serveur et n’est jamais renvoyé au navigateur.",
+      "apple.haToken": "Long-Lived Access Token",
+      "apple.haTokenPlaceholder": "Laisser vide pour conserver le jeton enregistré",
+      "apple.haSave": "Enregistrer et tester",
+      "apple.haTest": "Tester",
+      "apple.description": "L’inventaire Apple Maison est publié par l’app iOS HueManager Home Sync. Choisis Philips Hue ou Home Assistant comme référentiel source, puis compare les pièces et accessoires avant enregistrement.",
       "apple.refresh": "Relire l’inventaire reçu",
-      "apple.analyze": "Analyser Hue ↔ Maison",
+      "apple.analyze": "Analyser la source ↔ Maison",
       "apple.identityAnalyze": "Diagnostiquer les identifiants",
       "apple.identityCopy": "Copier le diagnostic",
       "apple.identityLearn": "Mémoriser les correspondances sûres",
@@ -994,10 +1044,17 @@
       "appleAudit.statusAmbiguous": "Ambiguous match",
       "appleAudit.statusUnmapped": "Unmapped Apple bridge",
       "appleAudit.statusUnresolved": "Needs identification",
-      "apple.title": "Apple Home — Hue room synchronization",
-      "apple.description": "The Apple Home inventory is published by the iOS HueManager Home Sync app. Here you can reload the last inventory received, then select an Apple Home room for each Hue room and review the impact before saving.",
+      "apple.title": "Apple Home — room synchronization",
+      "apple.source": "Reference source",
+      "apple.haConfigTitle": "Home Assistant connection",
+      "apple.haConfigHelp": "HueManager reads Home Assistant Area, Device and Entity registries through the Home Assistant WebSocket API. The token is stored server-side and is never returned to the browser.",
+      "apple.haToken": "Long-Lived Access Token",
+      "apple.haTokenPlaceholder": "Leave empty to keep the stored token",
+      "apple.haSave": "Save and test",
+      "apple.haTest": "Test",
+      "apple.description": "The Apple Home inventory is published by the iOS HueManager Home Sync app. Choose Philips Hue or Home Assistant as the source of truth, then compare rooms and accessories before saving.",
       "apple.refresh": "Reload received inventory",
-      "apple.analyze": "Analyze Hue ↔ Home",
+      "apple.analyze": "Analyze source ↔ Home",
       "apple.identityAnalyze": "Diagnose identifiers",
       "apple.identityCopy": "Copy identity diagnostic",
       "apple.identityLearn": "Remember safe matches",
@@ -1080,6 +1137,9 @@
     homeKitState: null,
     appleHome: null,
     appleAudit: null,
+    appleSyncSource: localStorage.getItem("huemanager.appleSyncSource") || "hue",
+    homeAssistantConfig: null,
+    homeAssistantInventory: null,
     appleHomePlan: null,
     appleIdentityDiagnostics: null,
     appleSelectedRoomIds: new Set(),
@@ -1140,6 +1200,9 @@
     $("languageSelect").value = state.language;
     for (const el of document.querySelectorAll("[data-i18n]")) {
       el.textContent = t(el.dataset.i18n);
+    }
+    for (const el of document.querySelectorAll("[data-i18n-placeholder]")) {
+      el.placeholder = t(el.dataset.i18nPlaceholder);
     }
     if (state.softwareUpdate) {
       renderSoftwareUpdate(state.softwareUpdate);
