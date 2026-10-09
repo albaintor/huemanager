@@ -1094,6 +1094,41 @@
   };
   const $ = (id) => document.getElementById(id);
 
+  function parseUtcDateTime(value) {
+    if (value == null || value === "") return null;
+    let text = String(value).trim();
+    if (!text) return null;
+
+    // Backend/Hue timestamps without an explicit offset are UTC. Keep date-only
+    // and clock-only values untouched because they are not absolute instants.
+    if (/^\d{4}[-:]\d{2}[-:]\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(text)) {
+      if (/^\d{4}:\d{2}:\d{2}T/.test(text)) {
+        text = text.slice(0, 10).replaceAll(":", "-") + text.slice(10);
+      }
+      text += "Z";
+    }
+
+    const parsed = new Date(text);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  function formatLocalDateTime(value, fallback = "?") {
+    if (value == null || value === "") return fallback;
+    const parsed = parseUtcDateTime(value);
+    if (!parsed) return String(value);
+
+    const locale = state.language === "en" ? "en-GB" : "fr-FR";
+    return new Intl.DateTimeFormat(locale, {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      timeZoneName: "short",
+    }).format(parsed);
+  }
+
   function t(key) {
     return I18N[state.language]?.[key] || I18N.fr[key] || key;
   }
@@ -1211,7 +1246,7 @@
       } else {
         const roomNames = (snapshot.rooms || []).join(", ") || "sans pièce";
         option.textContent =
-          `${snapshot.created_at || ""} — ${roomNames} — ${sessionStatusLabel(snapshot.session?.status)}`;
+          `${formatLocalDateTime(snapshot.created_at, "")} — ${roomNames} — ${sessionStatusLabel(snapshot.session?.status)}`;
       }
       select.append(option);
     }
@@ -1509,8 +1544,8 @@
       const automatic = update.automatic_install;
       field("updates.auto", automatic == null ? null : t(automatic ? "updates.on" : "updates.off"));
       field("updates.schedule", update.automatic_install_time);
-      field("updates.lastChange", update.last_change);
-      field("updates.lastInstall", update.last_install);
+      field("updates.lastChange", formatLocalDateTime(update.last_change, t("updates.unknown")));
+      field("updates.lastInstall", formatLocalDateTime(update.last_install, t("updates.unknown")));
     }
     field("updates.internet", (data.internet || {}).software_update);
     if (device.supported) field("updates.devices", (device.items || []).length);
@@ -1617,7 +1652,7 @@
       const details = document.createElement("p");
       details.className = "muted";
       const parts = [`ID : ${fabric.id}`];
-      if (fabric.creation_time) parts.push(`créé : ${fabric.creation_time}`);
+      if (fabric.creation_time) parts.push(`créé : ${formatLocalDateTime(fabric.creation_time)}`);
       details.textContent = parts.join(" · ");
       box.append(details);
 
@@ -2025,7 +2060,7 @@
         "Post-crash capture disabled: capture a healthy baseline first.";
     } else {
       statusRoot.textContent =
-        "Healthy baseline: " + (data.baseline.captured_at || "?")
+        "Healthy baseline: " + formatLocalDateTime(data.baseline.captured_at)
         + " · hash " + String(data.baseline.configuration_hash || "").slice(0, 12) + "…"
         + " · post-crash capture ENABLED (20 s after API recovery).";
     }
@@ -2050,7 +2085,7 @@
 
       const title = document.createElement("h3");
       title.textContent =
-        "Post-crash snapshot · " + (report.captured_at || "?")
+        "Post-crash snapshot · " + formatLocalDateTime(report.captured_at)
         + (comparison.configuration_changed ? " · CONFIG CHANGED" : " · config unchanged");
 
       const detail = document.createElement("p");
@@ -2118,7 +2153,7 @@
       box.className = entry.result === "success" ? "audit-issue" : "audit-issue warning";
       const title = document.createElement("h3");
       title.textContent =
-        (entry.at || "?") + " · " + (entry.method || "?") + " " + (entry.endpoint || "?")
+        formatLocalDateTime(entry.at) + " · " + (entry.method || "?") + " " + (entry.endpoint || "?")
         + " · " + (entry.status_code ?? "no HTTP status") + " · " + (entry.result || "?");
       const detail = document.createElement("p");
       detail.textContent =
@@ -2263,7 +2298,7 @@
       if (event.type === "down") {
         const forensic = event.forensic || {};
         const fields = [
-          event.at || "?",
+          formatLocalDateTime(event.at),
           "DOWN",
           event.classification || "UNKNOWN_ERROR",
           event.layer ? "layer=" + event.layer : null,
@@ -2285,7 +2320,7 @@
       }
       if (event.type === "restored") {
         const fields = [
-          event.at || "?",
+          formatLocalDateTime(event.at),
           "RESTORED",
           event.downtime_seconds == null
             ? null
@@ -2303,7 +2338,7 @@
             ? "forensic_probes=" + event.outage_diagnosis.probe_count
             : null,
           event.outage_started_at
-            ? "outage_started_at=" + event.outage_started_at
+            ? "outage_started_at=" + formatLocalDateTime(event.outage_started_at)
             : null,
           event.endpoint ? "endpoint=" + event.endpoint : null,
         ].filter(Boolean);
@@ -2312,7 +2347,7 @@
       if (event.type === "zigbee_degraded" || event.type === "zigbee_restored") {
         const sample = event.sample || {};
         return [
-          event.at || "?",
+          formatLocalDateTime(event.at),
           event.type.toUpperCase(),
           "api_state=" + (event.api_state || "?"),
           "connected=" + (sample.connected ?? "?") + "/" + (sample.total ?? "?"),
@@ -2322,7 +2357,7 @@
       if (event.type === "zigbee_manual_marker") {
         const stack = event.stack_forensics || {};
         return [
-          event.at || "?",
+          formatLocalDateTime(event.at),
           "ZIGBEE_MANUAL_MARKER",
           "api_reachable=" + String(Boolean(event.api_reachable)),
           "diagnosis=" + (event.diagnosis || "?"),
@@ -2338,7 +2373,7 @@
           event.summary || null,
         ].filter(Boolean).join(" | ");
       }
-      return (event.at || "?") + " | " + (event.type || "event");
+      return (formatLocalDateTime(event.at)) + " | " + (event.type || "event");
     }).join("\n");
   }
 
@@ -2377,7 +2412,7 @@
       + " · intervalle " + (data.interval_seconds || 10) + " s"
       + zigbeeText
       + outageDiagnosis
-      + (data.last_check_at ? " · dernière vérification " + data.last_check_at : "")
+      + (data.last_check_at ? " · dernière vérification " + formatLocalDateTime(data.last_check_at) : "")
       + (data.last_error && data.current_state === "down"
         ? " · erreur : " + data.last_error
         : "");
@@ -2412,7 +2447,7 @@
             + " · TCP80=" + (forensic.tcp_http_80?.status || "?")
           : "";
         detail.textContent =
-          (event.at || "?") + " · " + classification + layer + statusCode
+          (formatLocalDateTime(event.at)) + " · " + classification + layer + statusCode
           + (event.summary ? " · " + event.summary : "")
           + forensicText
           + (event.endpoint ? " · " + event.endpoint : "");
@@ -2445,8 +2480,8 @@
           ? " · diagnosis=" + event.outage_diagnosis.code
           : "";
         detail.textContent =
-          (event.at || "?") + " · " + duration + failedChecks + classifications + diagnosis
-          + (event.outage_started_at ? " · outage started " + event.outage_started_at : "");
+          (formatLocalDateTime(event.at)) + " · " + duration + failedChecks + classifications + diagnosis
+          + (event.outage_started_at ? " · outage started " + formatLocalDateTime(event.outage_started_at) : "");
         if (event.outage_diagnosis || (event.outage_forensics || []).length) {
           const forensicDetails = document.createElement("details");
           const forensicSummary = document.createElement("summary");
@@ -2471,7 +2506,7 @@
           : "Zigbee connectivity RESTORED";
         const sample = event.sample || {};
         detail.textContent =
-          (event.at || "?")
+          (formatLocalDateTime(event.at))
           + " · API=" + (event.api_state || "?")
           + " · connected=" + (sample.connected ?? "?") + "/" + (sample.total ?? "?")
           + (event.summary ? " · " + event.summary : "");
@@ -2479,7 +2514,7 @@
         title.textContent = "USER-OBSERVED ZIGBEE FAILURE";
         const stack = event.stack_forensics || {};
         detail.textContent =
-          (event.at || "?")
+          (formatLocalDateTime(event.at))
           + " · API reachable=" + String(Boolean(event.api_reachable))
           + " · " + (event.diagnosis || "?")
           + " · TCP443=" + (stack.tcp_https_443?.status || "?")
@@ -2495,7 +2530,7 @@
         continue;
       } else {
         title.textContent = event.type || "Diagnostic event";
-        detail.textContent = event.at || "?";
+        detail.textContent = formatLocalDateTime(event.at);
       }
       box.append(title, detail);
       eventsRoot.append(box);
@@ -2992,7 +3027,7 @@
     const summary = data.summary || {};
     $("appleAuditInventoryStatus").textContent =
       `Maison « ${data.home?.name || "?"} » · inventaire ${
-        data.inventory_received_at || "reçu"
+        formatLocalDateTime(data.inventory_received_at, "reçu")
       }`;
 
     const legend = $("appleAuditLegend");
@@ -3117,7 +3152,7 @@
     $("appleHomeStatus").textContent =
       `Maison « ${home.name || "?"} » · ${inventory.rooms?.length || 0} pièce(s) · ` +
       `${accessories.length} accessoire(s) · ${serialCount} identifiant(s) série HomeKit · ` +
-      `inventaire ${inventory.received_at || "reçu"}` +
+      `inventaire ${formatLocalDateTime(inventory.received_at, "reçu")}` +
       (lastSync ? ` · dernier apply: ${lastSync.moved || 0} déplacé(s), ${lastSync.failed?.length || 0} échec(s)` : "");
     $("planAppleHome").disabled = false;
     $("diagnoseAppleIdentity").disabled = false;
@@ -3975,7 +4010,7 @@
         option.textContent = `${backup.id} — backup invalide`;
       } else {
         const source = backup.source_bridge?.name || backup.source_bridge?.bridgeid || "Hue";
-        option.textContent = `${backup.created_at || ""} — ${source} — ${backup.lights || 0} lampes`;
+        option.textContent = `${formatLocalDateTime(backup.created_at, "")} — ${source} — ${backup.lights || 0} lampes`;
       }
       select.append(option);
     }
