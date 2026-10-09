@@ -328,7 +328,7 @@ def _save_apple_home(state: dict) -> None:
 
 
 def _api_error(exc: Exception) -> HTTPException:
-    if isinstance(exc, HueApiError):
+    if isinstance(exc, (HueApiError, HomeAssistantApiError)):
         return HTTPException(status_code=502, detail=str(exc))
     return HTTPException(status_code=400, detail=str(exc))
 
