@@ -11,9 +11,16 @@ from huemanager.updates import (
 
 
 class FakeHueClient:
-    def __init__(self, update=None, *, v2_error=False):
+    def __init__(
+        self,
+        update=None,
+        *,
+        v2_error=False,
+        bridge_v2_software_version="6.2.2071537020",
+    ):
         self.update = update
         self.v2_error = v2_error
+        self.bridge_v2_software_version = bridge_v2_software_version
         self.writes = []
 
     def v1_get(self, path):
@@ -22,7 +29,7 @@ class FakeHueClient:
             "name": "Principal",
             "bridgeid": "ABC123",
             "modelid": "BSB003",
-            "swversion": "6.2.2071537020",
+            "swversion": "2071537020",
             "apiversion": "1.72.0",
             "internetservices": {"internet": "connected", "swupdate": "connected"},
             "whitelist": {"secret-api-key": {"name": "Do not return"}},
@@ -32,9 +39,22 @@ class FakeHueClient:
         return config
 
     def v2_get(self, resource_type):
-        assert resource_type == "device_software_update"
         if self.v2_error:
             raise HueApiError("Unsupported v2 resource")
+        if resource_type == "device":
+            return [
+                {
+                    "id": "bridge-device-1",
+                    "type": "device",
+                    "product_data": {
+                        "model_id": "BSB003",
+                        "product_archetype": "bridge_v2",
+                        "software_version": self.bridge_v2_software_version,
+                    },
+                    "services": [{"rid": "bridge-service-1", "rtype": "bridge"}],
+                }
+            ]
+        assert resource_type == "device_software_update"
         return [{"id": "device-update-1", "state": "no_update",
                  "owner": {"rid": "device-1", "rtype": "device"}}]
 
@@ -52,6 +72,7 @@ def test_status_sanitizes_config_and_shows_schedule():
     })
     info = software_update_status(client)
     assert info["bridge"]["software_version"] == "6.2.2071537020"
+    assert info["bridge"]["software_build"] == "2071537020"
     assert info["updates"]["automatic_install"] is False
     assert info["updates"]["automatic_install_time"] == "T13:35:00"
     assert info["updates"]["ready_to_install"] is False
@@ -106,3 +127,13 @@ def test_unsupported_v1_blocks_writes():
     with pytest.raises(HueApiError, match="swupdate2"):
         request_software_update_check(client)
     assert client.writes == []
+
+
+def test_status_falls_back_to_v1_build_when_bridge_device_v2_unavailable():
+    client = FakeHueClient(
+        {"state": "noupdates"},
+        v2_error=True,
+    )
+    status = software_update_status(client)
+    assert status["bridge"]["software_version"] == "2071537020"
+    assert status["bridge"]["software_build"] == "2071537020"
