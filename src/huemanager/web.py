@@ -58,6 +58,11 @@ from .migration import (
     save_snapshot,
 )
 from .monitoring import DiagnosticMonitorManager, ServiceConnectivityMonitorManager
+from .updates import (
+    request_software_update_check,
+    request_software_update_install,
+    software_update_status,
+)
 from .session import (
     load_migration_session,
     new_migration_session,
@@ -933,6 +938,30 @@ def bridge_tree(bridge_name: str) -> dict:
     except Exception as exc:
         raise _api_error(exc) from exc
 
+
+
+@app.get("/api/bridges/{bridge_name}/software-update")
+def bridge_software_update(bridge_name: str) -> dict:
+    try:
+        return software_update_status(_client(bridge_name))
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@app.post("/api/bridges/{bridge_name}/software-update/check")
+def bridge_software_update_check(bridge_name: str) -> dict:
+    try:
+        return request_software_update_check(_client(bridge_name))
+    except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@app.post("/api/bridges/{bridge_name}/software-update/install")
+def bridge_software_update_install(bridge_name: str) -> dict:
+    try:
+        return request_software_update_install(_client(bridge_name))
+    except Exception as exc:
+        raise _api_error(exc) from exc
 
 
 @app.get("/api/bridges/{bridge_name}/diagnostics")
