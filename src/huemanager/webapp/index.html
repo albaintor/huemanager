@@ -3407,6 +3407,29 @@
       : "Analyser Philips Hue ↔ Maison";
   }
 
+  async function loadAppleSyncSource() {
+    const data = await api("/api/apple-home/source");
+    if (data?.source === "hue" || data?.source === "home_assistant") {
+      state.appleSyncSource = data.source;
+      localStorage.setItem("huemanager.appleSyncSource", data.source);
+      clearApplePlanForSourceChange();
+      updateAppleSourceUi();
+    }
+    return data;
+  }
+
+  async function saveAppleSyncSource(source) {
+    const data = await api("/api/apple-home/source", {
+      method: "PUT",
+      body: JSON.stringify({source}),
+    });
+    state.appleSyncSource = data.source || source;
+    localStorage.setItem("huemanager.appleSyncSource", state.appleSyncSource);
+    clearApplePlanForSourceChange();
+    updateAppleSourceUi();
+    return data;
+  }
+
   async function loadHomeAssistantConfig() {
     const data = await api("/api/home-assistant/config");
     state.homeAssistantConfig = data;
@@ -4754,13 +4777,15 @@
   $("appleAuditFilter").addEventListener("change", renderAppleAuditRows);
 
   $("appleSyncSource").addEventListener("change", () => {
-    state.appleSyncSource = $("appleSyncSource").value;
-    localStorage.setItem("huemanager.appleSyncSource", state.appleSyncSource);
-    clearApplePlanForSourceChange();
-    updateAppleSourceUi();
-    if (isHomeAssistantAppleSource()) {
-      loadHomeAssistantConfig().catch(e => status(e.message, "bad"));
-    }
+    const source = $("appleSyncSource").value;
+    saveAppleSyncSource(source)
+      .then(() => {
+        if (isHomeAssistantAppleSource()) {
+          return loadHomeAssistantConfig();
+        }
+        return null;
+      })
+      .catch(e => status(e.message, "bad"));
   });
   $("saveHomeAssistantConfig").addEventListener("click", () => {
     saveHomeAssistantConfig().catch(e => status(e.message, "bad"));
@@ -4903,6 +4928,7 @@
     loadBackups(),
     loadSnapshots(),
     loadAppleHomeStatus(),
+    loadAppleSyncSource().catch(() => null),
     loadHomeAssistantConfig().catch(() => null),
   ])
     .then(() => Promise.all([
