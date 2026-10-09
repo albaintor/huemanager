@@ -58,11 +58,6 @@ from .migration import (
     save_snapshot,
 )
 from .monitoring import DiagnosticMonitorManager, ServiceConnectivityMonitorManager
-from .updates import (
-    request_software_update_check,
-    request_software_update_install,
-    software_update_status,
-)
 from .session import (
     load_migration_session,
     new_migration_session,
@@ -73,6 +68,11 @@ from .session import (
     release_source_resources,
     save_migration_session,
     session_summary,
+)
+from .updates import (
+    request_software_update_check,
+    request_software_update_install,
+    software_update_status,
 )
 
 app = FastAPI(title="HueManager", version="0.7.0")
