@@ -150,6 +150,10 @@ class ServiceConnectivityMonitorRequest(BaseModel):
     interval_seconds: int = Field(default=10, ge=5, le=300)
 
 
+class AppleHomeSourceRequest(BaseModel):
+    source: str = Field(pattern=r"^(hue|home_assistant)$")
+
+
 class HomeAssistantConfigRequest(BaseModel):
     url: str = Field(min_length=1, max_length=500)
     token: str | None = Field(default=None, max_length=4096)
@@ -447,6 +451,20 @@ def apple_home_multi_bridge_audit() -> dict:
         )
         return report
     except Exception as exc:
+        raise _api_error(exc) from exc
+
+
+@app.get("/api/apple-home/source")
+def apple_home_sync_source() -> dict:
+    return {"source": _store().get_apple_home_sync_source()}
+
+
+@app.put("/api/apple-home/source")
+def update_apple_home_sync_source(request: AppleHomeSourceRequest) -> dict:
+    try:
+        _store().save_apple_home_sync_source(request.source)
+        return {"ok": True, "source": request.source}
+    except ValueError as exc:
         raise _api_error(exc) from exc
 
 
