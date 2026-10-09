@@ -14,6 +14,13 @@ class BridgeProfile:
     verify_tls: bool = False
 
 
+@dataclass(slots=True)
+class HomeAssistantProfile:
+    url: str
+    token: str
+    verify_tls: bool = False
+
+
 class ConfigStore:
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or Path(
@@ -45,6 +52,38 @@ class ConfigStore:
         return {
             name: BridgeProfile(**value)
             for name, value in self._read().get("bridges", {}).items()
+        }
+
+    def save_home_assistant(self, profile: HomeAssistantProfile) -> None:
+        data = self._read()
+        data["home_assistant"] = asdict(profile)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        try:
+            os.chmod(self.path, 0o600)
+        except OSError:
+            pass
+
+    def get_home_assistant(self) -> HomeAssistantProfile:
+        payload = self._read().get("home_assistant")
+        if not payload:
+            raise KeyError("Home Assistant is not configured")
+        return HomeAssistantProfile(**payload)
+
+    def home_assistant_status(self) -> dict:
+        payload = self._read().get("home_assistant")
+        if not payload:
+            return {
+                "configured": False,
+                "url": None,
+                "verify_tls": False,
+                "has_token": False,
+            }
+        return {
+            "configured": bool(payload.get("url") and payload.get("token")),
+            "url": payload.get("url"),
+            "verify_tls": bool(payload.get("verify_tls")),
+            "has_token": bool(payload.get("token")),
         }
 
     def get_diagnostic_ignored_devices(self, bridge_name: str) -> set[str]:
