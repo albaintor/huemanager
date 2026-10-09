@@ -5,7 +5,6 @@ import json
 import os
 import ssl
 import urllib.parse
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -18,36 +17,11 @@ from .apple_home import (
     _normalise_identifier,
     _unique_index,
 )
+from .config import HomeAssistantProfile
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
-
-
-@dataclass(slots=True)
-class HomeAssistantProfile:
-    url: str
-    token: str
-    verify_tls: bool = False
-
-    @property
-    def base_url(self) -> str:
-        return self.url.rstrip("/")
-
-    @property
-    def websocket_url(self) -> str:
-        parsed = urllib.parse.urlparse(self.base_url)
-        scheme = "wss" if parsed.scheme == "https" else "ws"
-        return urllib.parse.urlunparse(
-            (
-                scheme,
-                parsed.netloc,
-                "/api/websocket",
-                "",
-                "",
-                "",
-            )
-        )
 
 
 class HomeAssistantApiError(RuntimeError):
