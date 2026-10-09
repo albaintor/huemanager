@@ -48,12 +48,57 @@ def software_update_status(client: HueBridgeClient) -> dict[str, Any]:
 
     services = config.get("internetservices")
     services = services if isinstance(services, dict) else {}
+
+    # Bridge Pro CLIP v1 may expose only the numeric firmware build in
+    # config.swversion (for example 2071537020), while the v2 bridge device
+    # product_data carries the complete semantic Hue version
+    # (for example 6.2.2071537020). Prefer v2 when available, but retain the
+    # raw v1 build for diagnostics and for older firmware compatibility.
+    v1_software_version = config.get("swversion")
+    full_software_version = v1_software_version
+    try:
+        devices = client.v2_get("device")
+        if isinstance(devices, list):
+            bridge_device = next(
+                (
+                    item
+                    for item in devices
+                    if isinstance(item, dict)
+                    and (
+                        any(
+                            isinstance(service, dict)
+                            and service.get("rtype") == "bridge"
+                            for service in item.get("services", [])
+                        )
+                        or (
+                            str((item.get("product_data") or {}).get("model_id") or "")
+                            == str(config.get("modelid") or "")
+                            and str(
+                                (item.get("product_data") or {}).get(
+                                    "product_archetype"
+                                )
+                                or ""
+                            ).startswith("bridge")
+                        )
+                    )
+                ),
+                None,
+            )
+            if bridge_device:
+                product_data = bridge_device.get("product_data") or {}
+                candidate = product_data.get("software_version")
+                if candidate:
+                    full_software_version = candidate
+    except (HueApiError, OSError, ValueError):
+        pass
+
     info: dict[str, Any] = {
         "bridge": {
             "name": config.get("name"),
             "model_id": config.get("modelid"),
             "bridge_id": config.get("bridgeid"),
-            "software_version": config.get("swversion"),
+            "software_version": full_software_version,
+            "software_build": v1_software_version,
             "api_version": config.get("apiversion"),
         },
         "updates": _update_info(config),
