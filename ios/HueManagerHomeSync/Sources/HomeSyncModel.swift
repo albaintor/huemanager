@@ -1700,7 +1700,9 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
                 method: "POST",
                 body: SyncResult(
                     homeID: home.uniqueIdentifier.uuidString,
-                    bridgeProfile: bridgeProfile,
+                    bridgeProfile: usesHomeAssistantSource
+                        ? "__home_assistant__"
+                        : bridgeProfile,
                     moved: moved,
                     failed: failures
                 )
