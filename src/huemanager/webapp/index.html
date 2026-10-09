@@ -3305,7 +3305,7 @@
         { method: "POST" },
       );
       const plan = await api(
-        `/api/bridges/${encodeURIComponent(bridge)}/apple-home/plan`
+        base + "/plan"
       );
       renderAppleHomePlan(plan, { resetDraft: true });
       await runAppleIdentityDiagnostics();
@@ -3785,10 +3785,10 @@
 
   async function persistAppleRoomSelection() {
     const inventory = state.appleHome?.inventory;
-    const bridge = $("managementBridge").value;
-    if (!inventory?.home?.id || !bridge) return;
+    const base = appleSourcePlanBase();
+    if (!inventory?.home?.id || !base) return;
     const result = await api(
-      `/api/bridges/${encodeURIComponent(bridge)}/apple-home/selection`,
+      base + "/selection",
       {
         method: "PUT",
         body: JSON.stringify({
@@ -3985,14 +3985,17 @@
   }
 
   async function runAppleHomePlan() {
-    const bridge = $("managementBridge").value;
-    if (!bridge) return;
+    const base = appleSourcePlanBase();
+    if (!base) return;
     try {
-      status("Analyse Hue ↔ Apple Maison…");
+      status("Analyse " + appleSourceLabel() + " ↔ Apple Maison…");
       await loadAppleHomeStatus();
-      const plan = await api(
-        `/api/bridges/${encodeURIComponent(bridge)}/apple-home/plan`
-      );
+      if (isHomeAssistantAppleSource()) {
+        state.homeAssistantInventory = await api(
+          "/api/home-assistant/inventory?refresh=true"
+        );
+      }
+      const plan = await api(base + "/plan");
       renderAppleHomePlan(plan, { resetDraft: true });
       status(t("apple.planDone"), "good");
     } catch (e) {
@@ -4002,14 +4005,14 @@
 
   async function previewAppleRoomDraft() {
     const inventory = state.appleHome?.inventory;
-    const bridge = $("managementBridge").value;
-    if (!inventory?.home?.id || !bridge) return;
+    const base = appleSourcePlanBase();
+    if (!inventory?.home?.id || !base) return;
     const sequence = ++state.applePreviewSeq;
     updateAppleSaveState();
     status(t("apple.previewing"));
     try {
       const plan = await api(
-        `/api/bridges/${encodeURIComponent(bridge)}/apple-home/preview`,
+        base + "/preview",
         {
           method: "POST",
           body: JSON.stringify({
@@ -4030,12 +4033,12 @@
 
   async function saveAppleRoomMap() {
     const inventory = state.appleHome?.inventory;
-    const bridge = $("managementBridge").value;
-    if (!inventory?.home?.id || !bridge) return;
+    const base = appleSourcePlanBase();
+    if (!inventory?.home?.id || !base) return;
     try {
       if (appleRoomMapDirty()) {
         await api(
-          `/api/bridges/${encodeURIComponent(bridge)}/apple-home/room-map`,
+          base + "/room-map",
           {
             method: "PUT",
             body: JSON.stringify({
@@ -4047,7 +4050,7 @@
       }
       if (appleAccessoryMapDirty()) {
         await api(
-          `/api/bridges/${encodeURIComponent(bridge)}/apple-home/accessory-map`,
+          base + "/accessory-map",
           {
             method: "PUT",
             body: JSON.stringify({
