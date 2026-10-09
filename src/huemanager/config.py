@@ -86,6 +86,26 @@ class ConfigStore:
             "has_token": bool(payload.get("token")),
         }
 
+    def get_apple_home_sync_source(self) -> str:
+        source = str(
+            self._read()
+            .get("apple_home", {})
+            .get("sync_source", "hue")
+        )
+        return source if source in {"hue", "home_assistant"} else "hue"
+
+    def save_apple_home_sync_source(self, source: str) -> None:
+        if source not in {"hue", "home_assistant"}:
+            raise ValueError(f"Unsupported Apple Home sync source: {source}")
+        data = self._read()
+        data.setdefault("apple_home", {})["sync_source"] = source
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        try:
+            os.chmod(self.path, 0o600)
+        except OSError:
+            pass
+
     def get_diagnostic_ignored_devices(self, bridge_name: str) -> set[str]:
         data = self._read()
         values = (
