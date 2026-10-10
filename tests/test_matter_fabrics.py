@@ -184,6 +184,7 @@ def test_get_homekit_state_reports_pairing(monkeypatch: pytest.MonkeyPatch) -> N
     result = web.get_homekit_state("Bridge Pro")
 
     assert result["count"] == 1
+    assert result["available"] is True
     assert result["resources"][0] == {
         "id": homekit_id,
         "type": "homekit",
@@ -229,6 +230,7 @@ def test_homekit_503_is_unconfigured_not_an_error(monkeypatch: pytest.MonkeyPatc
     assert web.get_homekit_state("Bridge Pro") == {
         "bridge": "Bridge Pro",
         "count": 0,
+        "available": False,
         "resources": [],
     }
 
