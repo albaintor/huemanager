@@ -929,6 +929,8 @@
       "apple.previewDone": "Prévisualisation mise à jour. Aucun changement n’a encore été enregistré.",
       "apple.planDone": "Analyse Hue ↔ Apple Maison terminée.",
       "apple.savedDone": "Correspondances de pièces Apple Maison enregistrées.",
+      "apple.movesPending": "Des déplacements sont prêts dans les pièces cochées. Enregistre la configuration, puis ouvre HueManager Home Sync sur l’iPhone/iPad, relance l’analyse et utilise « Appliquer les déplacements ».",
+      "apple.savedWithMoves": "Configuration enregistrée. Les déplacements restent à appliquer dans HueManager Home Sync : relance l’analyse, puis utilise « Appliquer les déplacements ».",
       "apple.noInventoryHelp": "Aucun inventaire Apple Maison reçu. Ouvre HueManager Home Sync sur l’iPhone/iPad puis publie l’inventaire.",
       "apple.actions": "Déplacements proposés",
       "apple.noGlobalMove": "Aucun déplacement HomeKit nécessaire avec les correspondances affichées.",
@@ -1162,6 +1164,8 @@
       "apple.previewDone": "Preview updated. No change has been saved yet.",
       "apple.planDone": "Hue ↔ Apple Home analysis completed.",
       "apple.savedDone": "Apple Home room mappings saved.",
+      "apple.movesPending": "Moves are ready in the checked rooms. Save the configuration, then open HueManager Home Sync on your iPhone/iPad, analyze again and use “Apply moves”.",
+      "apple.savedWithMoves": "Configuration saved. Moves still need to be applied in HueManager Home Sync: analyze again, then use “Apply moves”.",
       "apple.noInventoryHelp": "No Apple Home inventory received. Open HueManager Home Sync on the iPhone/iPad and publish the inventory.",
       "apple.actions": "Proposed moves",
       "apple.noGlobalMove": "No HomeKit move is required with the displayed mappings.",
@@ -3615,7 +3619,8 @@
       !hasPlan ||
       (!appleRoomMapDirty() &&
        !appleRoomSelectionDirty() &&
-       !appleAccessoryMapDirty());
+       !appleAccessoryMapDirty() &&
+       selectedAppleMoves(state.appleHomePlan).length === 0);
   }
 
   function initializeAppleRoomDraft(plan) {
@@ -4136,7 +4141,9 @@
       ? t("apple.accessoryDraft")
       : (appleRoomSelectionDirty()
           ? t("apple.selectionDraft")
-          : (appleRoomMapDirty() ? t("apple.previewDraft") : t("apple.saved")));
+          : (appleRoomMapDirty()
+              ? t("apple.previewDraft")
+              : (selectedMoves.length ? t("apple.movesPending") : t("apple.saved"))));
     movesRoot.append(note);
 
     const movesTitle = document.createElement("h3");
@@ -4213,8 +4220,12 @@
     const inventory = state.appleHome?.inventory;
     const base = appleSourcePlanBase();
     if (!inventory?.home?.id || !base) return;
+    const hasSelectedMoves = selectedAppleMoves(state.appleHomePlan || {}).length > 0;
     try {
-      if (appleRoomMapDirty()) {
+      // Persist the effective targets and checked rooms even when automatic
+      // matching already found the same saved configuration. Pending HomeKit
+      // moves are real work for the companion, not a configuration diff.
+      if (appleRoomMapDirty() || hasSelectedMoves) {
         await api(
           base + "/room-map",
           {
@@ -4238,14 +4249,18 @@
           },
         );
       }
-      if (appleRoomSelectionDirty()) {
+      if (appleRoomSelectionDirty() || hasSelectedMoves) {
         await persistAppleRoomSelection();
       }
 
       const plan = await api(base + "/plan");
       renderAppleHomePlan(plan, { resetDraft: true });
       updateAppleSaveState();
-      status(t("apple.savedDone"), "good");
+      const movesPending = selectedAppleMoves(plan).length > 0;
+      status(
+        t(movesPending ? "apple.savedWithMoves" : "apple.savedDone"),
+        movesPending ? "warn" : "good"
+      );
     } catch (e) {
       status(e.message, "bad");
     }
