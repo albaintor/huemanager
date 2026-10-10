@@ -1079,6 +1079,12 @@ def _homekit_summary(resource: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _homekit_service_unavailable(exc: Exception) -> bool:
+    return isinstance(exc, HueApiError) and str(exc).startswith(
+        "Hue API 503 GET /homekit"
+    )
+
+
 @app.get("/api/bridges/{bridge_name}/homekit")
 def get_homekit_state(bridge_name: str) -> dict:
     try:
@@ -1090,8 +1096,18 @@ def get_homekit_state(bridge_name: str) -> dict:
         return {
             "bridge": bridge_name,
             "count": len(rows),
+            "available": True,
             "resources": [_homekit_summary(row) for row in rows],
         }
+    except HueApiError as exc:
+        if _homekit_service_unavailable(exc):
+            return {
+                "bridge": bridge_name,
+                "count": 0,
+                "available": False,
+                "resources": [],
+            }
+        raise _api_error(exc) from exc
     except Exception as exc:
         raise _api_error(exc) from exc
 
