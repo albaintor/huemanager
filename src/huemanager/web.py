@@ -1090,13 +1090,14 @@ def get_homekit_state(bridge_name: str) -> dict:
         return {
             "bridge": bridge_name,
             "count": len(rows),
+            "available": True,
             "resources": [_homekit_summary(row) for row in rows],
         }
     except HueApiError as exc:
         # Hue returns 503 when the native HomeKit resource is not configured.
         # Only this specific GET is optional; other API errors must remain visible.
         if str(exc).startswith("Hue API 503 GET /homekit"):
-            return {"bridge": bridge_name, "count": 0, "resources": []}
+            return {"bridge": bridge_name, "count": 0, "available": False, "resources": []}
         raise _api_error(exc) from exc
     except Exception as exc:
         raise _api_error(exc) from exc
