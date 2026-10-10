@@ -124,8 +124,18 @@
     .room-impact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
     .room-impact-column { border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--panel); }
     .room-impact-column h4 { margin: 0 0 8px; font-size: 14px; }
-    .room-impact-device { padding: 7px 0; border-top: 1px solid var(--border); }
+    .room-impact-device { display:grid; grid-template-columns:minmax(0, 1fr) 160px; gap:12px; padding:12px 8px; border-top:1px solid var(--border); align-items:start; }
     .room-impact-device:first-of-type { border-top: 0; }
+    .room-impact-device:nth-of-type(even) { background:var(--panel-2); }
+    .room-impact-content { min-width:0; overflow-wrap:anywhere; }
+    .room-impact-content > strong { display:block; margin-bottom:4px; }
+    .room-impact-content select { width:100%; min-width:0; }
+    .room-impact-badges { display:flex; flex-direction:column; align-items:flex-end; gap:6px; min-width:0; }
+    .room-impact-badges .pill { text-align:right; max-width:100%; overflow-wrap:anywhere; }
+    .apple-device-filters { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:12px 0; }
+    .apple-device-filters button[aria-pressed="true"] { border-color:var(--accent); background:rgba(122,162,255,.15); }
+    .apple-device-filters button[aria-pressed="false"] { color:var(--muted); }
+    @media (max-width:600px) { .room-impact-device { grid-template-columns:minmax(0,1fr) 120px; gap:8px; } }
     .room-impact-actions { margin-top: 10px; padding: 10px; border-left: 3px solid var(--accent); background: rgba(122, 162, 255, .08); }
     .room-impact-actions.warn { border-left-color: var(--warn); background: rgba(241, 189, 99, .08); }
     .draft-note { margin-top: 10px; padding: 9px 11px; border: 1px dashed var(--warn); border-radius: 8px; color: var(--warn); }
@@ -881,6 +891,14 @@
       "apple.identitySerial": "Séries Hue/HomeKit",
       "apple.identityAnchors": "Paires de contrôle",
       "apple.save": "Enregistrer la configuration",
+      "apple.filterTitle": "Afficher les accessoires",
+      "apple.filter.already_correct": "Déjà dans la bonne pièce",
+      "apple.filter.unmatched_accessory": "Non reconnus",
+      "apple.filter.ambiguous_accessory": "Correspondances ambiguës",
+      "apple.filterHelp": "Les boutons activés affichent ces catégories. Les filtres masquent uniquement les lignes : ils ne changent ni la sélection des pièces ni les déplacements à appliquer.",
+      "apple.filteredEmpty": "Aucun accessoire visible avec ces filtres.",
+      "apple.status.move": "À déplacer",
+      "apple.status.missing_home_room": "Pièce cible à choisir",
       "apple.apply": "Enregistrer et appliquer dans Maison",
       "apple.buttonHelp": "Relire récupère le dernier inventaire reçu, sans interroger Apple Maison. Analyser et Diagnostiquer ne déplacent rien. Mémoriser enregistre les identifiants sûrs. Enregistrer conserve les associations et les pièces cochées, sans déplacement. Enregistrer et appliquer demande à iOS de déplacer les accessoires sélectionnés : garde le compagnon ouvert sur la même maison, la même source et, pour Hue, le même pont. Les doublons non résolus ne sont jamais déplacés. La demande expire après 10 minutes sans prise en charge.",
       "apple.request.pending": "Demande en attente : ouvre le compagnon iOS sur la même maison, source et pont.",
@@ -1125,6 +1143,14 @@
       "apple.identitySerial": "Hue/HomeKit serials",
       "apple.identityAnchors": "Control pairs",
       "apple.save": "Save configuration",
+      "apple.filterTitle": "Show accessories",
+      "apple.filter.already_correct": "Already in the right room",
+      "apple.filter.unmatched_accessory": "Unrecognized",
+      "apple.filter.ambiguous_accessory": "Ambiguous matches",
+      "apple.filterHelp": "Active buttons show these categories. Filters only hide rows: they do not change room selection or moves to apply.",
+      "apple.filteredEmpty": "No accessories visible with these filters.",
+      "apple.status.move": "To move",
+      "apple.status.missing_home_room": "Choose target room",
       "apple.apply": "Save and apply in Apple Home",
       "apple.buttonHelp": "Reload fetches the last received inventory, not live Apple Home data. Analyze and Diagnose do not move devices. Remember saves safe identifiers. Save stores mappings and checked rooms without moving devices. Save and apply asks iOS to move selected accessories: keep the companion open with the same home, source and (for Hue) bridge. Unresolved duplicates are never moved. Unclaimed requests expire after 10 minutes.",
       "apple.request.pending": "Waiting: open the iOS companion with the same home, source and bridge.",
@@ -1197,6 +1223,10 @@
       "apple.accessories": "accessories"
     }
   };
+  function loadAppleDeviceFilters() {
+    try { return JSON.parse(localStorage.getItem("huemanager.appleDeviceFilters") || "{}") || {}; }
+    catch { return {}; }
+  }
   const initialLanguage = localStorage.getItem("huemanager.language")
     || (navigator.language?.toLowerCase().startsWith("en") ? "en" : "fr");
 
@@ -1233,6 +1263,7 @@
     appleHomePlan: null,
     appleIdentityDiagnostics: null,
     appleSelectedRoomIds: new Set(),
+    appleDeviceFilters: loadAppleDeviceFilters(),
     appleSelectedRoomSavedIds: new Set(),
     appleSelectionInitialized: false,
     appleRoomDraft: {},
@@ -3716,12 +3747,33 @@
       });
   }
 
+  function appleDeviceVisible(device) {
+    return state.appleDeviceFilters[device.status] !== false;
+  }
+
+  function appleAccessoryStatus(accessory) {
+    const devices = (state.appleHomePlan?.rooms || []).flatMap(room => room.hue_devices || []);
+    const matched = devices.find(device => device.apple_accessory_id === accessory.id ||
+      (accessory.matched_hue_device_id && device.id === accessory.matched_hue_device_id));
+    if (matched) return matched.status;
+    return devices.some(device => device.status === "ambiguous_accessory" &&
+      (device.candidates || []).some(candidate => candidate.id === accessory.id))
+      ? "ambiguous_accessory" : "unmatched_accessory";
+  }
+
+  function appendDeviceBadge(root, label, cls = "") {
+    const badge = document.createElement("span");
+    badge.className = `pill ${cls}`.trim();
+    badge.textContent = label;
+    root.append(badge);
+  }
+
   function renderHueRoomDevices(room, root) {
-    const devices = room.hue_devices || [];
+    const devices = (room.hue_devices || []).filter(appleDeviceVisible);
     if (!devices.length) {
       const empty = document.createElement("p");
       empty.className = "muted";
-      empty.textContent = isHomeAssistantAppleSource()
+      empty.textContent = (room.hue_devices || []).length ? t("apple.filteredEmpty") : isHomeAssistantAppleSource()
         ? "Aucun appareil Home Assistant dans cette zone."
         : t("apple.noHueDevice");
       root.append(empty);
@@ -3731,14 +3783,19 @@
     for (const device of devices) {
       const item = document.createElement("div");
       item.className = "room-impact-device";
+      item.dataset.status = device.status;
+      const content = document.createElement("div");
+      content.className = "room-impact-content";
+      const badges = document.createElement("div");
+      badges.className = "room-impact-badges";
       const name = document.createElement("strong");
       name.textContent = device.name || device.id || "?";
-      item.append(name);
+      content.append(name);
+      const statusLabel = ["already_correct", "unmatched_accessory", "ambiguous_accessory"].includes(device.status)
+        ? t("apple.filter." + device.status) : t("apple.status." + device.status);
+      appendDeviceBadge(badges, statusLabel, device.status === "already_correct" ? "good" : "warn");
       if (device.device_type) {
-        const type = document.createElement("div");
-        type.className = "muted";
-        type.textContent = t("apple.type." + device.device_type);
-        item.append(type);
+        appendDeviceBadge(badges, t("apple.type." + device.device_type));
       }
 
       const detail = document.createElement("div");
@@ -3757,8 +3814,7 @@
       } else if (device.status === "already_correct") {
         detail.innerHTML =
           `Apple: <strong>${escapeHtml(device.apple_accessory_name)}</strong> · ` +
-          `${escapeHtml(device.apple_current_room_name || room.apple_room_name || "?")} · ` +
-          `<span class="pill good">${escapeHtml(t("apple.alreadyCorrect"))}</span>`;
+          `${escapeHtml(device.apple_current_room_name || room.apple_room_name || "?")}`;
       } else {
         detail.innerHTML =
           `Apple: <strong>${escapeHtml(device.apple_accessory_name)}</strong> · ` +
@@ -3785,9 +3841,9 @@
         ) {
           identity.textContent = t("apple.nameFallback");
         }
-        if (identity.textContent) item.append(identity);
+        if (identity.textContent) appendDeviceBadge(badges, identity.textContent);
       }
-      item.append(detail);
+      content.append(detail);
 
       const manualLabel = document.createElement("label");
       manualLabel.textContent = t("apple.manualAccessory");
@@ -3824,7 +3880,8 @@
         }
         previewAppleRoomDraft();
       });
-      item.append(manualLabel, manualSelect);
+      content.append(manualLabel, manualSelect);
+      item.append(content, badges);
       root.append(item);
     }
   }
@@ -3832,14 +3889,18 @@
   function renderAppleAccessory(accessory, root, { showOrigin = false } = {}) {
     const item = document.createElement("div");
     item.className = "room-impact-device";
+    const content = document.createElement("div");
+    content.className = "room-impact-content";
+    const badges = document.createElement("div");
+    badges.className = "room-impact-badges";
+    if (accessory.device_type) appendDeviceBadge(badges, t("apple.type." + accessory.device_type));
     const name = document.createElement("strong");
     name.textContent = accessory.name || accessory.id || "?";
-    item.append(name);
+    content.append(name);
 
     const detail = document.createElement("div");
     detail.className = "muted";
     const lines = [];
-    if (accessory.device_type) lines.push(t("apple.type." + accessory.device_type));
     if (accessory.matched_hue_device_name) {
       lines.push(`↔ ${appleSourceLabel()}: ${accessory.matched_hue_device_name}`);
     } else if (accessory.origin === "hue") {
@@ -3858,7 +3919,8 @@
       );
     }
     detail.textContent = lines.join(" · ") || t("apple.unmatched");
-    item.append(detail);
+    content.append(detail);
+    item.append(content, badges);
     root.append(item);
   }
 
@@ -3883,13 +3945,14 @@
         : !(accessory.origin === "hue" || accessory.matched_hue_device_id)
     );
 
-    if (!hueAccessories.length) {
+    const visibleAccessories = hueAccessories.filter(accessory => appleDeviceVisible({status: appleAccessoryStatus(accessory)}));
+    if (!visibleAccessories.length) {
       const empty = document.createElement("p");
       empty.className = "muted";
-      empty.textContent = t("apple.noHomeAccessory");
+      empty.textContent = hueAccessories.length ? t("apple.filteredEmpty") : t("apple.noHomeAccessory");
       root.append(empty);
     } else {
-      for (const accessory of hueAccessories) {
+      for (const accessory of visibleAccessories) {
         renderAppleAccessory(accessory, root);
       }
     }
@@ -4079,6 +4142,31 @@
     selectionToolbar.append(selectionLabel, selectAll, selectNone, selectionCount);
     mappingRoot.append(selectionToolbar);
 
+    const filters = document.createElement("div");
+    filters.className = "apple-device-filters";
+    filters.setAttribute("role", "group");
+    filters.setAttribute("aria-label", t("apple.filterTitle"));
+    const filterLabel = document.createElement("strong");
+    filterLabel.textContent = t("apple.filterTitle");
+    filters.append(filterLabel);
+    for (const category of ["already_correct", "unmatched_accessory", "ambiguous_accessory"]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.filter = category;
+      button.setAttribute("aria-pressed", String(state.appleDeviceFilters[category] !== false));
+      button.textContent = t("apple.filter." + category);
+      button.addEventListener("click", () => {
+        state.appleDeviceFilters[category] = state.appleDeviceFilters[category] === false;
+        localStorage.setItem("huemanager.appleDeviceFilters", JSON.stringify(state.appleDeviceFilters));
+        renderAppleHomePlan(plan);
+      });
+      filters.append(button);
+    }
+    const filterHelp = document.createElement("p");
+    filterHelp.className = "muted";
+    filterHelp.textContent = t("apple.filterHelp");
+    mappingRoot.append(filters, filterHelp);
+
     const appleRooms = state.appleHome?.inventory?.rooms || [];
     for (const room of plan.rooms || []) {
       const card = document.createElement("div");
@@ -4182,12 +4270,23 @@
     } else {
       for (const move of selectedMoves) {
         const item = document.createElement("div");
-        item.className = "dependency";
-        item.innerHTML =
+        item.className = "dependency room-impact-device";
+        const content = document.createElement("div");
+        content.className = "room-impact-content";
+        content.innerHTML =
           `<strong>${escapeHtml(move.accessory_name)}</strong> — ` +
           `${escapeHtml(move.from_room_name || "Sans pièce")} → ` +
-          `<strong>${escapeHtml(move.to_room_name)}</strong> ` +
-          `<span class="pill">${escapeHtml(move.match_method)}</span>`;
+          `${escapeHtml(move.to_room_name)}`;
+        const badges = document.createElement("div");
+        badges.className = "room-impact-badges";
+        const methodLabels = {
+          name_type: "apple.nameTypeFallback", name_model: "apple.nameModelFallback",
+          manual_accessory: "apple.manualAssociation", identifier: "apple.identityVerified",
+          serial: "apple.identityVerified", name: "apple.nameFallback",
+        };
+        appendDeviceBadge(badges, methodLabels[move.match_method]
+          ? t(methodLabels[move.match_method]) : move.match_method);
+        item.append(content, badges);
         movesRoot.append(item);
       }
     }
