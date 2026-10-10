@@ -91,6 +91,9 @@
       line-height: 1.35;
     }
     .pill { display: inline-block; padding: 2px 7px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+    .update-pill { display:inline-flex; flex-wrap:wrap; align-items:baseline; gap:5px; padding:4px 10px; color:var(--text); }
+    .update-pill-label { color:var(--muted); font-weight:500; }
+    .update-pill-value { color:var(--accent); font-weight:650; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
     .pill.warn { border-color: var(--warn); color: var(--warn); } .pill.good { border-color: var(--good); color: var(--good); }
     .dependency { border-left: 3px solid var(--warn); padding: 9px 11px; background: var(--panel-2); margin: 8px 0; border-radius: 0 8px 8px 0; }
     .apple-room-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin: 12px 0; background: var(--panel-2); }
@@ -1135,6 +1138,7 @@
     softwareUpdate: null,
     matterFabrics: null,
     homeKitState: null,
+    lastManagementBridge: localStorage.getItem("huemanager.managementBridge") || "",
     appleHome: null,
     appleAudit: null,
     appleSyncSource: localStorage.getItem("huemanager.appleSyncSource") || "hue",
@@ -1262,7 +1266,12 @@
         option.textContent = `${bridge.name} — ${bridge.host}`;
         select.append(option);
       }
-      if ([...select.options].some(o => o.value === current)) select.value = current;
+      const preferred = id === "managementBridge" ? (current || state.lastManagementBridge) : current;
+      if ([...select.options].some(o => o.value === preferred)) select.value = preferred;
+      if (id === "managementBridge" && select.value) {
+        state.lastManagementBridge = select.value;
+        localStorage.setItem("huemanager.managementBridge", select.value);
+      }
     }
     if (state.bridges.length > 1 && $("sourceBridge").value === $("destinationBridge").value) {
       $("destinationBridge").selectedIndex = 1;
@@ -1606,8 +1615,14 @@
     root.replaceChildren();
     function field(key, value, cssClass) {
       const pill = document.createElement("span");
-      pill.className = "pill" + (cssClass ? " " + cssClass : "");
-      pill.textContent = t(key) + " : " + (value == null || value === "" ? t("updates.unknown") : String(value));
+      pill.className = "pill update-pill" + (cssClass ? " " + cssClass : "");
+      const label = document.createElement("span");
+      label.className = "update-pill-label";
+      label.textContent = t(key) + " :";
+      const content = document.createElement("span");
+      content.className = "update-pill-value";
+      content.textContent = value == null || value === "" ? t("updates.unknown") : String(value);
+      pill.append(label, content);
       root.append(pill);
     }
     field("updates.installed", bridge.software_version);
@@ -1759,6 +1774,7 @@
       const data = await api(
         `/api/bridges/${encodeURIComponent(bridge)}/homekit`
       );
+      if ($("managementBridge").value !== bridge) return;
       renderHomeKitState(data);
     } finally {
       $("refreshHomeKit").disabled = false;
@@ -4857,6 +4873,8 @@
   });
 
   $("managementBridge").addEventListener("change", () => {
+    state.lastManagementBridge = $("managementBridge").value;
+    localStorage.setItem("huemanager.managementBridge", state.lastManagementBridge);
     stopMonitorPolling();
     stopServiceMonitorPolling();
     state.softwareUpdate = null;
