@@ -6,6 +6,7 @@ import pytest
 from fastapi import HTTPException
 
 from huemanager import web
+from huemanager.client import HueApiError
 
 
 class FakeHueClient:
@@ -166,6 +167,31 @@ def test_reset_matter_feature_uses_matter_reset_action(
 
 
 
+def test_get_homekit_state_treats_503_as_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class UnconfiguredHomeKitClient:
+        def v2_get(
+            self,
+            resource_type: str,
+            resource_id: str | None = None,
+        ) -> list[dict]:
+            assert resource_type == "homekit"
+            assert resource_id is None
+            raise HueApiError("Hue API 503 GET /homekit: Service Unavailable")
+
+    monkeypatch.setattr(web, "_client", lambda _: UnconfiguredHomeKitClient())
+
+    result = web.get_homekit_state("Bridge Pro")
+
+    assert result == {
+        "bridge": "Bridge Pro",
+        "count": 0,
+        "available": False,
+        "resources": [],
+    }
+
+
 def test_get_homekit_state_reports_pairing(monkeypatch: pytest.MonkeyPatch) -> None:
     homekit_id = str(uuid.uuid4())
     client = FakeHueClient(
@@ -184,6 +210,7 @@ def test_get_homekit_state_reports_pairing(monkeypatch: pytest.MonkeyPatch) -> N
     result = web.get_homekit_state("Bridge Pro")
 
     assert result["count"] == 1
+    assert result["available"] is True
     assert result["resources"][0] == {
         "id": homekit_id,
         "type": "homekit",
