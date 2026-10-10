@@ -16,6 +16,7 @@ struct ContentView: View {
                 proposedMovesSection
             }
             .navigationTitle("HueManager Home Sync")
+            .disabled(model.webApplyRunning || model.planApplying || model.planLoading || model.automaticSyncRunning)
         }
     }
 
@@ -78,13 +79,19 @@ struct ContentView: View {
                     Task { await model.loadBridges() }
                 }
             } else {
-                Picker("Bridge Hue", selection: bridgeSelection) {
+                Picker("Pont utilisé pour la synchronisation", selection: bridgeSelection) {
                     ForEach(model.bridges) { bridge in
                         Text("\(bridge.name) · \(bridge.host)")
                             .tag(bridge.name)
                     }
                 }
             }
+
+            Text(NSLocalizedString(model.usesHomeAssistantSource
+                 ? "La source Home Assistant utilise ses zones et appareils. Aucun pont Hue sélectionné n’intervient."
+                 : "Le pont sélectionné est utilisé par Analyser, Appliquer, le mode automatique, les demandes web et la réassociation. Il ne filtre pas l’inventaire Apple publié et ne sert pas au test de connexion HueManager.", comment: "Selected source scope"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             if model.homes.isEmpty {
                 LabeledContent("Maison Apple") {
@@ -144,6 +151,9 @@ struct ContentView: View {
                 }
             }
             .disabled(model.connectionTesting)
+            Text("Actualiser et publier relit toute la maison Apple sélectionnée puis l’envoie au web, sans déplacement. Tester HueManager vérifie le serveur, pas le pont Hue.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             LabeledContent("Connexion HueManager", value: model.connectionStatus)
         }
@@ -243,6 +253,9 @@ struct ContentView: View {
                 model.homes.isEmpty ||
                 (!model.usesHomeAssistantSource && model.bridges.isEmpty)
             )
+            Text("Analyser publie un inventaire frais puis compare la maison à la source sélectionnée (et au pont sélectionné pour Hue). Aucun accessoire n’est déplacé.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             Button("Appliquer les déplacements") {
                 Task { await model.applyPlan() }
@@ -252,6 +265,13 @@ struct ContentView: View {
                 model.homes.isEmpty ||
                 model.pendingMoves == 0
             )
+            Text("Appliquer déplace réellement les accessoires du plan dans Apple Maison, uniquement pour les pièces cochées. Publier l’inventaire ne déplace rien.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Text("Depuis le web, Enregistrer conserve la configuration. Enregistrer et appliquer déclenche les déplacements ici : garde cette app ouverte avec la même maison, source et pont. Les demandes sont vérifiées toutes les 5 secondes ; le mode automatique n’a pas besoin d’être activé.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             Toggle("Synchronisation automatique sûre", isOn: $model.automaticSyncEnabled)
 
@@ -299,6 +319,9 @@ struct ContentView: View {
 
     private var reassociationSection: some View {
         Section("Réassociation Apple Home") {
+            Text("Ces trois boutons utilisent le pont Hue et la maison Apple sélectionnés. Sauvegarder mémorise les pièces actuelles, Analyser prépare la restauration sans déplacer, Restaurer effectue les déplacements HomeKit.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Text(
                 "À utiliser avant de supprimer puis recréer la liaison Apple du Bridge. " +
                 "HueManager sauvegarde les associations accessoire/pièce sans dépendre " +

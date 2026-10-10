@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
+from . import apple_home_commands
 from .apple_audit import build_apple_home_multi_bridge_audit
 from .apple_home import (
     build_apple_home_identity_diagnostics,
@@ -188,6 +189,19 @@ class AppleHomeSyncResultRequest(BaseModel):
     bridge_profile: str
     moved: int = 0
     failed: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class AppleHomeApplyRequest(BaseModel):
+    home_id: str = Field(min_length=1)
+    bridge_profile: str = Field(min_length=1)
+    actions: list[dict[str, str]] = Field(min_length=1, max_length=500)
+
+
+class AppleHomeApplyStatusRequest(BaseModel):
+    home_id: str
+    bridge_profile: str
+    status: str = Field(pattern=r"^(running|completed|failed|cancelled)$")
+    message: str = Field(default="", max_length=2000)
 
 
 def _store() -> ConfigStore:
@@ -726,6 +740,61 @@ def update_apple_home_sync_result(request: AppleHomeSyncResultRequest) -> dict:
         return {"ok": True, "last_sync": state.get("last_sync")}
     except Exception as exc:
         raise _api_error(exc) from exc
+
+
+def _apply_request_path() -> Path:
+    return _store().path.parent / "apple-home-apply-request.json"
+
+
+@app.get("/api/apple-home/apply-request")
+def get_apple_home_apply_request() -> dict:
+    with apple_home_commands.LOCK:
+        return {"request": apple_home_commands.read_request(_apply_request_path())}
+
+
+@app.post("/api/apple-home/apply-request")
+def request_apple_home_apply(request: AppleHomeApplyRequest) -> dict:
+    inventory = (_load_apple_home().get("inventory") or {})
+    if (inventory.get("home") or {}).get("id") != request.home_id:
+        raise HTTPException(409, "Apple Home changed; analyze again.")
+    plan = (
+        home_assistant_apple_home_plan()
+        if request.bridge_profile == HOME_ASSISTANT_SCOPE
+        else apple_home_plan(request.bridge_profile)
+    )
+    selected = set(plan["selected_hue_room_ids"])
+    actions = [
+        {"accessory_id": action["accessory_id"], "to_room_id": action["to_room_id"]}
+        for action in plan["actions"]
+        if action.get("hue_room_id") in selected
+    ]
+
+    def action_key(action):
+        return (action.get("accessory_id", ""), action.get("to_room_id", ""))
+
+    if not actions or sorted(actions, key=action_key) != sorted(request.actions, key=action_key):
+        raise HTTPException(409, "Selected moves changed; analyze and review again.")
+    try:
+        return {
+            "request": apple_home_commands.enqueue(
+                _apply_request_path(), request.home_id, request.bridge_profile, actions
+            )
+        }
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@app.post("/api/apple-home/apply-request/{request_id}")
+def update_apple_home_apply_request(request_id: str, request: AppleHomeApplyStatusRequest) -> dict:
+    try:
+        return {
+            "request": apple_home_commands.transition(
+                _apply_request_path(), request_id, request.home_id, request.bridge_profile,
+                request.status, request.message
+            )
+        }
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @app.get("/api/bridges/{bridge_name}/apple-home/identity-diagnostics")

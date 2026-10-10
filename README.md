@@ -403,6 +403,30 @@ pas dans le Bridge Hue. Le serveur HueManager calcule donc les correspondances e
 tandis que l'application compagnon `ios/HueManagerHomeSync`, autorisée HomeKit sur iPhone/iPad,
 lit et modifie la base Maison.
 
+Les boutons ont des effets distincts :
+
+| Interface | Bouton | Effet |
+| --- | --- | --- |
+| Web | Relire l’inventaire reçu | Charge le dernier inventaire publié, pas une lecture directe de Maison. |
+| Web | Analyser / Diagnostiquer | Calcule le plan / inspecte les identifiants, sans déplacement. |
+| Web | Mémoriser les correspondances sûres | Enregistre les associations d’identifiants, sans déplacement. |
+| Web | Enregistrer la configuration | Enregistre les associations et les pièces cochées, sans déplacement. |
+| Web | Enregistrer et appliquer dans Maison | Enregistre puis demande à iOS d’exécuter exactement les déplacements sélectionnés et affichés. |
+| iOS | Publier / Actualiser et publier | Envoie l’inventaire de toute la maison Apple sélectionnée, quel que soit le pont Hue. |
+| iOS | Analyser et afficher le détail | Publie un inventaire frais et prépare le plan de la source sélectionnée ; pour Hue, utilise le pont sélectionné. |
+| iOS | Appliquer les déplacements | Modifie réellement Maison pour les déplacements du plan dans les pièces cochées. |
+| iOS | Tester HueManager | Teste le serveur, indépendamment du pont sélectionné. |
+| iOS | Sauvegarder / Analyser la restauration / Restaurer | Utilise le pont et la maison sélectionnés ; seul Restaurer déplace des accessoires. |
+
+Pour appliquer depuis le web, **mets à jour le serveur et le compagnon iOS**, puis garde
+le compagnon ouvert sur la même maison, source et pont que le web. Home Assistant ignore
+la sélection du pont Hue. Le compagnon vérifie les demandes toutes les 5 secondes, même
+si le mode automatique est désactivé. Une demande non prise en charge expire après
+10 minutes. Une seule demande peut être en attente ou en cours. Le plan est revérifié
+avec un inventaire frais ; s’il a changé, la demande échoue sans appliquer un autre plan.
+Les demandes prises en charge ne sont pas rejouées automatiquement après une interruption.
+Le web affiche l’attente, l’exécution puis le résultat, sans prétendre accéder directement à HomeKit.
+
 Le matching des pièces est volontairement heuristique mais conservateur :
 
 - égalité après normalisation des accents, espaces et casse ;

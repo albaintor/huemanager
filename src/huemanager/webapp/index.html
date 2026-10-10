@@ -688,7 +688,10 @@
           <button id="learnAppleIdentity" disabled data-i18n="apple.identityLearn">Mémoriser les correspondances sûres</button>
           <button id="copyAppleIdentity" disabled data-i18n="apple.identityCopy">Copier le diagnostic</button>
           <button id="saveAppleRoomMap" disabled data-i18n="apple.save">Enregistrer la configuration</button>
+          <button id="applyAppleMoves" class="primary" disabled data-i18n="apple.apply">Enregistrer et appliquer dans Maison</button>
         </div>
+        <p class="muted" data-i18n="apple.buttonHelp"></p>
+        <div id="appleApplyStatus" class="muted" role="status"></div>
         <div id="appleHomeStatus" class="muted" style="margin-top:10px">
           <span data-i18n="apple.noInventory">Aucun inventaire Apple Maison reçu.</span>
         </div>
@@ -878,6 +881,14 @@
       "apple.identitySerial": "Séries Hue/HomeKit",
       "apple.identityAnchors": "Paires de contrôle",
       "apple.save": "Enregistrer la configuration",
+      "apple.apply": "Enregistrer et appliquer dans Maison",
+      "apple.buttonHelp": "Relire récupère le dernier inventaire reçu, sans interroger Apple Maison. Analyser et Diagnostiquer ne déplacent rien. Mémoriser enregistre les identifiants sûrs. Enregistrer conserve les associations et les pièces cochées, sans déplacement. Enregistrer et appliquer demande à iOS de déplacer les accessoires sélectionnés : garde le compagnon ouvert sur la même maison, la même source et, pour Hue, le même pont. Les doublons non résolus ne sont jamais déplacés. La demande expire après 10 minutes sans prise en charge.",
+      "apple.request.pending": "Demande en attente : ouvre le compagnon iOS sur la même maison, source et pont.",
+      "apple.request.running": "Le compagnon iOS applique les déplacements dans Apple Maison…",
+      "apple.request.completed": "Demande terminée : déplacements appliqués par iOS. Relis l’inventaire et analyse à nouveau.",
+      "apple.request.failed": "Échec de la demande : consulte le détail dans le compagnon iOS.",
+      "apple.request.expired": "Demande expirée sans exécution. Ouvre le compagnon iOS, puis relance.",
+      "apple.request.cancelled": "Demande annulée.",
       "apple.selectionSaved": "Sélection des pièces enregistrée",
       "apple.selectionDraft": "Sélection des pièces modifiée — enregistre la configuration",
       "apple.noInventory": "Aucun inventaire Apple Maison reçu.",
@@ -929,8 +940,9 @@
       "apple.previewDone": "Prévisualisation mise à jour. Aucun changement n’a encore été enregistré.",
       "apple.planDone": "Analyse Hue ↔ Apple Maison terminée.",
       "apple.savedDone": "Correspondances de pièces Apple Maison enregistrées.",
-      "apple.movesPending": "Des déplacements sont prêts dans les pièces cochées. Enregistre la configuration, puis ouvre HueManager Home Sync sur l’iPhone/iPad, relance l’analyse et utilise « Appliquer les déplacements ».",
-      "apple.savedWithMoves": "Configuration enregistrée. Les déplacements restent à appliquer dans HueManager Home Sync : relance l’analyse, puis utilise « Appliquer les déplacements ».",
+      "apple.movesPending": "Des déplacements sont prêts dans les pièces cochées. Utilise « Enregistrer et appliquer dans Maison » avec le compagnon iOS ouvert, ou applique le plan manuellement dans l’app.",
+      "apple.savedWithMoves": "Configuration enregistrée, sans déplacement. Les déplacements restent à appliquer : utilise « Enregistrer et appliquer dans Maison » ou le bouton Appliquer dans l’app iOS.",
+      "apple.planChanged": "Le plan a changé pendant l’enregistrement. Vérifie les déplacements affichés puis relance l’application.",
       "apple.noInventoryHelp": "Aucun inventaire Apple Maison reçu. Ouvre HueManager Home Sync sur l’iPhone/iPad puis publie l’inventaire.",
       "apple.actions": "Déplacements proposés",
       "apple.noGlobalMove": "Aucun déplacement HomeKit nécessaire avec les correspondances affichées.",
@@ -1113,6 +1125,14 @@
       "apple.identitySerial": "Hue/HomeKit serials",
       "apple.identityAnchors": "Control pairs",
       "apple.save": "Save configuration",
+      "apple.apply": "Save and apply in Apple Home",
+      "apple.buttonHelp": "Reload fetches the last received inventory, not live Apple Home data. Analyze and Diagnose do not move devices. Remember saves safe identifiers. Save stores mappings and checked rooms without moving devices. Save and apply asks iOS to move selected accessories: keep the companion open with the same home, source and (for Hue) bridge. Unresolved duplicates are never moved. Unclaimed requests expire after 10 minutes.",
+      "apple.request.pending": "Waiting: open the iOS companion with the same home, source and bridge.",
+      "apple.request.running": "The iOS companion is applying moves in Apple Home…",
+      "apple.request.completed": "Request completed by iOS. Reload inventory and analyze again.",
+      "apple.request.failed": "Request failed: check the iOS companion for details.",
+      "apple.request.expired": "Request expired without execution. Open the iOS companion and retry.",
+      "apple.request.cancelled": "Request cancelled.",
       "apple.selectionSaved": "Room selection saved",
       "apple.selectionDraft": "Room selection changed — save the configuration",
       "apple.noInventory": "No Apple Home inventory received.",
@@ -1164,8 +1184,9 @@
       "apple.previewDone": "Preview updated. No change has been saved yet.",
       "apple.planDone": "Hue ↔ Apple Home analysis completed.",
       "apple.savedDone": "Apple Home room mappings saved.",
-      "apple.movesPending": "Moves are ready in the checked rooms. Save the configuration, then open HueManager Home Sync on your iPhone/iPad, analyze again and use “Apply moves”.",
-      "apple.savedWithMoves": "Configuration saved. Moves still need to be applied in HueManager Home Sync: analyze again, then use “Apply moves”.",
+      "apple.movesPending": "Moves are ready in the checked rooms. Use Save and apply in Apple Home with the iOS companion open, or apply the plan manually in the app.",
+      "apple.savedWithMoves": "Configuration saved without moving devices. Moves still need to be applied: use Save and apply in Apple Home or Apply in the iOS app.",
+      "apple.planChanged": "The plan changed while saving. Review the displayed moves and try applying again.",
       "apple.noInventoryHelp": "No Apple Home inventory received. Open HueManager Home Sync on the iPhone/iPad and publish the inventory.",
       "apple.actions": "Proposed moves",
       "apple.noGlobalMove": "No HomeKit move is required with the displayed mappings.",
@@ -3309,6 +3330,7 @@
       $("learnAppleIdentity").disabled = true;
       $("copyAppleIdentity").disabled = true;
       $("saveAppleRoomMap").disabled = true;
+      $("applyAppleMoves").disabled = true;
       return;
     }
     const home = inventory.home || {};
@@ -3485,6 +3507,7 @@
     $("appleIdentityResult").classList.add("hidden");
     $("appleHomeRoomMap").replaceChildren();
     $("appleHomeMoves").replaceChildren();
+    updateAppleSaveState();
   }
 
   function updateAppleSourceUi() {
@@ -3615,6 +3638,7 @@
 
   function updateAppleSaveState() {
     const hasPlan = (state.appleHomePlan?.rooms || []).length > 0;
+    $("applyAppleMoves").disabled = !hasPlan || selectedAppleMoves(state.appleHomePlan).length === 0;
     $("saveAppleRoomMap").disabled =
       !hasPlan ||
       (!appleRoomMapDirty() &&
@@ -4261,9 +4285,61 @@
         t(movesPending ? "apple.savedWithMoves" : "apple.savedDone"),
         movesPending ? "warn" : "good"
       );
+      return plan;
     } catch (e) {
       status(e.message, "bad");
+      throw e;
     }
+  }
+
+  let appleRequestPoll;
+  async function applyAppleMoves() {
+    $("applyAppleMoves").disabled = true;
+    try {
+      const homeId = state.appleHome.inventory.home.id;
+      const base = appleSourcePlanBase();
+      const scope = state.appleSyncSource === "home_assistant"
+        ? "__home_assistant__" : $("managementBridge").value;
+      const reviewed = selectedAppleMoves(state.appleHomePlan).map(move => ({
+        accessory_id: move.accessory_id, to_room_id: move.to_room_id,
+      }));
+      const plan = await saveAppleRoomMap();
+      const actions = selectedAppleMoves(plan).map(move => ({
+        accessory_id: move.accessory_id, to_room_id: move.to_room_id,
+      }));
+      if (!actions.length) return;
+      if (homeId !== state.appleHome?.inventory?.home?.id || base !== appleSourcePlanBase() ||
+          JSON.stringify([...reviewed].sort((a, b) => a.accessory_id.localeCompare(b.accessory_id))) !==
+          JSON.stringify([...actions].sort((a, b) => a.accessory_id.localeCompare(b.accessory_id)))) {
+        throw new Error(t("apple.planChanged"));
+      }
+      const result = await api("/api/apple-home/apply-request", {
+        method: "POST",
+        body: JSON.stringify({
+          home_id: homeId,
+          bridge_profile: scope,
+          actions,
+        }),
+      });
+      clearInterval(appleRequestPoll);
+      const requestId = result.request.id;
+      const showRequest = request => {
+        $("appleApplyStatus").textContent = t("apple.request." + request.status);
+        if (request.status === "failed" && request.message) {
+          $("appleApplyStatus").textContent += " " + request.message;
+        }
+        if (!["pending", "running"].includes(request.status)) clearInterval(appleRequestPoll);
+      };
+      showRequest(result.request);
+      appleRequestPoll = setInterval(async () => {
+        try {
+          const result = await api("/api/apple-home/apply-request");
+          if (result.request?.id === requestId) showRequest(result.request);
+          else clearInterval(appleRequestPoll);
+        } catch (e) { $("appleApplyStatus").textContent = e.message; }
+      }, 3000);
+    } catch (e) { status(e.message, "bad"); }
+    finally { updateAppleSaveState(); }
   }
 
   $("languageSelect").addEventListener("change", () => {
@@ -4966,7 +5042,8 @@
   $("copyAppleIdentity").addEventListener("click", () => {
     copyAppleIdentityDiagnostics().catch(e => status(e.message, "bad"));
   });
-  $("saveAppleRoomMap").addEventListener("click", saveAppleRoomMap);
+  $("saveAppleRoomMap").addEventListener("click", () => saveAppleRoomMap().catch(() => {}));
+  $("applyAppleMoves").addEventListener("click", applyAppleMoves);
 
   $("refreshSoftwareUpdate").addEventListener("click", () => {
     loadSoftwareUpdate().catch(e => status(e.message, "bad"));

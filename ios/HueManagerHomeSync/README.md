@@ -42,6 +42,17 @@ In the app enter:
 
 Use **Tester HueManager** before running the first analysis.
 
+The selected bridge scopes Hue analysis, moves, automatic synchronization, web apply
+requests and reassociation. It does not filter the published Apple Home inventory or
+affect the server connection test. Home Assistant mode ignores the Hue bridge selection.
+
+Web **Save configuration** only stores mappings and checked rooms. **Save and apply in
+Apple Home** queues the reviewed moves for this app. Update both server and app and keep
+the app in the foreground with the same source, bridge and Apple Home. Requests are
+checked every 5 seconds regardless of automatic sync, expire after 10 minutes if not
+claimed, and are rejected if a fresh inventory produces different moves. Only one request
+may be pending or running; claimed requests are never replayed automatically after an interruption.
+
 The URL, bridge profile, selected Home and automatic-sync option are stored in iOS
 `UserDefaults`.
 

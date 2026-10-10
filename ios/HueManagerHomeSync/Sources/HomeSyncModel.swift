@@ -411,6 +411,31 @@ private struct InventoryPublishResponse: Codable {
 
 private struct EmptyRequest: Codable {}
 
+private struct WebApplyAction: Codable {
+    let accessory_id: String
+    let to_room_id: String
+    var key: String { accessory_id + ":" + to_room_id }
+}
+
+private struct WebApplyRequest: Codable {
+    let id: String
+    let home_id: String
+    let bridge_profile: String
+    let status: String
+    let actions: [WebApplyAction]
+}
+
+private struct WebApplyResponse: Codable {
+    let request: WebApplyRequest?
+}
+
+private struct WebApplyStatus: Codable {
+    let home_id: String
+    let bridge_profile: String
+    let status: String
+    let message: String
+}
+
 private struct ReassociationBackupResponse: Codable {
     let ok: Bool
     let createdAt: String?
@@ -552,6 +577,11 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
 
     private var homeManager: HMHomeManager?
     private var automaticTimer: Timer?
+    private var webRequestTimer: Timer?
+    private var webRequestChecking = false
+    @Published var webApplyRunning = false
+    @Published var planApplying = false
+    @Published var planLoading = false
     @Published private(set) var automaticSyncRunning = false
     private var loadingSyncSource = false
     private var activeServerRequests = 0
@@ -751,6 +781,9 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         updateBackgroundRefreshStatus()
         startHomeKitIfNeeded()
         configureAutomaticSync()
+        webRequestTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.processWebApplyRequest() }
+        }
 
         if !serverURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             Task {
@@ -939,6 +972,9 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     private func automaticSyncCycle() async {
         guard automaticSyncEnabled,
               !automaticSyncRunning,
+              !webApplyRunning,
+              !planApplying,
+              !planLoading,
               !accessoryMappingSaving,
               !homes.isEmpty,
               !serverURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -1571,6 +1607,9 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     }
 
     func applyReassociationPlan() async {
+        guard !planApplying else { return }
+        planApplying = true
+        defer { planApplying = false }
         guard let home = selectedHome else {
             status = "Sélectionne une maison Apple."
             hasError = true
@@ -1648,6 +1687,9 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     }
 
     func loadPlan() async {
+        guard !planLoading else { return }
+        planLoading = true
+        defer { planLoading = false }
         if !usesHomeAssistantSource &&
             bridgeProfile.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             status = "Indique le nom du profil Bridge HueManager."
@@ -1769,6 +1811,9 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     }
 
     func applyPlan() async {
+        guard !planApplying else { return }
+        planApplying = true
+        defer { planApplying = false }
         guard let home = selectedHome else {
             status = "Sélectionne une maison Apple."
             hasError = true
@@ -1844,6 +1889,63 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         } catch {
             status = error.localizedDescription
             hasError = true
+        }
+    }
+
+    private var syncScope: String {
+        usesHomeAssistantSource ? "__home_assistant__" : bridgeProfile
+    }
+
+    private func reportWebRequest(_ request: WebApplyRequest, status: String, message: String) async throws {
+        _ = try await send(
+            path: "/api/apple-home/apply-request/\(request.id)", method: "POST",
+            body: WebApplyStatus(home_id: request.home_id, bridge_profile: request.bridge_profile,
+                                 status: status, message: message)
+        )
+    }
+
+    func processWebApplyRequest() async {
+        // Never initialize or operate HomeKit from a background launch.
+        guard UIApplication.shared.applicationState == .active, homeKitLoaded,
+              selectedHome != nil, !serverURL.isEmpty, !syncScope.isEmpty,
+              !webRequestChecking, !webApplyRunning, !planApplying, !planLoading, !automaticSyncRunning,
+              !inventoryPublishing, !accessoryMappingSaving else { return }
+        webRequestChecking = true
+        defer { webRequestChecking = false; webApplyRunning = false }
+        var claimed: WebApplyRequest?
+        do {
+            let response = try JSONDecoder().decode(
+                WebApplyResponse.self, from: await get(path: "/api/apple-home/apply-request")
+            )
+            guard let request = response.request, request.status == "pending",
+                  request.home_id == selectedHome?.uniqueIdentifier.uuidString,
+                  request.bridge_profile == syncScope,
+                  !automaticSyncRunning, !planApplying, !planLoading,
+                  UIApplication.shared.applicationState == .active else { return }
+            webApplyRunning = true
+            try await reportWebRequest(request, status: "running", message: "Claimed by iOS")
+            claimed = request
+            await loadPlan()
+            // A request authorizes exactly the reviewed snapshot, not a newer plan.
+            guard !hasError,
+                  UIApplication.shared.applicationState == .active,
+                  request.home_id == selectedHome?.uniqueIdentifier.uuidString,
+                  request.bridge_profile == syncScope,
+                  selectedMoves.count == request.actions.count,
+                  Set(selectedMoves.map(\.id)) == Set(request.actions.map(\.key)) else {
+                throw NSError(domain: "HueManager", code: 409, userInfo: [
+                    NSLocalizedDescriptionKey: NSLocalizedString("Le plan ou le contexte a changé. Garde l’app ouverte et analyse à nouveau depuis le web avant d’appliquer.", comment: "Web request rejected")
+                ])
+            }
+            await applyPlan()
+            try await reportWebRequest(request, status: hasError ? "failed" : "completed", message: status)
+        } catch {
+            if let request = claimed {
+                status = error.localizedDescription
+                hasError = true
+                try? await reportWebRequest(request, status: "failed", message: status)
+            }
+            // No queued command / older server: polling must not replace the UI status.
         }
     }
 }
