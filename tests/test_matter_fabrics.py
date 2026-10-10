@@ -216,3 +216,32 @@ def test_reset_homekit_feature_uses_homekit_reset_action(
     ]
     assert result["before"]["status"] == "paired"
     assert client.homekits[0]["status"] == "unpaired"
+
+def test_homekit_503_is_unconfigured_not_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    from huemanager.client import HueApiError
+
+    class UnconfiguredClient:
+        def v2_get(self, resource_type: str) -> list[dict]:
+            raise HueApiError("Hue API 503 GET /homekit: Service Unavailable")
+
+    monkeypatch.setattr(web, "_client", lambda _: UnconfiguredClient())
+
+    assert web.get_homekit_state("Bridge Pro") == {
+        "bridge": "Bridge Pro",
+        "count": 0,
+        "resources": [],
+    }
+
+
+def test_homekit_other_api_errors_are_not_hidden(monkeypatch: pytest.MonkeyPatch) -> None:
+    from huemanager.client import HueApiError
+
+    class FailingClient:
+        def v2_get(self, resource_type: str) -> list[dict]:
+            raise HueApiError("Hue API 401 GET /homekit: unauthorized")
+
+    monkeypatch.setattr(web, "_client", lambda _: FailingClient())
+
+    with pytest.raises(HTTPException) as exc_info:
+        web.get_homekit_state("Bridge Pro")
+    assert exc_info.value.status_code == 502
