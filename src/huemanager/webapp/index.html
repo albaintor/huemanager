@@ -731,6 +731,7 @@
       "homekit.description": "Vérifie séparément la ressource HomeKit/HAP du Bridge. Elle peut rester appairée même lorsque la liaison Matter Apple a été supprimée.",
       "homekit.refresh": "Relire HomeKit",
       "homekit.reset": "Réinitialiser HomeKit",
+      "homekit.notConfigured": "HomeKit n’est pas configuré sur ce Bridge.",
       "diagnostics.title": "Diagnostic réseau Hue",
       "diagnostics.description": "Diagnostic en lecture seule : état Zigbee exposé par le Bridge, ressources injoignables, temps de réponse des API locales et estimation de coexistence avec le Wi-Fi 2,4 GHz.",
       "diagnostics.wifiChannel": "Canal Wi-Fi 2,4 GHz",
@@ -946,6 +947,7 @@
       "homekit.description": "Checks the Bridge HomeKit/HAP resource separately. It can remain paired even after the Apple Matter link was removed.",
       "homekit.refresh": "Reload HomeKit",
       "homekit.reset": "Reset HomeKit",
+      "homekit.notConfigured": "HomeKit is not configured on this Bridge.",
       "diagnostics.title": "Hue network diagnostics",
       "diagnostics.description": "Read-only diagnostics: Zigbee state exposed by the Bridge, unreachable resources, local API response times and estimated coexistence with 2.4 GHz Wi-Fi.",
       "diagnostics.wifiChannel": "2.4 GHz Wi-Fi channel",
@@ -1754,6 +1756,11 @@
   function renderHomeKitState(data) {
     state.homeKitState = data;
     const resources = data?.resources || [];
+    if (data?.available === false) {
+      $("homeKitStatus").textContent = t("homekit.notConfigured");
+      $("resetHomeKit").disabled = true;
+      return;
+    }
     if (!resources.length) {
       $("homeKitStatus").textContent = "Aucune ressource HomeKit exposée par ce Bridge.";
       $("resetHomeKit").disabled = true;
