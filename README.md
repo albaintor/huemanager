@@ -76,9 +76,10 @@ ne divulguent pas les clés et utilisateurs enregistrés dans la configuration d
 Bridge. Si le firmware n'expose pas `swupdate2`, aucune commande de mise à jour
 n'est proposée.
 
-## Diagnostics réseau / Zigbee
+## Diagnostic et surveillance réseau / Zigbee
 
-L'onglet **Gestion** contient un diagnostic en lecture seule pour distinguer un problème de
+L'onglet **Diagnostic** regroupe l'audit des incohérences et le nettoyage, les associations
+Matter, l'état HomeKit, ainsi que le diagnostic en lecture seule pour distinguer un problème de
 Bridge/API d'un problème de maillage Zigbee visible par les API publiques. Le rapport inclut :
 
 - le canal Zigbee réellement renvoyé par le Bridge et sa fréquence IEEE 802.15.4 lorsqu'il est
@@ -371,9 +372,9 @@ HueManager does not invoke Philips' proprietary Bridge-to-Bridge migration servi
 Hue devices still have to join the destination Zigbee network before the logical restore can
 complete.
 
-## Gestion et audit du Bridge
+## Diagnostic et audit du Bridge
 
-L'onglet **Gestion** analyse un Bridge sans le modifier et détecte notamment les pièces vides,
+L'onglet **Diagnostic** analyse le Bridge sélectionné sans le modifier et détecte notamment les pièces vides,
 les règles sans action, les références v1/v2 cassées, les scènes vides/orphelines, les schedules
 et resource links incohérents ainsi que les automations v2 qui ciblent des ressources absentes.
 
@@ -389,10 +390,13 @@ elle est ignorée plutôt que supprimée sur la base d'un état devenu obsolète
 
 
 
-## Apple Maison : synchronisation des pièces Hue
+## Apple Maison : synchronisation des pièces
 
 HueManager 0.7 ajoute un planificateur de correspondance entre les pièces du Bridge Hue et les
 pièces Apple Maison.
+
+L'onglet **Synchronisation** permet de choisir Philips Hue ou Home Assistant comme source de
+référence ; le logo de la source sélectionnée est affiché à côté du sélecteur.
 
 L'affectation d'un accessoire à une pièce Apple est stockée dans la base HomeKit du compte Apple,
 pas dans le Bridge Hue. Le serveur HueManager calcule donc les correspondances et les actions,
@@ -406,7 +410,7 @@ Le matching des pièces est volontairement heuristique mais conservateur :
   Salle de bain/SDB/Bathroom, Entrée/Hallway ;
 - noms partiels comme `Chambre Louis` et `Louis` ;
 - score de similarité avec détection des ambiguïtés ;
-- correspondance manuelle persistante disponible depuis l'onglet Gestion.
+- correspondance manuelle persistante disponible depuis l'onglet Synchronisation.
 
 Les accessoires sont appariés en priorité avec les identifiants disponibles (numéro de série/MAC
 lorsqu'ils correspondent), puis par nom normalisé et enfin par similarité de nom avec seuil élevé.
