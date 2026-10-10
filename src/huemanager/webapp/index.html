@@ -91,7 +91,10 @@
       line-height: 1.35;
     }
     .pill { display: inline-block; padding: 2px 7px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+    .pill .pill-label { color: var(--muted); }
+    .pill .pill-value { color: var(--accent); font-weight: 650; }
     .pill.warn { border-color: var(--warn); color: var(--warn); } .pill.good { border-color: var(--good); color: var(--good); }
+    .pill.warn .pill-value { color: var(--warn); } .pill.good .pill-value { color: var(--good); }
     .dependency { border-left: 3px solid var(--warn); padding: 9px 11px; background: var(--panel-2); margin: 8px 0; border-radius: 0 8px 8px 0; }
     .apple-room-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin: 12px 0; background: var(--panel-2); }
     .apple-room-card.not-selected { opacity: .55; }
@@ -728,6 +731,7 @@
       "homekit.description": "Vérifie séparément la ressource HomeKit/HAP du Bridge. Elle peut rester appairée même lorsque la liaison Matter Apple a été supprimée.",
       "homekit.refresh": "Relire HomeKit",
       "homekit.reset": "Réinitialiser HomeKit",
+      "homekit.notConfigured": "HomeKit n’est pas configuré sur ce Bridge.",
       "diagnostics.title": "Diagnostic réseau Hue",
       "diagnostics.description": "Diagnostic en lecture seule : état Zigbee exposé par le Bridge, ressources injoignables, temps de réponse des API locales et estimation de coexistence avec le Wi-Fi 2,4 GHz.",
       "diagnostics.wifiChannel": "Canal Wi-Fi 2,4 GHz",
@@ -943,6 +947,7 @@
       "homekit.description": "Checks the Bridge HomeKit/HAP resource separately. It can remain paired even after the Apple Matter link was removed.",
       "homekit.refresh": "Reload HomeKit",
       "homekit.reset": "Reset HomeKit",
+      "homekit.notConfigured": "HomeKit is not configured on this Bridge.",
       "diagnostics.title": "Hue network diagnostics",
       "diagnostics.description": "Read-only diagnostics: Zigbee state exposed by the Bridge, unreachable resources, local API response times and estimated coexistence with 2.4 GHz Wi-Fi.",
       "diagnostics.wifiChannel": "2.4 GHz Wi-Fi channel",
@@ -1110,6 +1115,7 @@
   };
   const initialLanguage = localStorage.getItem("huemanager.language")
     || (navigator.language?.toLowerCase().startsWith("en") ? "en" : "fr");
+  const MANAGEMENT_BRIDGE_STORAGE_KEY = "huemanager.managementBridge";
 
   const state = {
     bridges: [],
@@ -1252,9 +1258,10 @@
   async function loadBridges() {
     const data = await api("/api/bridges");
     state.bridges = data.bridges || [];
+    const rememberedManagementBridge = localStorage.getItem(MANAGEMENT_BRIDGE_STORAGE_KEY) || "";
     for (const id of ["sourceBridge", "destinationBridge", "managementBridge"]) {
       const select = $(id);
-      const current = select.value;
+      const current = select.value || (id === "managementBridge" ? rememberedManagementBridge : "");
       select.replaceChildren();
       for (const bridge of state.bridges) {
         const option = document.createElement("option");
@@ -1266,6 +1273,11 @@
     }
     if (state.bridges.length > 1 && $("sourceBridge").value === $("destinationBridge").value) {
       $("destinationBridge").selectedIndex = 1;
+    }
+    if ($("managementBridge").value) {
+      localStorage.setItem(MANAGEMENT_BRIDGE_STORAGE_KEY, $("managementBridge").value);
+    } else {
+      localStorage.removeItem(MANAGEMENT_BRIDGE_STORAGE_KEY);
     }
     const ready = state.bridges.length > 0;
     $("refreshTree").disabled = !ready;
@@ -1607,7 +1619,17 @@
     function field(key, value, cssClass) {
       const pill = document.createElement("span");
       pill.className = "pill" + (cssClass ? " " + cssClass : "");
-      pill.textContent = t(key) + " : " + (value == null || value === "" ? t("updates.unknown") : String(value));
+
+      const label = document.createElement("span");
+      label.className = "pill-label";
+      label.textContent = t(key) + " : ";
+
+      const displayedValue = document.createElement("span");
+      displayedValue.className = "pill-value";
+      displayedValue.textContent =
+        value == null || value === "" ? t("updates.unknown") : String(value);
+
+      pill.append(label, displayedValue);
       root.append(pill);
     }
     field("updates.installed", bridge.software_version);
@@ -1739,6 +1761,11 @@
   function renderHomeKitState(data) {
     state.homeKitState = data;
     const resources = data?.resources || [];
+    if (data?.available === false) {
+      $("homeKitStatus").textContent = t("homekit.notConfigured");
+      $("resetHomeKit").disabled = true;
+      return;
+    }
     if (!resources.length) {
       $("homeKitStatus").textContent = "Aucune ressource HomeKit exposée par ce Bridge.";
       $("resetHomeKit").disabled = true;
@@ -4857,6 +4884,12 @@
   });
 
   $("managementBridge").addEventListener("change", () => {
+    const selectedBridge = $("managementBridge").value;
+    if (selectedBridge) {
+      localStorage.setItem(MANAGEMENT_BRIDGE_STORAGE_KEY, selectedBridge);
+    } else {
+      localStorage.removeItem(MANAGEMENT_BRIDGE_STORAGE_KEY);
+    }
     stopMonitorPolling();
     stopServiceMonitorPolling();
     state.softwareUpdate = null;
