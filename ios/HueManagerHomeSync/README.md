@@ -45,6 +45,19 @@ Use **Tester HueManager** before running the first analysis.
 The URL, bridge profile, selected Home and automatic-sync option are stored in iOS
 `UserDefaults`.
 
+## Restore room assignments after a reset
+
+Publish a fresh Apple Home inventory, then analyze the synchronization plan. HueManager first
+uses saved manual associations and shared identifiers, then a unique normalized name + device
+type pair. Types come from Hue and HomeKit services, even when the manufacturer or model is
+reported as `Unknown`. Matching searches across rooms, so accessories in the default room or
+another incorrect room can be moved back. Stale Apple UUIDs do not block matching after re-pairing.
+
+Duplicate names and types require a choice in **Association Apple manuelle**, available in both
+the web interface and the iOS room details. The choices include the room, type and Apple identifier.
+iOS saves the choice immediately and refreshes the plan; the web interface saves it with the
+configuration. Review the proposed moves before applying them.
+
 ## Safe automatic mode
 
 Automatic mode only applies a plan when every relevant accessory and room is unambiguous and

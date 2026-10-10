@@ -575,9 +575,37 @@ struct ContentView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             } else {
-                Text("Aucune correspondance trouvée dans Apple Maison")
+                if device.status == "ambiguous_accessory" {
+                    Text("Plusieurs correspondances possibles : choisis l’accessoire Apple à associer.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                } else {
+                    Text("Aucune correspondance trouvée dans Apple Maison")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if device.matchMethod == "name_type" {
+                Text("Correspondance par nom + type d’appareil")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+            let candidates = model.manualCandidates(for: device)
+            if !candidates.isEmpty {
+                Picker("Association Apple manuelle", selection: Binding(
+                    get: { model.accessoryMappings[device.id] ?? "" },
+                    set: { accessoryID in
+                        Task { await model.associateAccessory(accessoryID, with: device.id) }
+                    }
+                )) {
+                    Text("Correspondance automatique").tag("")
+                    ForEach(candidates) { candidate in
+                        Text(candidate.choiceLabel).tag(candidate.id)
+                    }
+                }
+                .disabled(
+                    model.accessoryMappingSaving || model.inventoryPublishing || model.automaticSyncRunning
+                )
             }
         }
     }

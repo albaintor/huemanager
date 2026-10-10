@@ -1007,6 +1007,7 @@ def test_apple_home_includes_third_party_accessory_when_exposed_by_hue_bridge():
                     {
                         "id": "hue-innr",
                         "name": "Lampe canapé",
+                        "services": [{"type": "light"}],
                         "identifiers": {
                             "zigbee_macs": [],
                             "v1_uniqueids": [],
@@ -1025,6 +1026,7 @@ def test_apple_home_includes_third_party_accessory_when_exposed_by_hue_bridge():
                 "id": "innr",
                 "name": "Lampe canapé",
                 "manufacturer": "Innr Lighting BV",
+                "service_types": ["light"],
                 "model": "RB 285 C",
                 "serial_number": None,
                 "is_bridged": True,
@@ -1064,6 +1066,7 @@ def test_apple_home_matching_never_reuses_the_same_apple_accessory():
                     {
                         "id": "hue-1",
                         "name": "Sous-sol principal bureau",
+                        "services": [{"type": "light"}],
                         "identifiers": {
                             "zigbee_macs": [],
                             "v1_uniqueids": [],
@@ -1073,6 +1076,7 @@ def test_apple_home_matching_never_reuses_the_same_apple_accessory():
                     {
                         "id": "hue-2",
                         "name": "Sous-sol principal bureau",
+                        "services": [{"type": "light"}],
                         "identifiers": {
                             "zigbee_macs": [],
                             "v1_uniqueids": [],
@@ -1091,6 +1095,7 @@ def test_apple_home_matching_never_reuses_the_same_apple_accessory():
                 "id": "apple-bureau",
                 "name": "Sous-sol principal bureau",
                 "manufacturer": "Signify Netherlands B.V.",
+                "service_types": ["light"],
                 "model": "Hue light",
                 "serial_number": None,
                 "room_id": "apple-room",
@@ -1108,11 +1113,12 @@ def test_apple_home_matching_never_reuses_the_same_apple_accessory():
     matched = [
         row for row in plan["devices"] if row.get("apple_accessory_id") == "apple-bureau"
     ]
-    assert len(matched) == 1
-    assert plan["summary"]["unmatched_accessories"] == 1
+    assert matched == []
+    assert plan["summary"]["ambiguous_accessories"] == 2
+    assert plan["actions"] == []
 
 
-def test_apple_home_accessory_matching_prefers_serial_then_fuzzy_name():
+def test_apple_home_accessory_matching_prefers_serial_then_name_and_type():
     hue_tree = {
         "rooms": [
             {
@@ -1131,6 +1137,7 @@ def test_apple_home_accessory_matching_prefers_serial_then_fuzzy_name():
                     {
                         "id": "hue-device-2",
                         "name": "Plafonnier salon",
+                        "services": [{"type": "light"}],
                         "identifiers": {
                             "zigbee_macs": [],
                             "v1_uniqueids": [],
@@ -1154,7 +1161,8 @@ def test_apple_home_accessory_matching_prefers_serial_then_fuzzy_name():
             },
             {
                 "id": "apple-2",
-                "name": "Plafonnier du salon",
+                "name": "Plafonnier salon",
+                "service_types": ["light"],
                 "serial_number": None,
                 "room_id": "other",
                 "room_name": "Autre",
@@ -1173,7 +1181,7 @@ def test_apple_home_accessory_matching_prefers_serial_then_fuzzy_name():
 
     methods = {row["hue_device_id"]: row["match_method"] for row in plan["devices"]}
     assert methods["hue-device-1"] == "serial"
-    assert methods["hue-device-2"].startswith("heuristic:")
+    assert methods["hue-device-2"] == "name_type"
     assert plan["summary"]["moves"] == 2
 
     room = plan["rooms"][0]

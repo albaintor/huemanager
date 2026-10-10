@@ -898,9 +898,23 @@
       "apple.noHomeAccessory": "Aucun accessoire actuellement dans cette pièce Apple.",
       "apple.noSelectedRoom": "Aucune pièce Apple sélectionnée.",
       "apple.unmatched": "Aucune correspondance Apple trouvée",
-      "apple.identifierUnmatched": "Aucune correspondance par identifiant commun Apple/Hue trouvée",
+      "apple.identifierUnmatched": "Aucun identifiant commun Apple/Hue ni correspondance unique par nom + type trouvé",
       "apple.identityVerified": "identifiant commun vérifié",
       "apple.nameFallback": "correspondance de secours par nom",
+      "apple.nameTypeFallback": "correspondance par nom + type d’appareil",
+      "apple.nameModelFallback": "correspondance par nom + modèle",
+      "apple.ambiguousAccessory": "Plusieurs correspondances possibles : choisis l’accessoire Apple à associer.",
+      "apple.automaticAccessory": "— correspondance automatique —",
+      "apple.type.light": "Lampe",
+      "apple.type.outlet": "Prise",
+      "apple.type.motion": "Détecteur de mouvement",
+      "apple.type.occupancy": "Détecteur de présence",
+      "apple.type.contact": "Capteur d’ouverture",
+      "apple.type.button": "Bouton / télécommande",
+      "apple.type.switch": "Interrupteur",
+      "apple.type.temperature": "Capteur de température",
+      "apple.type.light_level": "Capteur de luminosité",
+      "apple.type.unknown": "Type inconnu",
       "apple.manualAccessory": "Association Apple manuelle",
       "apple.manualAccessoryNone": "— aucune association manuelle —",
       "apple.manualAssociation": "association manuelle persistante",
@@ -1117,6 +1131,23 @@
       "apple.noHomeAccessory": "No accessory currently in this Apple Home room.",
       "apple.noSelectedRoom": "No Apple Home room selected.",
       "apple.unmatched": "No Apple Home match found",
+      "apple.identifierUnmatched": "No shared Apple/Hue identifier or unique name + device type match found",
+      "apple.identityVerified": "shared identifier verified",
+      "apple.nameFallback": "matched by name",
+      "apple.nameTypeFallback": "matched by name + device type",
+      "apple.nameModelFallback": "matched by name + model",
+      "apple.ambiguousAccessory": "Several matches are possible: choose the Apple accessory to associate.",
+      "apple.automaticAccessory": "— automatic matching —",
+      "apple.type.light": "Light",
+      "apple.type.outlet": "Outlet",
+      "apple.type.motion": "Motion sensor",
+      "apple.type.occupancy": "Occupancy sensor",
+      "apple.type.contact": "Contact sensor",
+      "apple.type.button": "Button / remote",
+      "apple.type.switch": "Switch",
+      "apple.type.temperature": "Temperature sensor",
+      "apple.type.light_level": "Light sensor",
+      "apple.type.unknown": "Unknown type",
       "apple.manualAccessory": "Manual Apple association",
       "apple.manualAccessoryNone": "— no manual association —",
       "apple.manualAssociation": "persistent manual association",
@@ -3599,12 +3630,20 @@
   }
 
   function initializeAppleAccessoryDraft(plan) {
-    state.appleAccessoryDraft = { ...(plan.accessory_map || {}) };
+    const validIds = new Set(
+      (state.appleHome?.inventory?.accessories || []).map(accessory => accessory.id)
+    );
+    state.appleAccessoryDraft = Object.fromEntries(
+      Object.entries(plan.accessory_map || {}).filter(([, id]) => validIds.has(id))
+    );
     state.appleAccessorySaved = { ...state.appleAccessoryDraft };
   }
 
   function appleAccessoryCandidatesFor(deviceId, preferredRoomId) {
-    const accessories = state.appleHome?.inventory?.accessories || [];
+    const scopedCandidates = !isHomeAssistantAppleSource()
+      ? state.appleHomePlan?.apple_accessory_candidates
+      : null;
+    const accessories = scopedCandidates || state.appleHome?.inventory?.accessories || [];
     const usedElsewhere = new Set(
       Object.entries(state.appleAccessoryDraft)
         .filter(([hueDeviceId, accessoryId]) =>
@@ -3635,7 +3674,7 @@
         accessory.id &&
         !bridgeIds.has(accessory.id) &&
         !usedElsewhere.has(accessory.id) &&
-        (isHomeAssistantAppleSource() || isHueLike(accessory))
+        (isHomeAssistantAppleSource() || scopedCandidates || isHueLike(accessory))
       )
       .sort((a, b) => {
         const aPreferred = a.room_id === preferredRoomId ? 0 : 1;
@@ -3666,13 +3705,21 @@
       const name = document.createElement("strong");
       name.textContent = device.name || device.id || "?";
       item.append(name);
+      if (device.device_type) {
+        const type = document.createElement("div");
+        type.className = "muted";
+        type.textContent = t("apple.type." + device.device_type);
+        item.append(type);
+      }
 
       const detail = document.createElement("div");
       detail.className = "muted";
       if (!device.apple_accessory_name) {
-        detail.textContent = device.match_method === "identifier_unmatched"
-          ? t("apple.identifierUnmatched")
-          : t("apple.unmatched");
+        detail.textContent = device.status === "ambiguous_accessory"
+          ? t("apple.ambiguousAccessory")
+          : device.match_method === "identifier_unmatched"
+            ? t("apple.identifierUnmatched")
+            : t("apple.unmatched");
       } else if (device.status === "move") {
         detail.innerHTML =
           `Apple: <strong>${escapeHtml(device.apple_accessory_name)}</strong> · ` +
@@ -3691,13 +3738,17 @@
       if (device.apple_accessory_name) {
         const identity = document.createElement("div");
         identity.className = "muted";
-        if (device.match_method === "serial") {
+        if (device.match_method === "serial" || device.match_method === "identifier") {
           const value = device.apple_serial_number || (device.hue_identifiers || [])[0] || "";
           identity.textContent = value
             ? `${t("apple.identityVerified")} · ${value}`
             : t("apple.identityVerified");
         } else if (device.match_method === "manual_accessory") {
           identity.textContent = t("apple.manualAssociation");
+        } else if (device.match_method === "name_type") {
+          identity.textContent = t("apple.nameTypeFallback");
+        } else if (device.match_method === "name_model") {
+          identity.textContent = t("apple.nameModelFallback");
         } else if (
           device.match_method === "name" ||
           device.match_method === "name_model" ||
@@ -3715,18 +3766,24 @@
       const manualSelect = document.createElement("select");
       const none = document.createElement("option");
       none.value = "";
-      none.textContent = t("apple.manualAccessoryNone");
+      none.textContent = t("apple.automaticAccessory");
       manualSelect.append(none);
 
       const currentManual = state.appleAccessoryDraft[device.id] || "";
       const candidates = appleAccessoryCandidatesFor(device.id, room.apple_room_id);
+      const suggestedIds = new Set((device.candidates || []).map(candidate => candidate.id));
+      candidates.sort((a, b) =>
+        Number(suggestedIds.has(b.id)) - Number(suggestedIds.has(a.id))
+      );
       for (const accessory of candidates) {
         const option = document.createElement("option");
         option.value = accessory.id;
         option.textContent =
           `${accessory.room_name || "Sans pièce"} — ${accessory.name || accessory.id}` +
+          ` · ${t("apple.type." + (accessory.device_type || "unknown"))}` +
           `${accessory.model ? " · " + accessory.model : ""}` +
-          `${accessory.serial_number ? " · SN " + accessory.serial_number : ""}`;
+          `${accessory.serial_number ? " · SN " + accessory.serial_number : ""}` +
+          ` · ID ${accessory.id}`;
         manualSelect.append(option);
       }
       manualSelect.value = currentManual;
@@ -3753,6 +3810,7 @@
     const detail = document.createElement("div");
     detail.className = "muted";
     const lines = [];
+    if (accessory.device_type) lines.push(t("apple.type." + accessory.device_type));
     if (accessory.matched_hue_device_name) {
       lines.push(`↔ ${appleSourceLabel()}: ${accessory.matched_hue_device_name}`);
     } else if (accessory.origin === "hue") {

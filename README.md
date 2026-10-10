@@ -412,8 +412,19 @@ Le matching des pièces est volontairement heuristique mais conservateur :
 - score de similarité avec détection des ambiguïtés ;
 - correspondance manuelle persistante disponible depuis l'onglet Synchronisation.
 
-Les accessoires sont appariés en priorité avec les identifiants disponibles (numéro de série/MAC
-lorsqu'ils correspondent), puis par nom normalisé et enfin par similarité de nom avec seuil élevé.
+Les accessoires sont appariés dans cet ordre : association manuelle enregistrée, identifiant
+commun effectivement exposé (numéro de série/MAC/UUID), puis nom normalisé **et type d’appareil**
+issu des services Hue/HomeKit. Le nom seul ou un nom similaire ne déclenche pas de déplacement.
+Pour les anciens inventaires sans type, un nom et un modèle produit identiques peuvent être utilisés.
+Les correspondances sont recherchées dans toutes les pièces du pont sélectionné, même si Apple
+Maison a placé les accessoires dans une mauvaise pièce après une réinitialisation. Une ancienne
+association dont l’UUID Apple n’existe plus ne bloque pas cette recherche.
+
+En cas de doublon, aucun appareil n’est choisi arbitrairement : sélectionne l’accessoire dans
+**Association Apple manuelle**, depuis le web ou le compagnon iOS. Les choix affichent le type,
+la pièce et l’identifiant Apple pour distinguer les homonymes. Enregistre la configuration dans
+le web ; le compagnon iOS enregistre directement le choix. Republie l’inventaire Maison depuis
+le compagnon après une réinitialisation, puis analyse et applique les déplacements proposés.
 
 Le compagnon iPhone/iPad dispose aussi d'un mode **Synchronisation automatique sûre**. Après
 l'autorisation HomeKit initiale, il peut republier l'inventaire et appliquer périodiquement les

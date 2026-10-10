@@ -56,13 +56,34 @@ GENERIC_DEVICE_WORDS = {
 
 HUE_ACCESSORY_HINTS = ("hue", "philips", "signify")
 UNUSABLE_SERIAL_VALUES = {"unknown", "n/a", "na", "none", "null", "-"}
-FUZZY_MATCHABLE_HUE_SERVICE_TYPES = {
-    "light",
-    "motion",
-    "temperature",
-    "light_level",
-    "contact",
+# HomeKit service UUIDs, also accepted as their short HAP representation.
+HOMEKIT_DEVICE_TYPES = {
+    "43": "light",
+    "47": "outlet",
+    "49": "switch",
+    "80": "contact",
+    "84": "light_level",
+    "85": "motion",
+    "86": "occupancy",
+    "89": "button",
+    "8a": "temperature",
 }
+DEVICE_TYPE_ALIASES = {
+    "lightbulb": "light",
+    "motionsensor": "motion",
+    "occupancysensor": "occupancy",
+    "contactsensor": "contact",
+    "lightsensor": "light_level",
+    "lightlevel": "light_level",
+    "temperaturesensor": "temperature",
+    "statelessprogrammableswitch": "button",
+    "relativerotary": "button",
+}
+# A motion detector's temperature and illuminance services are secondary.
+DEVICE_TYPE_PRIORITY = (
+    "light", "outlet", "motion", "occupancy", "contact", "button", "switch",
+    "temperature", "light_level",
+)
 
 
 def _words(value: str | None) -> list[str]:
@@ -175,7 +196,9 @@ def _normalise(value: str | None) -> str:
 
 
 def _normalise_identifier(value: str | None) -> str:
-    return re.sub(r"[^a-f0-9]+", "", (value or "").lower())
+    # Serial numbers may contain letters beyond a-f. Dropping those letters
+    # would create false identifier matches.
+    return _normalise(_usable_serial_number(value))
 
 
 def _usable_serial_number(value: str | None) -> str | None:
@@ -208,25 +231,162 @@ def _hue_identifier_candidates(device: dict) -> set[str]:
                 candidates.add(base)
 
     for field in identifiers.get("pairing_fields", []):
+        if str(field.get("field") or "").split(".")[-1].lower() not in {
+            "serial_number", "serialnumber",
+        }:
+            continue
         normalised = _normalise_identifier(str(field.get("value") or ""))
         if normalised:
             candidates.add(normalised)
 
+    # Compare UUIDs only when both sides actually expose the same UUID;
+    # never infer a relationship from an Apple AID or a bridge child index.
+    device_uuid = str(device.get("id") or "")
+    if re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", device_uuid):
+        candidates.add(_normalise_identifier(device_uuid))
     return candidates
 
 
-def _hue_device_allows_fuzzy_match(device: dict) -> bool:
-    services = device.get("services")
-    if services is None:
-        # Preserve compatibility with older/incomplete inventory payloads that
-        # predate explicit service metadata.
-        return True
-    service_types = {
-        str(service.get("type") or "")
-        for service in services
-        if service.get("type")
+def _device_type(item: dict, *, apple: bool = False) -> str | None:
+    services = (
+        item.get("service_types", []) if apple
+        else [service.get("type") for service in (item.get("services") or [])]
+    )
+    types: set[str] = set()
+    for value in services:
+        key = _normalise(str(value or ""))
+        if key.endswith("0000100080000026bb765291"):
+            key = key[:8].lstrip("0")
+        elif re.fullmatch(r"[0-9a-f]{1,8}", key):
+            key = key.lstrip("0")
+        key = HOMEKIT_DEVICE_TYPES.get(key, DEVICE_TYPE_ALIASES.get(key, key))
+        types.add(key)
+    return next((kind for kind in DEVICE_TYPE_PRIORITY if kind in types), None)
+
+
+def _apple_identifier_candidates(accessory: dict) -> set[str]:
+    candidates = {
+        _normalise_identifier(accessory.get(field))
+        for field in ("serial_number", "legacy_identifier", "id")
     }
-    return bool(service_types & FUZZY_MATCHABLE_HUE_SERVICE_TYPES)
+    serial = str(accessory.get("serial_number") or "")
+    # Hue v1 serials may include an endpoint; match the EUI-64 as well.
+    match = re.fullmatch(
+        r"((?:[0-9a-fA-F]{2}:){7}[0-9a-fA-F]{2}|[0-9a-fA-F]{16})-[0-9a-fA-F]{2}",
+        serial,
+    )
+    if match:
+        candidates.add(_normalise_identifier(match.group(1)))
+    return candidates - {""}
+
+
+def _name_match_method(device: dict, accessory: dict) -> str | None:
+    hue_type = _device_type(device)
+    apple_type = _device_type(accessory, apple=True)
+    if hue_type and apple_type:
+        return "name_type" if hue_type == apple_type else None
+    # Older inventory versions can lack service types. An actual product model
+    # is a useful fallback; a placeholder such as "Unknown" is not evidence.
+    hue_model = _normalise(_usable_serial_number(device.get("model")))
+    apple_model = _normalise(_usable_serial_number(accessory.get("model")))
+    return "name_model" if hue_model and hue_model == apple_model else None
+
+
+def _match_apple_home_accessories(
+    hue_tree: dict,
+    accessories: list[dict],
+    accessory_map: dict[str, str],
+) -> dict[str, tuple[list[dict], str | None]]:
+    """Match globally, in priority order, with uniqueness on both sides.
+
+    All rooms participate: the current Apple room is precisely what a reset
+    may have changed. Never resolve duplicate names using traversal order.
+    """
+    devices = {
+        str(device["id"]): device
+        for room in hue_tree.get("rooms", [])
+        for device in room.get("devices", [])
+        if device.get("id")
+    }
+    by_id = {str(accessory["id"]): accessory for accessory in accessories}
+    eligible = _apple_accessories_for_hue_bridge(hue_tree, accessories)
+    result: dict[str, tuple[list[dict], str | None]] = {}
+    reserved: set[str] = set()
+
+    manual_claims = Counter(
+        str(accessory_map[device_id])
+        for device_id in devices
+        if str(accessory_map.get(device_id) or "") in by_id
+    )
+    for device_id in devices:
+        accessory_id = str(accessory_map.get(device_id) or "")
+        if accessory_id not in by_id:
+            # Re-pairing recreates Apple UUIDs: a stale mapping must not block
+            # identifier/name+type matching against the fresh inventory.
+            continue
+        reserved.add(accessory_id)
+        method = "manual_accessory" if manual_claims[accessory_id] == 1 else "manual_conflict"
+        result[device_id] = ([by_id[accessory_id]], method)
+
+    def assign_unique(proposals: dict[str, tuple[list[dict], str]]) -> None:
+        claims = Counter(
+            str(accessory["id"])
+            for candidates, _ in proposals.values()
+            for accessory in candidates
+        )
+        for device_id, (candidates, method) in proposals.items():
+            if len(candidates) == 1 and claims[str(candidates[0]["id"])] == 1:
+                result[device_id] = (candidates, method)
+            else:
+                result[device_id] = (candidates, method + "_ambiguous")
+            # Even ambiguous strong identifiers cannot be stolen by a weaker
+            # name match. Let the user choose the intended pair.
+            reserved.update(str(accessory["id"]) for accessory in candidates)
+
+    identifier_proposals: dict[str, tuple[list[dict], str]] = {}
+    for device_id, device in devices.items():
+        if device_id in result:
+            continue
+        identifiers = _hue_identifier_candidates(device)
+        candidates = [
+            accessory for accessory in eligible
+            if str(accessory["id"]) not in reserved
+            and identifiers & _apple_identifier_candidates(accessory)
+        ]
+        if candidates:
+            method = "serial" if all(
+                _normalise_identifier(accessory.get("serial_number")) in identifiers
+                for accessory in candidates
+            ) else "identifier"
+            identifier_proposals[device_id] = (candidates, method)
+    assign_unique(identifier_proposals)
+
+    name_proposals: dict[str, tuple[list[dict], str]] = {}
+    for device_id, device in devices.items():
+        if device_id in result:
+            continue
+        name_key = _normalise(device.get("name"))
+        candidates = []
+        methods = []
+        for accessory in eligible:
+            if str(accessory["id"]) in reserved:
+                continue
+            if not name_key or name_key != _normalise(accessory.get("name")):
+                continue
+            method = _name_match_method(device, accessory)
+            if method:
+                candidates.append(accessory)
+                methods.append(method)
+        if candidates:
+            name_proposals[device_id] = (
+                candidates, "name_type" if "name_type" in methods else "name_model",
+            )
+        else:
+            result[device_id] = (
+                [], "identifier_unmatched" if _hue_identifier_candidates(device) else None,
+            )
+    assign_unique(name_proposals)
+    return result
 
 
 def _apple_accessories_for_hue_bridge(
@@ -257,7 +417,18 @@ def _apple_accessories_for_hue_bridge(
             if _normalise(accessory.get("bridge_model")) == model_key
         ]
         if by_model:
+            by_name = [
+                accessory for accessory in by_model
+                if name_key and _normalise(accessory.get("bridge_name")) == name_key
+            ]
+            if by_name:
+                return by_name
             return by_model
+        # A known different bridge model is not a fallback candidate.
+        hue_like = [
+            accessory for accessory in hue_like
+            if not _usable_serial_number(accessory.get("bridge_model"))
+        ]
 
     if name_key:
         by_name = [
@@ -275,6 +446,11 @@ def _apple_accessories_for_hue_bridge(
         accessory
         for accessory in accessories
         if _apple_accessory_origin(accessory) == "unknown"
+        and (
+            not model_key
+            or not _usable_serial_number(accessory.get("bridge_model"))
+            or _normalise(accessory.get("bridge_model")) == model_key
+        )
     ]
 
 
@@ -285,8 +461,8 @@ def _apple_accessory_origin(accessory: dict) -> str:
     "other" means a different manufacturer is explicitly reported.
     "unknown" keeps accessories whose origin cannot be established safely.
     """
-    manufacturer = str(accessory.get("manufacturer") or "").strip()
-    model = str(accessory.get("model") or "").strip()
+    manufacturer = _usable_serial_number(accessory.get("manufacturer")) or ""
+    model = _usable_serial_number(accessory.get("model")) or ""
     name = str(accessory.get("name") or "").strip()
     bridge_name = str(accessory.get("bridge_name") or "").strip()
     bridge_manufacturer = str(accessory.get("bridge_manufacturer") or "").strip()
@@ -1322,28 +1498,7 @@ def build_apple_home_sync_plan(
     accessories = [
         accessory for accessory in inventory.get("accessories", []) if accessory.get("id")
     ]
-    accessories_by_id = {
-        str(accessory["id"]): accessory
-        for accessory in accessories
-    }
-    candidate_accessories = _apple_accessories_for_hue_bridge(
-        hue_tree,
-        accessories,
-    )
-
-    accessories_by_serial: dict[str, list[dict]] = {}
-    for accessory in candidate_accessories:
-        serial = _normalise_identifier(
-            _usable_serial_number(accessory.get("serial_number"))
-        )
-        if serial:
-            accessories_by_serial.setdefault(serial, []).append(accessory)
-
-    accessories_by_name: dict[str, list[dict]] = {}
-    for accessory in candidate_accessories:
-        key = _normalise(accessory.get("name"))
-        if key:
-            accessories_by_name.setdefault(key, []).append(accessory)
+    accessory_matches = _match_apple_home_accessories(hue_tree, accessories, accessory_map)
 
     room_rows: list[dict] = []
     desired_room_by_hue_id: dict[str, dict] = {}
@@ -1395,12 +1550,6 @@ def build_apple_home_sync_plan(
                 "confidence": round(confidence, 3) if confidence is not None else None,
             }
 
-    hue_room_by_apple_room_id = {
-        str(apple_room.get("id")): hue_room_id
-        for hue_room_id, apple_room in desired_room_by_hue_id.items()
-        if apple_room.get("id")
-    }
-
     moves: list[dict] = []
     device_rows: list[dict] = []
     matched_apple_ids: set[str] = set()
@@ -1411,95 +1560,16 @@ def build_apple_home_sync_plan(
         for device in room.get("devices", []):
             device_id = str(device.get("id") or "")
             device_name = device.get("name") or device_id
-            candidates: list[dict] = []
-            match_method = None
             hue_identifiers = _hue_identifier_candidates(device)
-            manual_accessory_id = str(accessory_map.get(device_id) or "")
+            candidates, match_method = accessory_matches.get(device_id, ([], None))
+            ambiguous = bool(
+                match_method and (
+                    match_method.endswith("_ambiguous") or match_method == "manual_conflict"
+                )
+            )
 
-            serial_matches: dict[str, dict] = {}
-            if manual_accessory_id:
-                manual_accessory = accessories_by_id.get(manual_accessory_id)
-                if manual_accessory is None:
-                    match_method = "manual_missing"
-                elif manual_accessory_id in matched_apple_ids:
-                    match_method = "manual_conflict"
-                else:
-                    candidates = [manual_accessory]
-                    match_method = "manual_accessory"
-            else:
-                for identifier in hue_identifiers:
-                    for accessory in accessories_by_serial.get(identifier, []):
-                        accessory_id = str(accessory["id"])
-                        if accessory_id not in matched_apple_ids:
-                            serial_matches[accessory_id] = accessory
-
-            if manual_accessory_id:
-                pass
-            elif len(serial_matches) == 1:
-                candidates = list(serial_matches.values())
-                match_method = "serial"
-            elif not serial_matches and hue_identifiers:
-                # A real Hue identifier exists but Apple Home did not expose a
-                # matching serial number. Do not guess by name: renamed or
-                # similarly named accessories can otherwise be moved incorrectly.
-                candidates = []
-                match_method = "identifier_unmatched"
-            elif not serial_matches:
-                name_matches = []
-                for accessory in accessories_by_name.get(_normalise(device_name), []):
-                    accessory_id = str(accessory.get("id"))
-                    if accessory_id in matched_apple_ids:
-                        continue
-                    current_apple_room_id = str(accessory.get("room_id") or "")
-                    owner_hue_room_id = hue_room_by_apple_room_id.get(
-                        current_apple_room_id
-                    )
-                    if owner_hue_room_id and owner_hue_room_id != hue_room_id:
-                        continue
-                    name_matches.append(accessory)
-                if len(name_matches) == 1:
-                    candidates = name_matches
-                    match_method = "name"
-                elif len(name_matches) > 1:
-                    candidates = name_matches
-                    match_method = "name_ambiguous"
-                elif _hue_device_allows_fuzzy_match(device):
-                    fuzzy_candidates = []
-                    for accessory in candidate_accessories:
-                        accessory_id = str(accessory.get("id"))
-                        if accessory_id in matched_apple_ids:
-                            continue
-                        current_apple_room_id = str(accessory.get("room_id") or "")
-                        owner_hue_room_id = hue_room_by_apple_room_id.get(current_apple_room_id)
-                        if owner_hue_room_id and owner_hue_room_id != hue_room_id:
-                            # A fuzzy fallback must never steal an accessory from
-                            # another Apple room that already maps to a different
-                            # Hue room. Exact serial/name matching may still move it.
-                            continue
-                        fuzzy_candidates.append(accessory)
-
-                    fuzzy, fuzzy_score, fuzzy_suggestions = _best_fuzzy_match(
-                        device_name,
-                        fuzzy_candidates,
-                        threshold=0.90,
-                        ambiguity_gap=0.12,
-                        ignore_generic_device_words=True,
-                    )
-                    if fuzzy:
-                        candidates = [fuzzy]
-                        match_method = f"heuristic:{fuzzy_score:.2f}"
-                    elif fuzzy_suggestions:
-                        candidates = []
-                        match_method = "heuristic_unmatched"
-                else:
-                    candidates = []
-                    match_method = "unsupported_fuzzy_match"
-            else:
-                candidates = list(serial_matches.values())
-                match_method = "serial_ambiguous"
-
-            if len(candidates) != 1:
-                status = "ambiguous_accessory" if candidates else "unmatched_accessory"
+            if len(candidates) != 1 or ambiguous:
+                status = "ambiguous_accessory" if candidates or ambiguous else "unmatched_accessory"
                 device_rows.append(
                     {
                         "hue_device_id": device_id,
@@ -1509,12 +1579,16 @@ def build_apple_home_sync_plan(
                         "status": status,
                         "match_method": match_method,
                         "hue_identifiers": sorted(hue_identifiers),
+                        "device_type": _device_type(device),
                         "candidates": [
                             {
                                 "id": item.get("id"),
                                 "name": item.get("name"),
                                 "room_id": item.get("room_id"),
                                 "room_name": item.get("room_name"),
+                                "device_type": _device_type(item, apple=True),
+                                "model": item.get("model"),
+                                "serial_number": item.get("serial_number"),
                             }
                             for item in candidates
                         ],
@@ -1576,6 +1650,7 @@ def build_apple_home_sync_plan(
                     "status": status,
                     "match_method": match_method,
                     "hue_identifiers": sorted(hue_identifiers),
+                    "device_type": _device_type(device),
                     "apple_serial_number": accessory.get("serial_number"),
                 }
             )
@@ -1637,6 +1712,8 @@ def build_apple_home_sync_plan(
                 "id": device_row.get("hue_device_id"),
                 "name": device_row.get("hue_device_name"),
                 "status": device_row.get("status"),
+                "device_type": device_row.get("device_type"),
+                "candidates": copy.deepcopy(device_row.get("candidates", [])),
                 "match_method": device_row.get("match_method"),
                 "hue_identifiers": device_row.get("hue_identifiers", []),
                 "apple_serial_number": device_row.get("apple_serial_number"),
@@ -1657,6 +1734,7 @@ def build_apple_home_sync_plan(
                 "name": accessory.get("name"),
                 "manufacturer": accessory.get("manufacturer"),
                 "model": accessory.get("model"),
+                "device_type": _device_type(accessory, apple=True),
                 "is_bridged": bool(accessory.get("is_bridged")),
                 "bridge_id": accessory.get("bridge_id"),
                 "bridge_name": accessory.get("bridge_name"),
@@ -1697,6 +1775,10 @@ def build_apple_home_sync_plan(
         "devices": device_rows,
         "actions": moves,
         "accessory_map": copy.deepcopy(accessory_map),
+        "apple_accessory_candidates": [
+            {**copy.deepcopy(accessory), "device_type": _device_type(accessory, apple=True)}
+            for accessory in _apple_accessories_for_hue_bridge(hue_tree, accessories)
+        ],
         "unmatched_apple_accessories": unmatched_apple,
         "summary": {
             "hue_rooms": len(room_rows),

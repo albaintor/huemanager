@@ -57,6 +57,46 @@ struct SyncSummary: Codable {
     }
 }
 
+struct SyncAccessoryCandidate: Codable, Identifiable {
+    let id: String
+    let name: String
+    let roomName: String?
+    let deviceType: String?
+    let model: String?
+    let serialNumber: String?
+
+    var typeName: String {
+        let key: String
+        switch deviceType {
+        case "light": key = "Lampe"
+        case "outlet": key = "Prise"
+        case "motion": key = "Détecteur de mouvement"
+        case "occupancy": key = "Détecteur de présence"
+        case "contact": key = "Capteur d’ouverture"
+        case "button": key = "Bouton / télécommande"
+        case "switch": key = "Interrupteur"
+        case "temperature": key = "Capteur de température"
+        case "light_level": key = "Capteur de luminosité"
+        default: key = "Type inconnu"
+        }
+        return NSLocalizedString(key, comment: "Accessory type")
+    }
+
+    var choiceLabel: String {
+        [roomName ?? NSLocalizedString("Sans pièce", comment: "Room"), name, typeName,
+         serialNumber ?? model, "ID " + id]
+            .compactMap { $0 }
+            .joined(separator: " · ")
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, model
+        case roomName = "room_name"
+        case deviceType = "device_type"
+        case serialNumber = "serial_number"
+    }
+}
+
 struct SyncRoomHueDevice: Codable, Identifiable {
     let id: String
     let name: String
@@ -66,6 +106,8 @@ struct SyncRoomHueDevice: Codable, Identifiable {
     let appleAccessoryName: String?
     let appleCurrentRoomID: String?
     let appleCurrentRoomName: String?
+    let deviceType: String?
+    let candidates: [SyncAccessoryCandidate]?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -76,6 +118,8 @@ struct SyncRoomHueDevice: Codable, Identifiable {
         case appleAccessoryName = "apple_accessory_name"
         case appleCurrentRoomID = "apple_current_room_id"
         case appleCurrentRoomName = "apple_current_room_name"
+        case deviceType = "device_type"
+        case candidates
     }
 }
 
@@ -153,6 +197,8 @@ private struct SyncPlan: Codable {
     let actions: [SyncMove]
     let summary: SyncSummary
     let selectedHueRoomIDs: [String]?
+    let accessoryMap: [String: String]?
+    let appleAccessoryCandidates: [SyncAccessoryCandidate]?
 
     enum CodingKeys: String, CodingKey {
         case rooms
@@ -160,6 +206,8 @@ private struct SyncPlan: Codable {
         case actions
         case summary
         case selectedHueRoomIDs = "selected_hue_room_ids"
+        case accessoryMap = "accessory_map"
+        case appleAccessoryCandidates = "apple_accessory_candidates"
     }
 }
 
@@ -233,6 +281,16 @@ private struct RoomSelectionRequest: Codable {
     enum CodingKeys: String, CodingKey {
         case homeID = "home_id"
         case hueRoomIDs = "hue_room_ids"
+    }
+}
+
+private struct AccessoryMappingRequest: Codable {
+    let homeID: String
+    let accessoryMap: [String: String]
+
+    enum CodingKeys: String, CodingKey {
+        case homeID = "home_id"
+        case accessoryMap = "accessory_map"
     }
 }
 
@@ -460,6 +518,9 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     @Published private(set) var roomPlans: [SyncRoomPlan] = []
     @Published private(set) var selectedHueRoomIDs: Set<String> = []
     @Published private(set) var planSummary: SyncSummary?
+    @Published private(set) var accessoryMappings: [String: String] = [:]
+    @Published private(set) var accessoryCandidates: [SyncAccessoryCandidate] = []
+    @Published private(set) var accessoryMappingSaving = false
     @Published private(set) var status = "En attente de l’autorisation Apple Maison…"
     @Published private(set) var hasError = false
     @Published private(set) var homeKitAuthorization = "Indéterminée"
@@ -491,7 +552,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
 
     private var homeManager: HMHomeManager?
     private var automaticTimer: Timer?
-    private var automaticSyncRunning = false
+    @Published private(set) var automaticSyncRunning = false
     private var loadingSyncSource = false
     private var activeServerRequests = 0
     private var started = false
@@ -557,6 +618,8 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         roomPlans = []
         selectedHueRoomIDs = []
         planSummary = nil
+        accessoryMappings = [:]
+        accessoryCandidates = []
     }
 
     private func restoreRoomSelection(for rooms: [SyncRoomPlan]) {
@@ -835,6 +898,9 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
 
     private func accessoryMatchIsSafe(_ move: SyncMove) -> Bool {
         if move.matchMethod == "serial" ||
+            move.matchMethod == "identifier" ||
+            move.matchMethod == "name_type" ||
+            move.matchMethod == "manual_accessory" ||
             move.matchMethod == "name" ||
             move.matchMethod == "name_model" {
             return true
@@ -873,6 +939,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     private func automaticSyncCycle() async {
         guard automaticSyncEnabled,
               !automaticSyncRunning,
+              !accessoryMappingSaving,
               !homes.isEmpty,
               !serverURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               (
@@ -1360,7 +1427,9 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
                     appleAccessoryID: row.appleAccessoryID,
                     appleAccessoryName: row.appleAccessoryName,
                     appleCurrentRoomID: row.appleRoomID,
-                    appleCurrentRoomName: row.appleRoomName
+                    appleCurrentRoomName: row.appleRoomName,
+                    deviceType: nil,
+                    candidates: nil
                 )
             }
 
@@ -1603,6 +1672,12 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
             }
             let data = try await get(path: planPath)
             let plan = try JSONDecoder().decode(SyncPlan.self, from: data)
+            accessoryCandidates = plan.appleAccessoryCandidates ?? []
+            let validIDs = Set(accessoryCandidates.map(\.id))
+            accessoryMappings = (plan.accessoryMap ?? [:]).filter {
+                // Older servers and HA plans may omit the candidate list.
+                plan.appleAccessoryCandidates == nil || validIDs.contains($0.value)
+            }
             moves = plan.actions
             roomPlans = enrichedRoomPlans(
                 plan.rooms ?? [],
@@ -1625,6 +1700,56 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
                     "\(pendingMoves) dans les pièces sélectionnées."
             }
             hasError = false
+        } catch {
+            status = error.localizedDescription
+            hasError = true
+        }
+    }
+
+    func manualCandidates(for device: SyncRoomHueDevice) -> [SyncAccessoryCandidate] {
+        let suggested = Set((device.candidates ?? []).map(\.id))
+        let usedElsewhere = Set(accessoryMappings.filter { $0.key != device.id }.values)
+        let choices = accessoryCandidates.isEmpty ? (device.candidates ?? []) : accessoryCandidates
+        return choices.filter { !usedElsewhere.contains($0.id) }.sorted {
+            if suggested.contains($0.id) != suggested.contains($1.id) {
+                return suggested.contains($0.id)
+            }
+            return $0.choiceLabel.localizedCaseInsensitiveCompare($1.choiceLabel) == .orderedAscending
+        }
+    }
+
+    func associateAccessory(_ accessoryID: String, with deviceID: String) async {
+        guard !accessoryMappingSaving, !automaticSyncRunning, !selectedHomeID.isEmpty else { return }
+        let homeID = selectedHomeID
+        let source = syncSource
+        let bridge = bridgeProfile
+        var mapping = accessoryMappings
+        if accessoryID.isEmpty {
+            mapping.removeValue(forKey: deviceID)
+        } else {
+            mapping[deviceID] = accessoryID
+        }
+        let prefix: String
+        if usesHomeAssistantSource {
+            prefix = "/api/home-assistant/apple-home"
+        } else {
+            let encodedBridge = bridge.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+                ?? bridge
+            prefix = "/api/bridges/\(encodedBridge)/apple-home"
+        }
+        accessoryMappingSaving = true
+        defer { accessoryMappingSaving = false }
+        do {
+            _ = try await send(
+                path: prefix + "/accessory-map",
+                method: "PUT",
+                body: AccessoryMappingRequest(homeID: homeID, accessoryMap: mapping)
+            )
+            guard homeID == selectedHomeID, source == syncSource, bridge == bridgeProfile else {
+                return
+            }
+            accessoryMappings = mapping
+            await loadPlan()
         } catch {
             status = error.localizedDescription
             hasError = true

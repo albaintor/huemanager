@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from huemanager.apple_home import (
     build_apple_home_identity_diagnostics,
     build_apple_home_sync_plan,
@@ -12,6 +14,248 @@ from huemanager.apple_home import (
     store_reassociation_backup,
     store_room_selection,
 )
+
+
+def _hue_device(device_id: str, name: str, kind: str = "light", **extra) -> dict:
+    return {
+        "id": device_id,
+        "name": name,
+        "services": [{"type": kind}],
+        "identifiers": {"zigbee_macs": ["00:17:88:01:02:03:04:05"]},
+        **extra,
+    }
+
+
+def _apple_accessory(accessory_id: str, name: str, kind: str = "43", **extra) -> dict:
+    return {
+        "id": accessory_id,
+        "name": name,
+        "service_types": [f"000000{kind}-0000-1000-8000-0026BB765291"],
+        "room_id": "apple-default",
+        "room_name": "Pièce par défaut",
+        "manufacturer": "Unknown",
+        "model": "Unknown",
+        "bridge_name": "Hue Bridge Pro",
+        "bridge_model": "BSB003",
+        **extra,
+    }
+
+
+def _sync_inputs(devices: list[dict], accessories: list[dict]) -> tuple[dict, dict]:
+    return (
+        {
+            "bridge": {"name": "Hue Bridge Pro", "modelid": "BSB003"},
+            "rooms": [{"id": "hue-room", "name": "Chambre Inès", "devices": devices}],
+        },
+        {
+            "home": {"id": "home-1"},
+            "rooms": [
+                {"id": "apple-room", "name": "Chambre Inès"},
+                {"id": "apple-default", "name": "Pièce par défaut"},
+            ],
+            "accessories": accessories,
+        },
+    )
+
+
+def test_reset_falls_back_to_name_and_type_and_moves_from_other_mapped_room() -> None:
+    tree, inventory = _sync_inputs(
+        [_hue_device("light", "Chambre Inès bureau"),
+         _hue_device("switch", "Chambre Inès bureau", "button")],
+        [_apple_accessory("apple-light", "CHAMBRE INES BUREAU"),
+         _apple_accessory("apple-switch", "Chambre Inès bureau", "89")],
+    )
+    tree["rooms"].append({"id": "hue-default", "name": "Pièce par défaut", "devices": []})
+    plan = build_apple_home_sync_plan(tree, inventory)
+    assert {row["hue_device_id"]: row["apple_accessory_id"] for row in plan["devices"]} == {
+        "light": "apple-light", "switch": "apple-switch",
+    }
+    assert {row["match_method"] for row in plan["devices"]} == {"name_type"}
+    assert len(plan["actions"]) == 2
+    assert {move["to_room_id"] for move in plan["actions"]} == {"apple-room"}
+    assert {choice["device_type"] for choice in plan["apple_accessory_candidates"]} == {
+        "light", "button",
+    }
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_identifier_matching_has_priority_over_earlier_name_fallback(reverse: bool) -> None:
+    devices = [
+        _hue_device("name-match", "Bureau", identifiers={}),
+        _hue_device("id-match", "Renommée dans Hue"),
+    ]
+    if reverse:
+        devices.reverse()
+    tree, inventory = _sync_inputs(devices, [
+        _apple_accessory("apple-light", "Bureau", serial_number="0017880102030405"),
+    ])
+    plan = build_apple_home_sync_plan(tree, inventory)
+    rows = {row["hue_device_id"]: row for row in plan["devices"]}
+    assert rows["id-match"]["apple_accessory_id"] == "apple-light"
+    assert rows["id-match"]["match_method"] == "serial"
+    assert rows["name-match"]["status"] == "unmatched_accessory"
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_duplicate_hue_names_are_ambiguous_even_with_one_apple_candidate(reverse: bool) -> None:
+    devices = [_hue_device("light-1", "Bureau"), _hue_device("light-2", "Bureau")]
+    if reverse:
+        devices.reverse()
+    tree, inventory = _sync_inputs(devices, [_apple_accessory("apple-light", "Bureau")])
+    plan = build_apple_home_sync_plan(tree, inventory)
+    assert plan["actions"] == []
+    assert plan["summary"]["ambiguous_accessories"] == 2
+    assert all(row["candidates"][0]["id"] == "apple-light" for row in plan["devices"])
+
+
+def test_duplicate_apple_names_require_manual_choice_which_is_persistable() -> None:
+    tree, inventory = _sync_inputs([_hue_device("light", "Bureau")], [
+        _apple_accessory("apple-1", "Bureau"), _apple_accessory("apple-2", "Bureau"),
+    ])
+    plan = build_apple_home_sync_plan(tree, inventory)
+    assert plan["actions"] == []
+    assert plan["devices"][0]["status"] == "ambiguous_accessory"
+    assert {choice["id"] for choice in plan["rooms"][0]["hue_devices"][0]["candidates"]} == {
+        "apple-1", "apple-2",
+    }
+    state = store_accessory_map({}, "Pro", "home-1", {"light": "apple-2"})
+    chosen = build_apple_home_sync_plan(
+        tree, inventory, accessory_map=get_accessory_map(state, "Pro", "home-1"),
+    )
+    assert chosen["actions"][0]["accessory_id"] == "apple-2"
+    assert chosen["actions"][0]["match_method"] == "manual_accessory"
+
+
+def test_stale_manual_mapping_after_reset_does_not_block_new_uuid() -> None:
+    tree, inventory = _sync_inputs(
+        [_hue_device("light", "Bureau")], [_apple_accessory("new-uuid", "Bureau")],
+    )
+    plan = build_apple_home_sync_plan(tree, inventory, accessory_map={"light": "old-uuid"})
+    assert plan["actions"][0]["accessory_id"] == "new-uuid"
+    assert plan["actions"][0]["match_method"] == "name_type"
+
+
+def test_manual_choice_has_priority_over_earlier_identifier_claim() -> None:
+    tree, inventory = _sync_inputs(
+        [_hue_device("id-match", "Bureau"), _hue_device("manual", "Bouton", "button")],
+        [_apple_accessory("apple-light", "Bureau", serial_number="0017880102030405")],
+    )
+    plan = build_apple_home_sync_plan(tree, inventory, accessory_map={"manual": "apple-light"})
+    assert len(plan["actions"]) == 1
+    assert plan["actions"][0]["hue_device_id"] == "manual"
+    assert plan["actions"][0]["match_method"] == "manual_accessory"
+
+
+@pytest.mark.parametrize("kind", ["43", "00000043", "lightbulb"])
+def test_homekit_service_short_names_and_uuids_are_supported(kind: str) -> None:
+    tree, inventory = _sync_inputs([_hue_device("light", "Bureau")], [
+        _apple_accessory("apple-light", "Bureau", service_types=[kind]),
+    ])
+    assert build_apple_home_sync_plan(tree, inventory)["summary"]["moves"] == 1
+
+
+@pytest.mark.parametrize("service_types", [[], ["89"], ["85"]])
+def test_name_alone_or_wrong_type_never_matches(service_types: list[str]) -> None:
+    tree, inventory = _sync_inputs([_hue_device("light", "Bureau")], [
+        _apple_accessory("apple-light", "Bureau", service_types=service_types),
+    ])
+    assert build_apple_home_sync_plan(tree, inventory)["actions"] == []
+
+
+def test_similar_name_of_same_type_is_not_automatically_matched() -> None:
+    tree, inventory = _sync_inputs([_hue_device("light", "Bureau")], [
+        _apple_accessory("apple-light", "Bureau 2"),
+    ])
+    assert build_apple_home_sync_plan(tree, inventory)["actions"] == []
+
+
+def test_fallback_stays_on_the_selected_bridge() -> None:
+    tree, inventory = _sync_inputs([_hue_device("light", "Bureau")], [
+        _apple_accessory("old-light", "Bureau", bridge_model="BSB002"),
+        _apple_accessory("pro-light", "Bureau"),
+    ])
+    plan = build_apple_home_sync_plan(tree, inventory)
+    assert plan["actions"][0]["accessory_id"] == "pro-light"
+    assert [choice["id"] for choice in plan["apple_accessory_candidates"]] == ["pro-light"]
+
+
+def test_fallback_never_uses_a_known_different_bridge_when_selected_bridge_is_missing() -> None:
+    tree, inventory = _sync_inputs([_hue_device("light", "Bureau")], [
+        _apple_accessory("old-light", "Bureau", bridge_model="BSB002"),
+    ])
+    plan = build_apple_home_sync_plan(tree, inventory)
+    assert plan["actions"] == []
+    assert plan["apple_accessory_candidates"] == []
+
+
+def test_bridge_name_distinguishes_two_bridges_of_the_same_model() -> None:
+    tree, inventory = _sync_inputs([_hue_device("light", "Bureau")], [
+        _apple_accessory("another-light", "Bureau", bridge_name="Hue autre pont"),
+        _apple_accessory("pro-light", "Bureau"),
+    ])
+    assert build_apple_home_sync_plan(tree, inventory)["actions"][0]["accessory_id"] == "pro-light"
+
+
+@pytest.mark.parametrize("serial", ["00:17:88:01:02:03:04:05-0b", "0017880102030405-0b"])
+def test_apple_serial_with_endpoint_matches_hue_mac(serial: str) -> None:
+    tree, inventory = _sync_inputs([_hue_device("light", "Bureau")], [
+        _apple_accessory("apple-light", "Renommée dans Maison", serial_number=serial),
+    ])
+    assert build_apple_home_sync_plan(tree, inventory)["actions"][0]["accessory_id"] == "apple-light"
+
+
+def test_motion_detector_secondary_services_do_not_match_light_or_button() -> None:
+    tree, inventory = _sync_inputs([_hue_device("motion", "Bureau", "motion", services=[
+        {"type": "light_level"}, {"type": "temperature"}, {"type": "motion"},
+    ])], [
+        _apple_accessory("apple-light", "Bureau"),
+        _apple_accessory("apple-motion", "Bureau", service_types=["8A", "84", "85"]),
+    ])
+    assert build_apple_home_sync_plan(tree, inventory)["actions"][0]["accessory_id"] == "apple-motion"
+
+
+def test_conflicting_manual_mappings_are_ambiguous_and_never_applied() -> None:
+    tree, inventory = _sync_inputs(
+        [_hue_device("light-1", "Bureau"), _hue_device("light-2", "Lustre")],
+        [_apple_accessory("apple-light", "Bureau")],
+    )
+    plan = build_apple_home_sync_plan(tree, inventory, accessory_map={
+        "light-1": "apple-light", "light-2": "apple-light",
+    })
+    assert plan["summary"]["ambiguous_accessories"] == 2
+    assert plan["actions"] == []
+
+
+def test_duplicate_identifiers_are_ambiguous_on_both_sides() -> None:
+    tree, inventory = _sync_inputs(
+        [_hue_device("light-1", "Bureau"), _hue_device("light-2", "Lustre")],
+        [_apple_accessory("apple-light", "Bureau", serial_number="0017880102030405")],
+    )
+    plan = build_apple_home_sync_plan(tree, inventory)
+    assert plan["actions"] == []
+    assert plan["summary"]["ambiguous_accessories"] == 2
+
+
+def test_same_exposed_uuid_matches_even_when_name_and_type_are_unavailable() -> None:
+    uuid = "d47b3b72-4ee8-49ea-9f22-0752d13f1ac2"
+    tree, inventory = _sync_inputs(
+        [_hue_device(uuid, "Bureau")],
+        [_apple_accessory("apple-light", "Renommée", legacy_identifier=uuid, service_types=[])],
+    )
+    plan = build_apple_home_sync_plan(tree, inventory)
+    assert plan["actions"][0]["match_method"] == "identifier"
+
+
+def test_serial_letters_outside_hex_are_not_discarded() -> None:
+    tree, inventory = _sync_inputs(
+        [_hue_device("light", "Bureau", identifiers={
+            "pairing_fields": [{"field": "serial_number", "value": "Z-G-123"}],
+        })],
+        [_apple_accessory("apple-light", "Autre", serial_number="Y-H-123")],
+    )
+    assert build_apple_home_sync_plan(tree, inventory)["actions"] == []
+    inventory["accessories"][0]["serial_number"] = "ZG123"
+    assert build_apple_home_sync_plan(tree, inventory)["actions"][0]["match_method"] == "serial"
 
 
 def test_room_selection_is_persisted_per_bridge_and_home() -> None:
@@ -95,7 +339,7 @@ def test_control_only_hue_device_is_not_fuzzy_matched_to_another_room() -> None:
     device = plan["devices"][0]
     assert device["hue_device_id"] == "switch-1"
     assert device["status"] == "unmatched_accessory"
-    assert device["match_method"] == "unsupported_fuzzy_match"
+    assert device["match_method"] is None
 
 
 def test_fuzzy_match_does_not_steal_accessory_from_other_mapped_room() -> None:
