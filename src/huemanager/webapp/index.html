@@ -22,8 +22,15 @@
     .language-picker label { margin: 0 0 4px; font-size: 12px; color: var(--muted); }
     .language-picker select { min-height: 36px; }
     .brand img { width: 86px; max-height: 42px; object-fit: contain; }
-    .tabs { display: flex; gap: 8px; margin-top: 16px; }
+    .bridge-picker { display:flex; align-items:end; gap:12px; margin:16px 0 12px; padding:12px 14px;
+      border:1px solid var(--border); border-radius:10px; background:var(--panel); }
+    .bridge-picker label { margin:0 0 5px; }
+    .bridge-picker .grow { flex:1 1 240px; min-width:0; }
+    .tabs { display: flex; flex-wrap:wrap; gap: 8px; margin-top: 12px; }
     .tabs button.active { border-color: var(--accent); box-shadow: inset 0 -2px var(--accent); }
+    .source-logo { width:84px; height:36px; object-fit:contain; flex:0 0 84px; }
+    .source-picker { display:flex; align-items:end; gap:10px; }
+    .source-picker .grow { flex:1 1 260px; min-width:0; }
     .audit-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
     .audit-issue { border: 1px solid var(--border); border-radius: 9px; padding: 12px;
       margin: 9px 0; background: var(--panel-2); }
@@ -143,6 +150,7 @@
       main { padding: 14px; }
       .span-4, .span-5, .span-7, .span-8, .span-12 { grid-column: span 12; }
       .apple-room-head, .room-impact-grid { grid-template-columns: 1fr; }
+      .bridge-picker { align-items:stretch; flex-direction:column; }
     }
   </style>
 </head>
@@ -164,9 +172,17 @@
       </select>
     </div>
   </div>
+  <div id="bridgePicker" class="bridge-picker">
+    <div class="grow">
+      <label for="managementBridge" data-i18n="bridge.selector">Bridge sélectionné</label>
+      <select id="managementBridge"></select>
+    </div>
+  </div>
   <div id="globalStatus" class="status">Chargement des Bridges…</div>
   <div class="tabs" role="tablist">
     <button id="managementTab" class="active" type="button" data-i18n="tab.management">Gestion</button>
+    <button id="diagnosticsTab" type="button" data-i18n="tab.diagnostics">Diagnostic</button>
+    <button id="synchronizationTab" type="button" data-i18n="tab.synchronization">Synchronisation</button>
     <button id="appleAuditTab" type="button" data-i18n="tab.appleAudit">Apple Maison</button>
     <button id="migrationTab" type="button" data-i18n="tab.migration">Migration</button>
   </div>
@@ -352,14 +368,39 @@
 
   <div id="managementView">
     <section class="grid">
+      <div class="card span-12">
+        <h2 data-i18n="updates.title">Mises à jour logicielles Hue</h2>
+        <p class="muted" data-i18n="updates.description">
+          Lit la version et les informations de mise à jour renvoyées par le Bridge.
+          Le serveur Philips Hue décide quels firmwares sont éligibles, y compris en bêta.
+        </p>
+        <div id="softwareUpdateSummary" class="audit-summary"></div>
+        <div class="row" style="margin-top:12px">
+          <button id="refreshSoftwareUpdate" type="button" data-i18n="updates.refresh">Relire l'état</button>
+          <button id="checkSoftwareUpdate" type="button" class="primary" disabled data-i18n="updates.check">Rechercher les mises à jour</button>
+          <button id="installSoftwareUpdate" type="button" disabled data-i18n="updates.install">Installer les mises à jour prêtes</button>
+        </div>
+        <p id="softwareUpdateMessage" class="muted" aria-live="polite" style="margin-top:10px"></p>
+        <p class="risk-note" data-i18n="updates.warning">
+          L'installation peut rendre le pont et ses accessoires temporairement indisponibles.
+          La recherche seule ne déclenche pas d'installation immédiate.
+        </p>
+        <details>
+          <summary data-i18n="updates.details">Voir les états techniques et les mises à jour des appareils</summary>
+          <pre id="softwareUpdateDetails" style="white-space:pre-wrap;overflow:auto;max-height:350px"></pre>
+        </details>
+      </div>
+    </section>
+  </div>
+
+  <div id="diagnosticsView" class="hidden">
+    <section class="grid">
       <div class="card span-4">
-        <h2 data-i18n="management.title">Gestion du Bridge</h2>
+        <h2 data-i18n="management.title">Analyser le Bridge</h2>
         <p class="muted">
           Analyse la configuration sans modification, puis propose uniquement
           des nettoyages ciblés.
         </p>
-        <label for="managementBridge" data-i18n="management.bridge">Bridge à analyser</label>
-        <select id="managementBridge"></select>
         <div class="row" style="margin-top:12px">
           <button id="auditBridge" class="primary" data-i18n="management.analyze">Analyser</button>
         </div>
@@ -383,30 +424,6 @@
         <div id="auditIssues">
           <p class="muted">Lance une analyse du Bridge.</p>
         </div>
-      </div>
-
-
-      <div class="card span-12">
-        <h2 data-i18n="updates.title">Mises à jour logicielles Hue</h2>
-        <p class="muted" data-i18n="updates.description">
-          Lit la version et les informations de mise à jour renvoyées par le Bridge.
-          Le serveur Philips Hue décide quels firmwares sont éligibles, y compris en bêta.
-        </p>
-        <div id="softwareUpdateSummary" class="audit-summary"></div>
-        <div class="row" style="margin-top:12px">
-          <button id="refreshSoftwareUpdate" type="button" data-i18n="updates.refresh">Relire l'état</button>
-          <button id="checkSoftwareUpdate" type="button" class="primary" disabled data-i18n="updates.check">Rechercher les mises à jour</button>
-          <button id="installSoftwareUpdate" type="button" disabled data-i18n="updates.install">Installer les mises à jour prêtes</button>
-        </div>
-        <p id="softwareUpdateMessage" class="muted" aria-live="polite" style="margin-top:10px"></p>
-        <p class="risk-note" data-i18n="updates.warning">
-          L'installation peut rendre le pont et ses accessoires temporairement indisponibles.
-          La recherche seule ne déclenche pas d'installation immédiate.
-        </p>
-        <details>
-          <summary data-i18n="updates.details">Voir les états techniques et les mises à jour des appareils</summary>
-          <pre id="softwareUpdateDetails" style="white-space:pre-wrap;overflow:auto;max-height:350px"></pre>
-        </details>
       </div>
 
       <div class="card span-12">
@@ -609,13 +626,17 @@
           pertes de paquets ni l'occupation radio : ces limites sont indiquées dans le rapport.
         </p>
       </div>
+    </section>
+  </div>
 
+  <div id="synchronizationView" class="hidden">
+    <section class="grid">
       <div class="card span-12">
-        <h2 data-i18n="apple.title">Apple Maison — synchronisation des pièces</h2>
+        <h2 data-i18n="apple.title">Synchronisation des pièces</h2>
         <p class="muted" data-i18n="apple.description">
           Compare Apple Maison avec Philips Hue ou Home Assistant, puis prévisualise les déplacements avant synchronisation.
         </p>
-        <div class="row" style="align-items:end">
+        <div class="source-picker">
           <div class="grow">
             <label for="appleSyncSource" data-i18n="apple.source">Source de référence</label>
             <select id="appleSyncSource">
@@ -623,6 +644,7 @@
               <option value="home_assistant">Home Assistant</option>
             </select>
           </div>
+          <img id="appleSyncSourceLogo" class="source-logo" src="" alt="">
         </div>
         <div id="homeAssistantAppleConfig" class="audit-issue hidden" style="margin-top:12px">
           <h3 data-i18n="apple.haConfigTitle">Connexion Home Assistant</h3>
@@ -686,7 +708,10 @@
     fr: {
       "brand.subtitle": "Migration, audit et nettoyage de Bridges Hue.",
       "language.label": "Langue",
+      "bridge.selector": "Bridge sélectionné",
       "tab.management": "Gestion",
+      "tab.diagnostics": "Diagnostic",
+      "tab.synchronization": "Synchronisation",
       "tab.appleAudit": "Apple Maison",
       "tab.migration": "Migration",
       "updates.title": "Mises à jour logicielles Hue",
@@ -714,7 +739,7 @@
       "updates.devices": "Mises à jour des appareils",
       "updates.on": "Activée",
       "updates.off": "Désactivée",
-      "management.title": "Gestion du Bridge",
+      "management.title": "Analyser le Bridge",
       "management.bridge": "Bridge à analyser",
       "management.analyze": "Analyser",
       "management.cleanupTitle": "Incohérences et nettoyage",
@@ -732,7 +757,7 @@
       "homekit.refresh": "Relire HomeKit",
       "homekit.reset": "Réinitialiser HomeKit",
       "homekit.notConfigured": "HomeKit n’est pas configuré sur ce Bridge.",
-      "diagnostics.title": "Diagnostic réseau Hue",
+      "diagnostics.title": "Diagnostic réseau et surveillance",
       "diagnostics.description": "Diagnostic en lecture seule : état Zigbee exposé par le Bridge, ressources injoignables, temps de réponse des API locales et estimation de coexistence avec le Wi-Fi 2,4 GHz.",
       "diagnostics.wifiChannel": "Canal Wi-Fi 2,4 GHz",
       "diagnostics.wifiWidth": "Largeur Wi-Fi",
@@ -833,7 +858,7 @@
       "appleAudit.statusAmbiguous": "Correspondance ambiguë",
       "appleAudit.statusUnmapped": "Bridge Apple non associé",
       "appleAudit.statusUnresolved": "À identifier",
-      "apple.title": "Apple Maison — synchronisation des pièces",
+      "apple.title": "Synchronisation des pièces",
       "apple.source": "Source de référence",
       "apple.haConfigTitle": "Connexion Home Assistant",
       "apple.haConfigHelp": "HueManager lit les registres Areas, Devices et Entities via l’API WebSocket Home Assistant. Le jeton est conservé côté serveur et n’est jamais renvoyé au navigateur.",
@@ -902,7 +927,10 @@
     en: {
       "brand.subtitle": "Migration, audit and cleanup for Hue Bridges.",
       "language.label": "Language",
+      "bridge.selector": "Selected Bridge",
       "tab.management": "Management",
+      "tab.diagnostics": "Diagnostics",
+      "tab.synchronization": "Synchronization",
       "tab.appleAudit": "Apple Home",
       "tab.migration": "Migration",
       "updates.title": "Hue software updates",
@@ -930,7 +958,7 @@
       "updates.devices": "Device updates",
       "updates.on": "Enabled",
       "updates.off": "Disabled",
-      "management.title": "Bridge management",
+      "management.title": "Analyze Bridge",
       "management.bridge": "Bridge to analyze",
       "management.analyze": "Analyze",
       "management.cleanupTitle": "Inconsistencies and cleanup",
@@ -948,7 +976,7 @@
       "homekit.refresh": "Reload HomeKit",
       "homekit.reset": "Reset HomeKit",
       "homekit.notConfigured": "HomeKit is not configured on this Bridge.",
-      "diagnostics.title": "Hue network diagnostics",
+      "diagnostics.title": "Network diagnostics and monitoring",
       "diagnostics.description": "Read-only diagnostics: Zigbee state exposed by the Bridge, unreachable resources, local API response times and estimated coexistence with 2.4 GHz Wi-Fi.",
       "diagnostics.wifiChannel": "2.4 GHz Wi-Fi channel",
       "diagnostics.wifiWidth": "Wi-Fi width",
@@ -1049,7 +1077,7 @@
       "appleAudit.statusAmbiguous": "Ambiguous match",
       "appleAudit.statusUnmapped": "Unmapped Apple bridge",
       "appleAudit.statusUnresolved": "Needs identification",
-      "apple.title": "Apple Home — room synchronization",
+      "apple.title": "Room synchronization",
       "apple.source": "Reference source",
       "apple.haConfigTitle": "Home Assistant connection",
       "apple.haConfigHelp": "HueManager reads Home Assistant Area, Device and Entity registries through the Home Assistant WebSocket API. The token is stored server-side and is never returned to the browser.",
@@ -1381,13 +1409,20 @@
   function showView(name) {
     const migration = name === "migration";
     const appleAudit = name === "appleAudit";
-    const management = !migration && !appleAudit;
+    const diagnostics = name === "diagnostics";
+    const synchronization = name === "synchronization";
+    const management = name === "management";
     $("migrationView").classList.toggle("hidden", !migration);
     $("appleAuditView").classList.toggle("hidden", !appleAudit);
     $("managementView").classList.toggle("hidden", !management);
+    $("diagnosticsView").classList.toggle("hidden", !diagnostics);
+    $("synchronizationView").classList.toggle("hidden", !synchronization);
+    $("bridgePicker").classList.toggle("hidden", migration || appleAudit);
     $("migrationTab").classList.toggle("active", migration);
     $("appleAuditTab").classList.toggle("active", appleAudit);
     $("managementTab").classList.toggle("active", management);
+    $("diagnosticsTab").classList.toggle("active", diagnostics);
+    $("synchronizationTab").classList.toggle("active", synchronization);
   }
 
   function auditCleanupIssues() {
@@ -3420,6 +3455,10 @@
   function updateAppleSourceUi() {
     $("appleSyncSource").value = state.appleSyncSource;
     const haSource = isHomeAssistantAppleSource();
+    $("appleSyncSourceLogo").src = haSource
+      ? "https://brands.home-assistant.io/homeassistant/logo.png"
+      : "https://www.philips-hue.com/content/dam/hue/masters/navigation/footer-Hue-logo.svg";
+    $("appleSyncSourceLogo").alt = appleSourceLabel();
     $("homeAssistantAppleConfig").classList.toggle("hidden", !haSource);
 
     const hueOnly = !haSource;
@@ -4161,6 +4200,8 @@
   updateAppleSourceUi();
 
   $("migrationTab").addEventListener("click", () => showView("migration"));
+  $("diagnosticsTab").addEventListener("click", () => showView("diagnostics"));
+  $("synchronizationTab").addEventListener("click", () => showView("synchronization"));
   $("appleAuditTab").addEventListener("click", () => {
     showView("appleAudit");
     if (!state.appleAudit) {
