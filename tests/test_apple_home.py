@@ -126,6 +126,26 @@ def test_duplicate_apple_names_require_manual_choice_which_is_persistable() -> N
     assert chosen["actions"][0]["match_method"] == "manual_accessory"
 
 
+def test_ambiguous_candidates_include_reachability_identifiers_and_bridge() -> None:
+    tree, inventory = _sync_inputs(
+        [_hue_device("light", "Bureau")],
+        [
+            _apple_accessory("online", "Bureau", reachable=True,
+                             serial_number="AA-001"),
+            _apple_accessory("offline", "Bureau", reachable=False,
+                             serial_number="AA-002"),
+        ],
+    )
+    plan = build_apple_home_sync_plan(tree, inventory)
+    assert plan["actions"] == []
+    candidates = plan["rooms"][0]["hue_devices"][0]["candidates"]
+    assert [(candidate["id"], candidate["reachable"]) for candidate in candidates] == [
+        ("online", True), ("offline", False),
+    ]
+    assert candidates[1]["serial_number"] == "AA-002"
+    assert candidates[1]["bridge_name"] == "Hue Bridge Pro"
+
+
 def test_stale_manual_mapping_after_reset_does_not_block_new_uuid() -> None:
     tree, inventory = _sync_inputs(
         [_hue_device("light", "Bureau")], [_apple_accessory("new-uuid", "Bureau")],

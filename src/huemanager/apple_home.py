@@ -1580,6 +1580,7 @@ def build_apple_home_sync_plan(
                         "match_method": match_method,
                         "hue_identifiers": sorted(hue_identifiers),
                         "device_type": _device_type(device),
+                        "hue_connectivity": copy.deepcopy(device.get("connectivity", [])),
                         "candidates": [
                             {
                                 "id": item.get("id"),
@@ -1589,6 +1590,11 @@ def build_apple_home_sync_plan(
                                 "device_type": _device_type(item, apple=True),
                                 "model": item.get("model"),
                                 "serial_number": item.get("serial_number"),
+                                "manufacturer": item.get("manufacturer"),
+                                "reachable": item.get("reachable"),
+                                "is_bridged": item.get("is_bridged"),
+                                "bridge_name": item.get("bridge_name"),
+                                "bridge_model": item.get("bridge_model"),
                             }
                             for item in candidates
                         ],
@@ -1651,6 +1657,7 @@ def build_apple_home_sync_plan(
                     "match_method": match_method,
                     "hue_identifiers": sorted(hue_identifiers),
                     "device_type": _device_type(device),
+                    "hue_connectivity": copy.deepcopy(device.get("connectivity", [])),
                     "apple_serial_number": accessory.get("serial_number"),
                 }
             )
@@ -1716,6 +1723,7 @@ def build_apple_home_sync_plan(
                 "candidates": copy.deepcopy(device_row.get("candidates", [])),
                 "match_method": device_row.get("match_method"),
                 "hue_identifiers": device_row.get("hue_identifiers", []),
+                "hue_connectivity": copy.deepcopy(device_row.get("hue_connectivity", [])),
                 "apple_serial_number": device_row.get("apple_serial_number"),
                 "apple_accessory_id": device_row.get("apple_accessory_id"),
                 "apple_accessory_name": device_row.get("apple_accessory_name"),

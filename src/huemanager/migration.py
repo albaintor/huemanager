@@ -1176,6 +1176,14 @@ def inventory_tree(client: HueBridgeClient) -> dict:
                     "model": product.get("model_id"),
                     "product": product.get("product_name"),
                     "services": services,
+                    "connectivity": [
+                        {
+                            "status": service.get("status"),
+                            "mac_address": service.get("mac_address"),
+                        }
+                        for service in device.get("services_expanded", [])
+                        if service.get("type") == "zigbee_connectivity"
+                    ],
                     "identifiers": _device_identifiers(device, v1),
                 }
             )

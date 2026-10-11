@@ -132,6 +132,11 @@
     .room-impact-content select { width:100%; min-width:0; }
     .room-impact-badges { display:flex; flex-direction:column; align-items:flex-end; gap:6px; min-width:0; }
     .room-impact-badges .pill { text-align:right; max-width:100%; overflow-wrap:anywhere; }
+    .apple-candidates { margin-top:10px; border:1px solid var(--border); border-radius:8px; padding:8px; }
+    .apple-candidates summary { cursor:pointer; font-weight:650; }
+    .apple-candidate { padding:9px 3px; border-top:1px solid var(--border); overflow-wrap:anywhere; }
+    .apple-candidate:first-of-type { margin-top:8px; }
+    .apple-candidate-meta { font-size:12px; color:var(--muted); line-height:1.5; }
     .apple-device-filters { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:12px 0; }
     .apple-device-filters button[aria-pressed="true"] { border-color:var(--accent); background:rgba(122,162,255,.15); }
     .apple-device-filters button[aria-pressed="false"] { color:var(--muted); }
@@ -934,7 +939,16 @@
       "apple.nameFallback": "correspondance de secours par nom",
       "apple.nameTypeFallback": "correspondance par nom + type d’appareil",
       "apple.nameModelFallback": "correspondance par nom + modèle",
-      "apple.ambiguousAccessory": "Plusieurs correspondances possibles : choisis l’accessoire Apple à associer.",
+      "apple.ambiguousAccessory": "Plusieurs correspondances possibles : compare les identifiants et la disponibilité avant de choisir.",
+      "apple.candidateDetails": "Candidats Apple Maison et état",
+      "apple.reachable": "Accessible",
+      "apple.unreachable": "Sans réponse Apple Maison",
+      "apple.reachUnknown": "État inconnu",
+      "apple.candidatePresent": "Présent dans l’inventaire Apple",
+      "apple.hueOffline": "Hue déconnecté",
+      "apple.haOffline": "Home Assistant indisponible",
+      "apple.haOnline": "Home Assistant disponible",
+      "apple.sourceFiltered": "Entités HA : {kept} Hue / {total} au total, {excluded} exclues, {entries} intégrations Hue",
       "apple.automaticAccessory": "— correspondance automatique —",
       "apple.type.light": "Lampe",
       "apple.type.outlet": "Prise",
@@ -1188,7 +1202,16 @@
       "apple.nameFallback": "matched by name",
       "apple.nameTypeFallback": "matched by name + device type",
       "apple.nameModelFallback": "matched by name + model",
-      "apple.ambiguousAccessory": "Several matches are possible: choose the Apple accessory to associate.",
+      "apple.ambiguousAccessory": "Several matches are possible: compare identifiers and availability before selecting one.",
+      "apple.candidateDetails": "Apple Home candidates and status",
+      "apple.reachable": "Reachable",
+      "apple.unreachable": "Unreachable in Apple Home",
+      "apple.reachUnknown": "Status unknown",
+      "apple.candidatePresent": "Present in Apple inventory",
+      "apple.hueOffline": "Hue disconnected",
+      "apple.haOffline": "Home Assistant unavailable",
+      "apple.haOnline": "Home Assistant available",
+      "apple.sourceFiltered": "HA entities: {kept} Hue / {total} total, {excluded} excluded, {entries} Hue integrations",
       "apple.automaticAccessory": "— automatic matching —",
       "apple.type.light": "Light",
       "apple.type.outlet": "Outlet",
@@ -3784,6 +3807,51 @@
     );
   }
 
+  function appleReachabilityLabel(value) {
+    if (value === true) return t("apple.reachable");
+    if (value === false) return t("apple.unreachable");
+    return t("apple.reachUnknown");
+  }
+
+  function renderAppleMatchCandidates(device, root) {
+    const candidates = device.candidates || [];
+    if (!candidates.length || device.status !== "ambiguous_accessory") return;
+    const panel = document.createElement("details");
+    panel.className = "apple-candidates";
+    panel.open = true;
+    const heading = document.createElement("summary");
+    heading.textContent = `${t("apple.candidateDetails")} (${candidates.length})`;
+    panel.append(heading);
+    for (const candidate of candidates) {
+      const item = document.createElement("div");
+      item.className = "apple-candidate";
+      const heading = document.createElement("strong");
+      heading.textContent = candidate.name || candidate.id || "?";
+      item.append(heading);
+      const badge = document.createElement("span");
+      badge.className = `pill ${candidate.reachable === true ? "good" :
+        candidate.reachable === false ? "warn" : ""}`.trim();
+      badge.style.marginLeft = "8px";
+      badge.textContent = appleReachabilityLabel(candidate.reachable);
+      item.append(badge);
+      const meta = document.createElement("div");
+      meta.className = "apple-candidate-meta";
+      const parts = [
+        candidate.room_name,
+        [candidate.manufacturer, candidate.model].filter(Boolean).join(" · "),
+        candidate.serial_number ? `SN: ${candidate.serial_number}` : "",
+        candidate.bridge_name ? `${t("apple.viaBridge")} ${candidate.bridge_name}` : "",
+        candidate.bridge_model,
+        candidate.id ? `HomeKit ID: ${candidate.id}` : "",
+        t("apple.candidatePresent"),
+      ];
+      meta.textContent = parts.filter(Boolean).join(" · ");
+      item.append(meta);
+      panel.append(item);
+    }
+    root.append(panel);
+  }
+
   function appendDeviceBadge(root, label, cls = "") {
     const badge = document.createElement("span");
     badge.className = `pill ${cls}`.trim();
@@ -3819,6 +3887,16 @@
       appendDeviceBadge(badges, statusLabel, device.status === "already_correct" ? "good" : "warn");
       if (device.device_type) {
         appendDeviceBadge(badges, t("apple.type." + device.device_type));
+      }
+      if (isHomeAssistantAppleSource()) {
+        if (device.source_availability === "offline") {
+          appendDeviceBadge(badges, t("apple.haOffline"), "warn");
+        } else if (device.source_availability === "online") {
+          appendDeviceBadge(badges, t("apple.haOnline"), "good");
+        }
+      } else if ((device.hue_connectivity || []).some(service =>
+        service.status && service.status !== "connected")) {
+        appendDeviceBadge(badges, t("apple.hueOffline"), "warn");
       }
 
       const detail = document.createElement("div");
@@ -3888,9 +3966,11 @@
         option.value = accessory.id;
         option.textContent =
           `${accessory.room_name || "Sans pièce"} — ${accessory.name || accessory.id}` +
+          ` · ${appleReachabilityLabel(accessory.reachable)}` +
           ` · ${t("apple.type." + (accessory.device_type || "unknown"))}` +
           `${accessory.model ? " · " + accessory.model : ""}` +
           `${accessory.serial_number ? " · SN " + accessory.serial_number : ""}` +
+          `${accessory.bridge_name ? " · " + accessory.bridge_name : ""}` +
           ` · ID ${accessory.id}`;
         manualSelect.append(option);
       }
@@ -3904,6 +3984,7 @@
         previewAppleRoomDraft();
       });
       content.append(manualLabel, manualSelect);
+      renderAppleMatchCandidates(device, content);
       item.append(content, badges);
       root.append(item);
     }
@@ -4119,6 +4200,17 @@
       [`${summary.ambiguous_accessories || 0} correspondance(s) ambiguë(s)`, summary.ambiguous_accessories ? "warn" : ""],
     ];
     if (isHomeAssistantAppleSource()) {
+      const diagnostics = plan.source_filter_diagnostics || {};
+      if (diagnostics.total_entities != null) {
+        chips.push([
+          t("apple.sourceFiltered")
+            .replace("{kept}", diagnostics.hue_entities ?? 0)
+            .replace("{total}", diagnostics.total_entities)
+            .replace("{excluded}", diagnostics.excluded_entities ?? 0)
+            .replace("{entries}", diagnostics.hue_config_entries ?? 0),
+          "good",
+        ]);
+      }
       chips.push(
         [`${summary.identity_matches || 0} identifiant(s) exact(s)`, summary.identity_matches ? "good" : "warn"],
         [`${summary.name_model_matches || 0} nom+modèle exact(s)`, summary.name_model_matches ? "" : "warn"],
