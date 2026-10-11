@@ -236,11 +236,12 @@ def test_inventory_contains_only_entities_from_the_hue_integration() -> None:
              "manufacturer": "Signify Netherlands B.V."},
         ],
         entities=[
-            {"entity_id": "light.lamp", "device_id": "hue-lamp", "platform": "hue"},
+            {"entity_id": "light.lamp", "device_id": "hue-lamp",
+             "platform": "hue", "config_entry_id": "hue-entry"},
             {"entity_id": "sensor.other_linked", "device_id": "hue-lamp", "platform": "template"},
             {"entity_id": "light.other", "device_id": "other-lamp", "platform": "mqtt"},
             {"entity_id": "sensor.hue_standalone", "area_id": "living",
-             "config_entry_id": "hue-entry"},
+             "platform": "hue", "config_entry_id": "hue-entry"},
             {"entity_id": "sensor.not_hue", "area_id": "other", "platform": "template"},
             {"entity_id": "light.disabled_hue", "area_id": "other",
              "platform": "hue", "disabled_by": "user"},
@@ -290,6 +291,52 @@ def test_inventory_without_any_hue_entities_has_no_source_rooms() -> None:
         devices=[{"id": "other", "name": "Lampe", "area_id": "living"}],
         entities=[{"entity_id": "light.other", "device_id": "other",
                    "platform": "mqtt"}],
+    )
+    assert inventory["devices"] == []
+    assert inventory["rooms"] == []
+\n
+
+def test_hue_filter_requires_both_platform_and_config_entry_and_tracks_status() -> None:
+    inventory = normalize_home_assistant_inventory(
+        config={},
+        areas=[{"area_id": "salon", "name": "Salon"}],
+        devices=[
+            {"id": "real", "name": "Vraie lampe", "area_id": "salon",
+             "config_entries": ["entry-hue"]},
+            {"id": "foreign", "name": "Autre lampe", "area_id": "salon"},
+            {"id": "mixed", "name": "Appareil partagé", "area_id": "salon",
+             "config_entries": ["entry-other"]},
+        ],
+        entities=[
+            {"entity_id": "light.real", "platform": "hue",
+             "config_entry_id": "entry-hue", "device_id": "real"},
+            {"entity_id": "sensor.foreign", "platform": "template",
+             "config_entry_id": "entry-hue", "device_id": "foreign"},
+            {"entity_id": "light.wrong_entry", "platform": "hue",
+             "config_entry_id": "entry-other", "device_id": "foreign"},
+            {"entity_id": "light.mismatched_device", "platform": "hue",
+             "config_entry_id": "entry-hue", "device_id": "mixed"},
+        ],
+        hue_config_entries=[{"entry_id": "entry-hue", "domain": "hue"}],
+        entity_states=[{"entity_id": "light.real", "state": "unavailable"}],
+    )
+    assert [device["id"] for device in inventory["devices"]] == ["real"]
+    assert inventory["devices"][0]["availability"] == "offline"
+    assert inventory["filter_diagnostics"]["hue_entities"] == 1
+    assert inventory["filter_diagnostics"]["excluded_by_reason"] == {
+        "other_platform": 1,
+        "not_hue_config_entry": 1,
+        "device_entry_mismatch": 1,
+    }
+
+
+def test_hue_platform_without_proven_config_entry_is_excluded() -> None:
+    inventory = normalize_home_assistant_inventory(
+        config={},
+        areas=[{"area_id": "salon", "name": "Salon"}],
+        devices=[{"id": "lamp", "area_id": "salon"}],
+        entities=[{"entity_id": "light.lamp", "platform": "hue", "device_id": "lamp"}],
+        hue_config_entries=[],
     )
     assert inventory["devices"] == []
     assert inventory["rooms"] == []

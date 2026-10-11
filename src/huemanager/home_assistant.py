@@ -111,6 +111,7 @@ class HomeAssistantClient:
                 ("devices", "config/device_registry/list", {}),
                 ("entities", "config/entity_registry/list", {}),
                 ("hue_config_entries", "config_entries/get", {"domain": "hue"}),
+                ("states", "get_states", {}),
             ]
             result: dict[str, Any] = {}
             for command_id, (key, command_type, options) in enumerate(commands, start=1):
@@ -135,6 +136,7 @@ class HomeAssistantClient:
             devices=result.get("devices", []),
             entities=result.get("entities", []),
             hue_config_entries=result.get("hue_config_entries", []),
+            entity_states=result.get("states", []),
         )
 
 
@@ -192,6 +194,7 @@ def normalize_home_assistant_inventory(
     devices: list[dict[str, Any]],
     entities: list[dict[str, Any]],
     hue_config_entries: list[dict[str, Any]] | None = None,
+    entity_states: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     area_rows = [
         {
@@ -204,14 +207,36 @@ def normalize_home_assistant_inventory(
     ]
     area_by_id = {row["id"]: row for row in area_rows}
 
-    # The entity domain (light, sensor, switch...) is not the integration.
-    # Keep only entities registered by Hue, including devices shared with
-    # non-Hue integrations. Config entries are a fallback for missing platform.
+    # Device/entity names, manufacturers and entity domains are not proof of origin.
+    # The platform AND an actual Hue config entry must match for live registries.
     hue_entry_ids = {
         str(entry["entry_id"])
         for entry in (hue_config_entries or [])
         if entry.get("entry_id") and str(entry.get("domain") or "hue").lower() == "hue"
     }
+    states_by_id = {
+        str(row["entity_id"]): str(row.get("state") or "")
+        for row in (entity_states or [])
+        if row.get("entity_id")
+    }
+    processed_entities = 0
+    included_entities = 0
+    excluded_by_reason: dict[str, int] = {}
+
+    def reject(reason: str) -> None:
+        excluded_by_reason[reason] = excluded_by_reason.get(reason, 0) + 1
+
+    def availability(entity_ids: list[str]) -> str:
+        known_states = [
+            states_by_id[entity_id]
+            for entity_id in entity_ids
+            if entity_id in states_by_id
+        ]
+        if any(state not in {"unavailable", "unknown", ""} for state in known_states):
+            return "online"
+        if known_states and all(state == "unavailable" for state in known_states):
+            return "offline"
+        return "unknown"
 
     device_by_id = {
         str(device.get("id")): copy.deepcopy(device)
@@ -224,14 +249,27 @@ def normalize_home_assistant_inventory(
     standalone_entities: list[dict[str, Any]] = []
     for entity in entities:
         entity_id = str(entity.get("entity_id") or "")
-        if not entity_id or entity.get("disabled_by"):
+        if not entity_id:
             continue
-        if (
-            str(entity.get("platform") or "").lower() != "hue"
-            and str(entity.get("config_entry_id") or "") not in hue_entry_ids
-        ):
+        processed_entities += 1
+        if entity.get("disabled_by"):
+            reject("disabled")
+            continue
+        if str(entity.get("platform") or "").lower() != "hue":
+            reject("other_platform")
+            continue
+        config_entry_id = str(entity.get("config_entry_id") or "")
+        if hue_config_entries is not None and config_entry_id not in hue_entry_ids:
+            reject("not_hue_config_entry")
             continue
         device_id = str(entity.get("device_id") or "")
+        source_device = device_by_id.get(device_id) if device_id else None
+        if source_device and source_device.get("config_entries"):
+            device_entries = {str(entry) for entry in source_device["config_entries"]}
+            if config_entry_id and config_entry_id not in device_entries:
+                reject("device_entry_mismatch")
+                continue
+        included_entities += 1
         area_id = str(entity.get("area_id") or "")
         if device_id:
             entities_by_device.setdefault(device_id, []).append(copy.deepcopy(entity))
@@ -286,6 +324,10 @@ def normalize_home_assistant_inventory(
                     if entity.get("entity_id")
                 ),
                 "entity_domains": entity_domains,
+                "source_integration": "hue",
+                "availability": availability([
+                    str(entity["entity_id"]) for entity in linked_entities
+                ]),
                 "parent_device_id": device.get("parent_device_id"),
                 "via_device_id": device.get("via_device_id"),
                 "config_entry_id": device.get("config_entry_id")
@@ -322,6 +364,8 @@ def normalize_home_assistant_inventory(
                 "entity_ids": [entity_id],
                 "entity_domains": [entity_id.split(".", 1)[0]] if "." in entity_id else [],
                 "standalone_entity": True,
+                "source_integration": "hue",
+                "availability": availability([entity_id]),
                 "disabled": bool(entity.get("disabled_by")),
             }
         )
@@ -347,8 +391,17 @@ def normalize_home_assistant_inventory(
     return {
         "source_kind": "home_assistant",
         "source_label": "Home Assistant",
-        "schema_version": 2,
+        "schema_version": 3,
         "captured_at": _now(),
+        "filter_diagnostics": {
+            "source": "hue_entity_platform_and_config_entry",
+            "total_entities": processed_entities,
+            "hue_entities": included_entities,
+            "excluded_entities": processed_entities - included_entities,
+            "excluded_by_reason": excluded_by_reason,
+            "hue_config_entries": len(hue_entry_ids),
+            "hue_devices": len(normalized_devices),
+        },
         "instance": {
             "name": config.get("location_name"),
             "version": config.get("version"),
@@ -560,6 +613,7 @@ def build_home_assistant_apple_home_sync_plan(
                         "hue_identifiers": sorted(identifiers),
                         "source_manufacturer": device.get("manufacturer"),
                         "source_model": device.get("model"),
+                        "source_availability": device.get("availability", "unknown"),
                         "candidates": [
                             {
                                 "id": item.get("id"),
@@ -568,6 +622,10 @@ def build_home_assistant_apple_home_sync_plan(
                                 "room_name": item.get("room_name"),
                                 "manufacturer": item.get("manufacturer"),
                                 "model": item.get("model"),
+                                "serial_number": item.get("serial_number"),
+                                "reachable": item.get("reachable"),
+                                "bridge_name": item.get("bridge_name"),
+                                "bridge_model": item.get("bridge_model"),
                             }
                             for item in candidates
                         ],
@@ -631,6 +689,7 @@ def build_home_assistant_apple_home_sync_plan(
                     "apple_serial_number": accessory.get("serial_number"),
                     "source_manufacturer": device.get("manufacturer"),
                     "source_model": device.get("model"),
+                    "source_availability": device.get("availability", "unknown"),
                 }
             )
 
@@ -669,6 +728,8 @@ def build_home_assistant_apple_home_sync_plan(
                 "apple_current_room_name": row.get("apple_room_name"),
                 "manufacturer": row.get("source_manufacturer"),
                 "model": row.get("source_model"),
+                "source_availability": row.get("source_availability", "unknown"),
+                "candidates": copy.deepcopy(row.get("candidates", [])),
             }
             for row in source_devices
         ]
@@ -719,6 +780,7 @@ def build_home_assistant_apple_home_sync_plan(
         "home": copy.deepcopy(home),
         "inventory_received_at": apple_inventory.get("received_at"),
         "source_inventory_captured_at": ha_inventory.get("captured_at"),
+        "source_filter_diagnostics": copy.deepcopy(ha_inventory.get("filter_diagnostics", {})),
         "rooms": room_rows,
         "devices": device_rows,
         "actions": moves,

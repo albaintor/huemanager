@@ -244,7 +244,7 @@ def _load_home_assistant_inventory(*, refresh: bool = False) -> dict[str, Any]:
         try:
             cached = json.loads(path.read_text(encoding="utf-8"))
             # Older inventories contain unrelated Home Assistant entities.
-            if isinstance(cached, dict) and cached.get("schema_version") == 2:
+            if isinstance(cached, dict) and cached.get("schema_version") == 3:
                 return cached
         except (OSError, ValueError, TypeError):
             pass
