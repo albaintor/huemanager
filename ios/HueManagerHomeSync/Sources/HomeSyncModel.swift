@@ -191,6 +191,10 @@ struct SyncRoomPlan: Codable, Identifiable {
     }
 }
 
+private struct ConfigurationRevisionResponse: Codable {
+    let revision: String
+}
+
 private struct SyncPlan: Codable {
     let rooms: [SyncRoomPlan]?
     let devices: [SyncDeviceRow]?
@@ -579,6 +583,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     private var automaticTimer: Timer?
     private var webRequestTimer: Timer?
     private var webRequestChecking = false
+    private var lastConfigurationRevision: String?
     @Published var webApplyRunning = false
     @Published var planApplying = false
     @Published var planLoading = false
@@ -644,6 +649,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     }
 
     private func clearPlanForContextChange() {
+        lastConfigurationRevision = nil
         moves = []
         roomPlans = []
         selectedHueRoomIDs = []
@@ -1686,7 +1692,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         }
     }
 
-    func loadPlan() async {
+    func loadPlan(publishFreshInventory: Bool = true) async {
         guard !planLoading else { return }
         planLoading = true
         defer { planLoading = false }
@@ -1697,8 +1703,10 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
             return
         }
 
-        await publishInventory()
-        guard !hasError else { return }
+        if publishFreshInventory {
+            await publishInventory()
+            guard !hasError else { return }
+        }
 
         do {
             status = "Analyse des correspondances \(sourceDisplayName) ↔ Maison…"
@@ -1904,6 +1912,32 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         )
     }
 
+    private func refreshSavedWebConfigurationIfNeeded() async {
+        guard let home = selectedHome, !syncScope.isEmpty else { return }
+        var query = URLComponents()
+        query.queryItems = [
+            URLQueryItem(name: "home_id", value: home.uniqueIdentifier.uuidString),
+            URLQueryItem(name: "bridge_profile", value: syncScope),
+        ]
+        guard let encoded = query.percentEncodedQuery else { return }
+        do {
+            let data = try await get(
+                path: "/api/apple-home/configuration-revision?" + encoded
+            )
+            let revision = try JSONDecoder().decode(
+                ConfigurationRevisionResponse.self, from: data
+            ).revision
+            guard revision != lastConfigurationRevision else { return }
+            lastConfigurationRevision = revision
+            // A saved web mapping or selection must update the iOS Apply button.
+            // Reuse the latest published Apple inventory: a configuration refresh
+            // must not overwrite it or trigger an expensive HomeKit serial scan.
+            await loadPlan(publishFreshInventory: roomPlans.isEmpty)
+        } catch {
+            // Polling a temporarily unavailable server must not erase the plan.
+        }
+    }
+
     func processWebApplyRequest() async {
         // Never initialize or operate HomeKit from a background launch.
         guard UIApplication.shared.applicationState == .active, homeKitLoaded,
@@ -1921,7 +1955,10 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
                   request.home_id == selectedHome?.uniqueIdentifier.uuidString,
                   request.bridge_profile == syncScope,
                   !automaticSyncRunning, !planApplying, !planLoading,
-                  UIApplication.shared.applicationState == .active else { return }
+                  UIApplication.shared.applicationState == .active else {
+                await refreshSavedWebConfigurationIfNeeded()
+                return
+            }
             webApplyRunning = true
             try await reportWebRequest(request, status: "running", message: "Claimed by iOS")
             claimed = request

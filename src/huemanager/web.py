@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import uuid
@@ -750,6 +751,23 @@ def update_apple_home_sync_result(request: AppleHomeSyncResultRequest) -> dict:
 
 def _apply_request_path() -> Path:
     return _store().path.parent / "apple-home-apply-request.json"
+
+
+@app.get("/api/apple-home/configuration-revision")
+def apple_home_configuration_revision(home_id: str, bridge_profile: str) -> dict:
+    """Cheap fingerprint for iOS to detect saved web changes without re-reading Hue."""
+    state = _load_apple_home()
+    configuration = {
+        "rooms": get_room_map(state, bridge_profile, home_id),
+        "accessories": get_accessory_map(state, bridge_profile, home_id),
+        "selected_rooms": get_room_selection(state, bridge_profile, home_id),
+    }
+    canonical = json.dumps(configuration, sort_keys=True, separators=(",", ":"))
+    return {
+        "home_id": home_id,
+        "bridge_profile": bridge_profile,
+        "revision": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+    }
 
 
 @app.get("/api/apple-home/apply-request")

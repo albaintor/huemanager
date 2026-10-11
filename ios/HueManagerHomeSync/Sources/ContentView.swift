@@ -265,11 +265,13 @@ struct ContentView: View {
                 model.homes.isEmpty ||
                 model.pendingMoves == 0
             )
-            Text("Appliquer déplace réellement les accessoires du plan dans Apple Maison, uniquement pour les pièces cochées. Publier l’inventaire ne déplace rien.")
+            Text(model.pendingMoves == 0
+                ? "Aucun déplacement chargé dans les pièces cochées. L’app actualise automatiquement les changements enregistrés depuis le web ; Analyser force une nouvelle lecture d’Apple Maison."
+                : "Appliquer déplace les \\(model.pendingMoves) accessoires proposés dans les pièces cochées. Publier l’inventaire ne déplace rien.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Text("Depuis le web, Enregistrer conserve la configuration. Enregistrer et appliquer déclenche les déplacements ici : garde cette app ouverte avec la même maison, source et pont. Les demandes sont vérifiées toutes les 5 secondes ; le mode automatique n’a pas besoin d’être activé.")
+            Text("Depuis le web, Enregistrer met à jour les associations et les pièces cochées ; le plan est automatiquement relu ici lorsque cette app est ouverte. Enregistrer et appliquer demande aussi l’exécution des déplacements. L’app et le web doivent utiliser la même maison, source et pont.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
