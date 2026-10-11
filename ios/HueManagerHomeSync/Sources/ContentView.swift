@@ -267,7 +267,7 @@ struct ContentView: View {
             )
             Text(model.pendingMoves == 0
                 ? "Aucun déplacement chargé dans les pièces cochées. L’app actualise automatiquement les changements enregistrés depuis le web ; Analyser force une nouvelle lecture d’Apple Maison."
-                : "Appliquer déplace les \\(model.pendingMoves) accessoires proposés dans les pièces cochées. Publier l’inventaire ne déplace rien.")
+                : "Appliquer déplace les \(model.pendingMoves) accessoires proposés dans les pièces cochées. Publier l’inventaire ne déplace rien.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 

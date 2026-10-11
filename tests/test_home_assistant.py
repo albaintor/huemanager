@@ -252,7 +252,7 @@ def test_inventory_contains_only_entities_from_the_hue_integration() -> None:
         ],
     )
 
-    assert inventory["schema_version"] == 2
+    assert inventory["schema_version"] == 3
     assert {device["id"] for device in inventory["devices"]} == {
         "hue-lamp", "entity:sensor.hue_standalone"
     }
@@ -294,7 +294,7 @@ def test_inventory_without_any_hue_entities_has_no_source_rooms() -> None:
     )
     assert inventory["devices"] == []
     assert inventory["rooms"] == []
-\n
+
 
 def test_hue_filter_requires_both_platform_and_config_entry_and_tracks_status() -> None:
     inventory = normalize_home_assistant_inventory(
