@@ -895,7 +895,9 @@
       "apple.filter.already_correct": "Déjà dans la bonne pièce",
       "apple.filter.unmatched_accessory": "Non reconnus",
       "apple.filter.ambiguous_accessory": "Correspondances ambiguës",
-      "apple.filterHelp": "Les boutons activés affichent ces catégories. Les filtres masquent uniquement les lignes : ils ne changent ni la sélection des pièces ni les déplacements à appliquer.",
+      "apple.filterHelp": "Les boutons activés affichent ces catégories. Les pièces sans accessoire visible sont également masquées. Les filtres ne changent ni la sélection des pièces ni les déplacements à appliquer.",
+      "apple.roomsVisible": "pièce(s) affichée(s)",
+      "apple.noVisibleRooms": "Aucune pièce ne contient d’accessoire correspondant aux filtres.",
       "apple.filteredEmpty": "Aucun accessoire visible avec ces filtres.",
       "apple.status.move": "À déplacer",
       "apple.status.missing_home_room": "Pièce cible à choisir",
@@ -1147,7 +1149,9 @@
       "apple.filter.already_correct": "Already in the right room",
       "apple.filter.unmatched_accessory": "Unrecognized",
       "apple.filter.ambiguous_accessory": "Ambiguous matches",
-      "apple.filterHelp": "Active buttons show these categories. Filters only hide rows: they do not change room selection or moves to apply.",
+      "apple.filterHelp": "Active buttons show these categories. Rooms with no visible accessories are hidden too. Filters do not change room selection or moves to apply.",
+      "apple.roomsVisible": "room(s) displayed",
+      "apple.noVisibleRooms": "No rooms contain accessories matching the filters.",
       "apple.filteredEmpty": "No accessories visible with these filters.",
       "apple.status.move": "To move",
       "apple.status.missing_home_room": "Choose target room",
@@ -3761,6 +3765,25 @@
       ? "ambiguous_accessory" : "unmatched_accessory";
   }
 
+  function appleRoomVisible(room) {
+    // Keep the original complete view until the user excludes a category.
+    if (Object.values(state.appleDeviceFilters).every(enabled => enabled !== false)) {
+      return true;
+    }
+    if ((room.hue_devices || []).some(appleDeviceVisible) ||
+        (room.planned_moves || []).length > 0) {
+      return true;
+    }
+    // Infrastructure and unrelated Home accessories must not keep a room
+    // visible when all of its relevant Hue devices have been filtered out.
+    return (room.apple_accessories || []).some(accessory =>
+      (isHomeAssistantAppleSource()
+        ? Boolean(accessory.matched_hue_device_id)
+        : (accessory.origin === "hue" || accessory.matched_hue_device_id)) &&
+      appleDeviceVisible({status: appleAccessoryStatus(accessory)})
+    );
+  }
+
   function appendDeviceBadge(root, label, cls = "") {
     const badge = document.createElement("span");
     badge.className = `pill ${cls}`.trim();
@@ -4168,7 +4191,21 @@
     mappingRoot.append(filters, filterHelp);
 
     const appleRooms = state.appleHome?.inventory?.rooms || [];
-    for (const room of plan.rooms || []) {
+    const visibleRooms = (plan.rooms || []).filter(appleRoomVisible);
+    if (visibleRooms.length !== (plan.rooms || []).length) {
+      const visibleCount = document.createElement("span");
+      visibleCount.className = "pill";
+      visibleCount.textContent =
+        `${visibleRooms.length}/${plan.rooms.length} ${t("apple.roomsVisible")}`;
+      filters.append(visibleCount);
+    }
+    if (!visibleRooms.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = t("apple.noVisibleRooms");
+      mappingRoot.append(empty);
+    }
+    for (const room of visibleRooms) {
       const card = document.createElement("div");
       const roomSelected = state.appleSelectedRoomIds.has(room.hue_room_id);
       card.className = roomSelected ? "apple-room-card" : "apple-room-card not-selected";

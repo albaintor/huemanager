@@ -107,13 +107,14 @@ class HomeAssistantClient:
         ws = self._ws_connect()
         try:
             commands = [
-                ("areas", "config/area_registry/list"),
-                ("devices", "config/device_registry/list"),
-                ("entities", "config/entity_registry/list"),
+                ("areas", "config/area_registry/list", {}),
+                ("devices", "config/device_registry/list", {}),
+                ("entities", "config/entity_registry/list", {}),
+                ("hue_config_entries", "config_entries/get", {"domain": "hue"}),
             ]
             result: dict[str, Any] = {}
-            for command_id, (key, command_type) in enumerate(commands, start=1):
-                ws.send(json.dumps({"id": command_id, "type": command_type}))
+            for command_id, (key, command_type, options) in enumerate(commands, start=1):
+                ws.send(json.dumps({"id": command_id, "type": command_type, **options}))
                 while True:
                     payload = json.loads(ws.recv())
                     if payload.get("id") != command_id:
@@ -133,6 +134,7 @@ class HomeAssistantClient:
             areas=result.get("areas", []),
             devices=result.get("devices", []),
             entities=result.get("entities", []),
+            hue_config_entries=result.get("hue_config_entries", []),
         )
 
 
@@ -189,6 +191,7 @@ def normalize_home_assistant_inventory(
     areas: list[dict[str, Any]],
     devices: list[dict[str, Any]],
     entities: list[dict[str, Any]],
+    hue_config_entries: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     area_rows = [
         {
@@ -201,6 +204,15 @@ def normalize_home_assistant_inventory(
     ]
     area_by_id = {row["id"]: row for row in area_rows}
 
+    # The entity domain (light, sensor, switch...) is not the integration.
+    # Keep only entities registered by Hue, including devices shared with
+    # non-Hue integrations. Config entries are a fallback for missing platform.
+    hue_entry_ids = {
+        str(entry["entry_id"])
+        for entry in (hue_config_entries or [])
+        if entry.get("entry_id") and str(entry.get("domain") or "hue").lower() == "hue"
+    }
+
     device_by_id = {
         str(device.get("id")): copy.deepcopy(device)
         for device in devices
@@ -212,7 +224,12 @@ def normalize_home_assistant_inventory(
     standalone_entities: list[dict[str, Any]] = []
     for entity in entities:
         entity_id = str(entity.get("entity_id") or "")
-        if not entity_id:
+        if not entity_id or entity.get("disabled_by"):
+            continue
+        if (
+            str(entity.get("platform") or "").lower() != "hue"
+            and str(entity.get("config_entry_id") or "") not in hue_entry_ids
+        ):
             continue
         device_id = str(entity.get("device_id") or "")
         area_id = str(entity.get("area_id") or "")
@@ -225,7 +242,10 @@ def normalize_home_assistant_inventory(
 
     normalized_devices: list[dict[str, Any]] = []
     for device_id, device in device_by_id.items():
-        if str(device.get("entry_type") or "").lower() == "service":
+        if (
+            str(device.get("entry_type") or "").lower() == "service"
+            or device_id not in entities_by_device
+        ):
             continue
         area_id, area_source = _device_area(
             device,
@@ -275,8 +295,8 @@ def normalize_home_assistant_inventory(
             }
         )
 
-    # Standalone registry entities have no physical-device metadata. They are
-    # included for manual association, but automatic matching remains conservative.
+    # Only standalone Hue entities are considered for manual association.
+    # They have no physical-device metadata for automatic matching.
     for entity in standalone_entities:
         entity_id = str(entity.get("entity_id") or "")
         area_id = str(entity.get("area_id") or "")
@@ -313,6 +333,8 @@ def normalize_home_assistant_inventory(
             for device in normalized_devices
             if device.get("area_id") == area["id"] and not device.get("disabled")
         ]
+        if not room_devices:
+            continue
         rooms.append(
             {
                 "id": area["id"],
@@ -325,6 +347,7 @@ def normalize_home_assistant_inventory(
     return {
         "source_kind": "home_assistant",
         "source_label": "Home Assistant",
+        "schema_version": 2,
         "captured_at": _now(),
         "instance": {
             "name": config.get("location_name"),

@@ -240,11 +240,17 @@ def _save_home_assistant_inventory(inventory: dict[str, Any]) -> None:
 
 def _load_home_assistant_inventory(*, refresh: bool = False) -> dict[str, Any]:
     path = _home_assistant_inventory_path()
-    if refresh or not path.exists():
-        inventory = _home_assistant_client().registry_inventory()
-        _save_home_assistant_inventory(inventory)
-        return inventory
-    return json.loads(path.read_text(encoding="utf-8"))
+    if not refresh and path.exists():
+        try:
+            cached = json.loads(path.read_text(encoding="utf-8"))
+            # Older inventories contain unrelated Home Assistant entities.
+            if isinstance(cached, dict) and cached.get("schema_version") == 2:
+                return cached
+        except (OSError, ValueError, TypeError):
+            pass
+    inventory = _home_assistant_client().registry_inventory()
+    _save_home_assistant_inventory(inventory)
+    return inventory
 
 
 def _diagnostic_dir() -> Path:

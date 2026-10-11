@@ -80,7 +80,10 @@ def test_normalize_home_assistant_inventory_uses_area_and_parent_area() -> None:
                 "name": "Service room",
             },
         ],
-        entities=[],
+        entities=[
+            {"entity_id": "light.parent", "device_id": "parent", "platform": "hue"},
+            {"entity_id": "sensor.child", "device_id": "child", "platform": "hue"},
+        ],
     )
 
     devices = {item["id"]: item for item in inventory["devices"]}
@@ -218,3 +221,75 @@ def test_plan_supports_manual_accessory_mapping() -> None:
     assert row["apple_accessory_id"] == "apple-sensor"
     assert row["match_method"] == "manual_accessory"
     assert row["status"] == "move"
+
+
+def test_inventory_contains_only_entities_from_the_hue_integration() -> None:
+    inventory = normalize_home_assistant_inventory(
+        config={},
+        areas=[
+            {"area_id": "living", "name": "Salon"},
+            {"area_id": "other", "name": "Autre"},
+        ],
+        devices=[
+            {"id": "hue-lamp", "name": "Lampadaire", "area_id": "living"},
+            {"id": "other-lamp", "name": "Autre lampe", "area_id": "other",
+             "manufacturer": "Signify Netherlands B.V."},
+        ],
+        entities=[
+            {"entity_id": "light.lamp", "device_id": "hue-lamp", "platform": "hue"},
+            {"entity_id": "sensor.other_linked", "device_id": "hue-lamp", "platform": "template"},
+            {"entity_id": "light.other", "device_id": "other-lamp", "platform": "mqtt"},
+            {"entity_id": "sensor.hue_standalone", "area_id": "living",
+             "config_entry_id": "hue-entry"},
+            {"entity_id": "sensor.not_hue", "area_id": "other", "platform": "template"},
+            {"entity_id": "light.disabled_hue", "area_id": "other",
+             "platform": "hue", "disabled_by": "user"},
+        ],
+        hue_config_entries=[
+            {"entry_id": "hue-entry", "domain": "hue"},
+            {"entry_id": "other-entry", "domain": "mqtt"},
+        ],
+    )
+
+    assert inventory["schema_version"] == 2
+    assert {device["id"] for device in inventory["devices"]} == {
+        "hue-lamp", "entity:sensor.hue_standalone"
+    }
+    assert inventory["devices"][0]["entity_ids"] == ["light.lamp"]
+    assert [room["id"] for room in inventory["rooms"]] == ["living"]
+    assert len(inventory["rooms"][0]["devices"]) == 2
+
+
+def test_non_hue_entities_never_produce_apple_home_moves() -> None:
+    inventory = normalize_home_assistant_inventory(
+        config={},
+        areas=[{"area_id": "living", "name": "Salon"}],
+        devices=[
+            {"id": "hue-lamp", "name": "Lampadaire", "model": "LCA001",
+             "area_id": "living",
+             "connections": [["mac", "AA:BB:CC:DD:EE:FF:00:01"]]},
+            {"id": "foreign-sensor", "name": "Capteur bureau", "model": "SENSOR-1",
+             "area_id": "living"},
+        ],
+        entities=[
+            {"entity_id": "light.lampadaire", "device_id": "hue-lamp", "platform": "hue"},
+            {"entity_id": "sensor.bureau", "device_id": "foreign-sensor", "platform": "mqtt"},
+        ],
+    )
+    plan = build_home_assistant_apple_home_sync_plan(inventory, _apple_inventory())
+
+    assert [device["source_device_id"] for device in plan["devices"]] == ["hue-lamp"]
+    assert len(plan["actions"]) == 1
+    assert plan["actions"][0]["accessory_id"] == "apple-lamp"
+
+
+def test_inventory_without_any_hue_entities_has_no_source_rooms() -> None:
+    inventory = normalize_home_assistant_inventory(
+        config={},
+        areas=[{"area_id": "living", "name": "Salon"}],
+        devices=[{"id": "other", "name": "Lampe", "area_id": "living"}],
+        entities=[{"entity_id": "light.other", "device_id": "other",
+                   "platform": "mqtt"}],
+    )
+    assert inventory["devices"] == []
+    assert inventory["rooms"] == []
