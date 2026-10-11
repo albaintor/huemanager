@@ -64,6 +64,9 @@ struct SyncAccessoryCandidate: Codable, Identifiable {
     let deviceType: String?
     let model: String?
     let serialNumber: String?
+    let manufacturer: String?
+    let bridgeName: String?
+    let reachable: Bool?
 
     var typeName: String {
         let key: String
@@ -82,18 +85,30 @@ struct SyncAccessoryCandidate: Codable, Identifiable {
         return NSLocalizedString(key, comment: "Accessory type")
     }
 
+    var reachabilityLabel: String {
+        guard let reachable else { return "État inconnu" }
+        return reachable ? "Accessible" : "Sans réponse (Apple Maison)"
+    }
+
     var choiceLabel: String {
-        [roomName ?? NSLocalizedString("Sans pièce", comment: "Room"), name, typeName,
-         serialNumber ?? model, "ID " + id]
+        [
+            reachabilityLabel,
+            roomName ?? NSLocalizedString("Sans pièce", comment: "Room"),
+            name, typeName, manufacturer, model,
+            serialNumber.map { "SN " + $0 },
+            bridgeName.map { "Pont " + $0 },
+            "ID " + id,
+        ]
             .compactMap { $0 }
             .joined(separator: " · ")
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, model
+        case id, name, model, manufacturer, reachable
         case roomName = "room_name"
         case deviceType = "device_type"
         case serialNumber = "serial_number"
+        case bridgeName = "bridge_name"
     }
 }
 
