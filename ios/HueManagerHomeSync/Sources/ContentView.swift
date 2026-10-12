@@ -2,22 +2,118 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var model: HomeSyncModel
+    @State private var selectedTab: AppTab = .connection
+
+    private enum AppTab: Hashable {
+        case connection
+        case synchronization
+        case associations
+        case reassociation
+    }
+
+    private var operationsBusy: Bool {
+        model.webApplyRunning || model.planApplying ||
+            model.planLoading || model.automaticSyncRunning
+    }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                connectionSection
-                serverActivitySection
-                syncSection
-                roomAssociationsSection
-                proposedMovesSection
-                if !model.usesHomeAssistantSource {
-                    reassociationSection
+        VStack(spacing: 0) {
+            serverActivityBanner
+            Divider()
+
+            TabView(selection: $selectedTab) {
+                NavigationStack {
+                    Form {
+                        connectionSection
+                        serverActivitySection
+                    }
+                    .navigationTitle("Connexion")
                 }
+                .tabItem { Label("Connexion", systemImage: "network") }
+                .tag(AppTab.connection)
+
+                NavigationStack {
+                    Form {
+                        syncSection
+                    }
+                    .navigationTitle("Synchronisation")
+                    .disabled(operationsBusy)
+                }
+                .tabItem { Label("Synchronisation", systemImage: "arrow.triangle.2.circlepath") }
+                .tag(AppTab.synchronization)
+
+                NavigationStack {
+                    Form {
+                        roomAssociationsSection
+                        proposedMovesSection
+                    }
+                    .navigationTitle("Pièces et impact")
+                    .disabled(operationsBusy)
+                }
+                .tabItem { Label("Pièces", systemImage: "house") }
+                .tag(AppTab.associations)
+
+                NavigationStack {
+                    Form {
+                        if model.usesHomeAssistantSource {
+                            Section("Réassociation Apple Home") {
+                                Text(
+                                    "La réassociation nécessite une source Philips Hue. " +
+                                    "Sélectionne Philips Hue dans l’onglet Synchronisation."
+                                )
+                                .foregroundStyle(.secondary)
+                            }
+                        } else {
+                            reassociationSection
+                        }
+                    }
+                    .navigationTitle("Réassociation")
+                    .disabled(operationsBusy)
+                }
+                .tabItem { Label("Réassociation", systemImage: "arrow.uturn.backward") }
+                .tag(AppTab.reassociation)
             }
-            .navigationTitle("HueManager Home Sync")
-            .disabled(model.webApplyRunning || model.planApplying || model.planLoading || model.automaticSyncRunning)
         }
+    }
+
+    private var serverActivityBanner: some View {
+        HStack(spacing: 10) {
+            if model.serverActivityInProgress {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName:
+                    model.serverActivityState == "Erreur" ? "exclamationmark.triangle.fill" :
+                    model.serverActivityState == "Terminé" ? "checkmark.circle.fill" : "circle"
+                )
+                .foregroundStyle(serverActivityColor)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text("Serveur")
+                        .fontWeight(.semibold)
+                    Text("·")
+                    Text(model.serverActivityState)
+                }
+                .font(.caption)
+                Text(model.serverActivityDetail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Button {
+                selectedTab = .connection
+            } label: {
+                Image(systemName: "list.bullet.rectangle")
+                    .accessibilityLabel("Voir le journal serveur")
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(.regularMaterial)
+        .accessibilityElement(children: .contain)
     }
 
     private var bridgeSelection: Binding<String> {
@@ -103,32 +199,7 @@ struct ContentView: View {
     }
 
     private var serverActivitySection: some View {
-        Section("Activité serveur") {
-            LabeledContent("État") {
-                HStack(spacing: 8) {
-                    if model.serverActivityInProgress {
-                        ProgressView()
-                    } else {
-                        Image(
-                            systemName: model.serverActivityState == "Erreur"
-                                ? "exclamationmark.triangle.fill"
-                                : (
-                                    model.serverActivityState == "Terminé"
-                                        ? "checkmark.circle.fill"
-                                        : "circle"
-                                )
-                        )
-                        .foregroundStyle(serverActivityColor)
-                    }
-                    Text(model.serverActivityState)
-                }
-            }
-
-            Text(model.serverActivityDetail)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-
+        Section("Journal du serveur") {
             DisclosureGroup(
                 "Journal des échanges (\(model.serverActivityLog.count))"
             ) {
@@ -203,8 +274,8 @@ struct ContentView: View {
 
                 Text(
                     "Ce pont est utilisé pour l’analyse, les déplacements, le mode " +
-                    "automatique, les demandes web et la réassociation Apple Home en bas " +
-                    "de l’écran. Il ne limite pas l’inventaire Apple Maison publié."
+                    "automatique et les demandes web. Il sert aussi dans l’onglet " +
+                    "Réassociation. Il ne limite pas l’inventaire Apple Maison publié."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
