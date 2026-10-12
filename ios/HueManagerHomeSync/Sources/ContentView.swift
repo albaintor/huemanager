@@ -9,11 +9,11 @@ struct ContentView: View {
                 connectionSection
                 serverActivitySection
                 syncSection
+                roomAssociationsSection
+                proposedMovesSection
                 if !model.usesHomeAssistantSource {
                     reassociationSection
                 }
-                roomAssociationsSection
-                proposedMovesSection
             }
             .navigationTitle("HueManager Home Sync")
             .disabled(model.webApplyRunning || model.planApplying || model.planLoading || model.automaticSyncRunning)
@@ -53,46 +53,6 @@ struct ContentView: View {
                 .keyboardType(.URL)
                 .autocorrectionDisabled()
 
-            Picker("Source de référence", selection: $model.syncSource) {
-                Text("Philips Hue").tag("hue")
-                Text("Home Assistant").tag("home_assistant")
-            }
-
-            if model.usesHomeAssistantSource {
-                LabeledContent("Source", value: "Home Assistant via HueManager")
-                Text(
-                    "L’URL et le Long-Lived Access Token Home Assistant se configurent " +
-                    "dans l’onglet Apple Maison de l’interface web HueManager."
-                )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            } else if model.bridges.isEmpty {
-                LabeledContent("Bridge Hue") {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                        Text("Chargement…")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Button("Charger les Bridges HueManager") {
-                    Task { await model.loadBridges() }
-                }
-            } else {
-                Picker("Pont utilisé pour la synchronisation", selection: bridgeSelection) {
-                    ForEach(model.bridges) { bridge in
-                        Text("\(bridge.name) · \(bridge.host)")
-                            .tag(bridge.name)
-                    }
-                }
-            }
-
-            Text(NSLocalizedString(model.usesHomeAssistantSource
-                 ? "La source Home Assistant utilise ses zones et appareils. Aucun pont Hue sélectionné n’intervient."
-                 : "Le pont sélectionné est utilisé par Analyser, Appliquer, le mode automatique, les demandes web et la réassociation. Il ne filtre pas l’inventaire Apple publié et ne sert pas au test de connexion HueManager.", comment: "Selected source scope"))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
             if model.homes.isEmpty {
                 LabeledContent("Maison Apple") {
                     HStack(spacing: 8) {
@@ -118,23 +78,6 @@ struct ContentView: View {
             )
             LabeledContent("Maisons détectées", value: "\(model.homes.count)")
 
-            Button {
-                Task { await model.refreshAndPublishInventory() }
-            } label: {
-                HStack {
-                    if model.inventoryPublishing {
-                        ProgressView()
-                    }
-                    Text("Actualiser et publier l’inventaire")
-                }
-            }
-            .disabled(!model.homeKitLoaded || model.inventoryPublishing)
-
-            LabeledContent(
-                "Dernier inventaire publié",
-                value: model.lastPublishedInventoryDisplay
-            )
-
             Text(model.homeKitDiagnostic)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -151,7 +94,7 @@ struct ContentView: View {
                 }
             }
             .disabled(model.connectionTesting)
-            Text("Actualiser et publier relit toute la maison Apple sélectionnée puis l’envoie au web, sans déplacement. Tester HueManager vérifie le serveur, pas le pont Hue.")
+            Text("Tester HueManager vérifie uniquement le serveur. La maison Apple sélectionnée sert à la publication de l’inventaire et à la synchronisation, sans dépendre d’un pont Hue.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -229,14 +172,52 @@ struct ContentView: View {
 
     private var syncSection: some View {
         Section("Synchronisation") {
+            Picker("Source de référence", selection: $model.syncSource) {
+                Text("Philips Hue").tag("hue")
+                Text("Home Assistant").tag("home_assistant")
+            }
+
+            if model.usesHomeAssistantSource {
+                Text(
+                    "Synchronisation avec les zones et appareils de l’intégration Philips Hue " +
+                    "dans Home Assistant. La connexion Home Assistant se configure depuis " +
+                    "l’interface web HueManager. Aucun pont Hue n’est sélectionné ici."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            } else if model.bridges.isEmpty {
+                LabeledContent("Pont Philips Hue") {
+                    Text("Aucun pont chargé")
+                        .foregroundStyle(.secondary)
+                }
+                Button("Charger les ponts HueManager") {
+                    Task { await model.loadBridges() }
+                }
+            } else {
+                Picker("Pont Philips Hue à synchroniser", selection: bridgeSelection) {
+                    ForEach(model.bridges) { bridge in
+                        Text("\(bridge.name) · \(bridge.host)")
+                            .tag(bridge.name)
+                    }
+                }
+
+                Text(
+                    "Ce pont est utilisé pour l’analyse, les déplacements, le mode " +
+                    "automatique, les demandes web et la réassociation Apple Home en bas " +
+                    "de l’écran. Il ne limite pas l’inventaire Apple Maison publié."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
             Button {
-                Task { await model.publishInventory() }
+                Task { await model.refreshAndPublishInventory() }
             } label: {
                 HStack {
                     if model.inventoryPublishing {
                         ProgressView()
                     }
-                    Text("Publier l’inventaire Maison")
+                    Text("Actualiser et publier l’inventaire Apple Maison")
                 }
             }
             .disabled(
@@ -245,13 +226,26 @@ struct ContentView: View {
                 model.inventoryPublishing
             )
 
+            LabeledContent(
+                "Dernier inventaire publié",
+                value: model.lastPublishedInventoryDisplay
+            )
+            Text(
+                "Relit la maison Apple sélectionnée et publie ses accessoires sur " +
+                "HueManager, sans effectuer de déplacement. L’analyse ci-dessous " +
+                "publie également un inventaire à jour."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
             Button("Analyser et afficher le détail") {
                 Task { await model.loadPlan() }
             }
             .disabled(
                 !model.homeKitLoaded ||
                 model.homes.isEmpty ||
-                (!model.usesHomeAssistantSource && model.bridges.isEmpty)
+                (!model.usesHomeAssistantSource &&
+                    (model.bridges.isEmpty || model.bridgeProfile.isEmpty))
             )
             Text("Analyser publie un inventaire frais puis compare la maison à la source sélectionnée (et au pont sélectionné pour Hue). Aucun accessoire n’est déplacé.")
                 .font(.caption)
@@ -271,7 +265,7 @@ struct ContentView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            Text("Depuis le web, Enregistrer met à jour les associations et les pièces cochées ; le plan est automatiquement relu ici lorsque cette app est ouverte. Enregistrer et appliquer demande aussi l’exécution des déplacements. L’app et le web doivent utiliser la même maison, source et pont.")
+            Text("Depuis le web, Enregistrer conserve les associations et les pièces cochées ; l’app ouverte actualise alors le plan. Enregistrer et appliquer demande aussi leur déplacement. Vérifie la même maison, la même source et, en mode Hue, le même pont sur les deux interfaces.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
