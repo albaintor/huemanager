@@ -680,6 +680,65 @@ struct ContentView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if device.status == "ambiguous_accessory",
+               let candidates = device.candidates, !candidates.isEmpty {
+                DisclosureGroup("Identifier les candidats HomeKit (\(candidates.count))") {
+                    Text(
+                        "Teste chaque UUID séparément. « Identifier » demande à l’accessoire " +
+                        "de se signaler (clignotement possible). « Lire » vérifie une " +
+                        "caractéristique sans modifier son état. Une réponse positive " +
+                        "ne prouve pas à elle seule qu’il s’agit de la bonne lampe."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                    ForEach(candidates) { candidate in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(candidate.name)
+                                .font(.subheadline.weight(.semibold))
+                            Text("HomeKit : " + candidate.id)
+                                .font(.caption2.monospaced())
+                                .textSelection(.enabled)
+                            Text(candidate.choiceLabel)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                            HStack {
+                                Button("Identifier") {
+                                    Task {
+                                        await model.identifyHomeKitCandidate(candidate.id)
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                                Button("Tester la lecture") {
+                                    Task {
+                                        await model.readHomeKitCandidate(candidate.id)
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                            .disabled(model.candidateHomeKitChecking.contains(candidate.id))
+                            if model.candidateHomeKitChecking.contains(candidate.id) {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                            if let check = model.candidateHomeKitChecks[candidate.id] {
+                                Text(check)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                        .padding(.vertical, 5)
+                    }
+                    Text(
+                        "Ne supprime aucun doublon avant d’avoir vérifié dans " +
+                        "Apple Maison lequel commande réellement la lampe."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                }
+            }
             let candidates = model.manualCandidates(for: device)
             if !candidates.isEmpty {
                 Picker("Association Apple manuelle", selection: Binding(
