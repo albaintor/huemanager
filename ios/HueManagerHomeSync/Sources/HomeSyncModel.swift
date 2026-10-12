@@ -565,6 +565,8 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
     @Published private(set) var accessoryMappings: [String: String] = [:]
     @Published private(set) var accessoryCandidates: [SyncAccessoryCandidate] = []
     @Published private(set) var accessoryMappingSaving = false
+    @Published private(set) var candidateHomeKitChecks: [String: String] = [:]
+    @Published private(set) var candidateHomeKitChecking: Set<String> = []
     @Published private(set) var status = "En attente de l’autorisation Apple Maison…"
     @Published private(set) var hasError = false
     @Published private(set) var homeKitAuthorization = "Indéterminée"
@@ -665,6 +667,7 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
 
     private func clearPlanForContextChange() {
         lastConfigurationRevision = nil
+        candidateHomeKitChecks = [:]
         moves = []
         roomPlans = []
         selectedHueRoomIDs = []
@@ -1768,6 +1771,67 @@ final class HomeSyncModel: NSObject, ObservableObject, HMHomeManagerDelegate {
         } catch {
             status = error.localizedDescription
             hasError = true
+        }
+    }
+
+    private func homeKitAccessory(with id: String) -> HMAccessory? {
+        selectedHome?.accessories.first { $0.uniqueIdentifier.uuidString == id }
+    }
+
+    func identifyHomeKitCandidate(_ id: String) async {
+        guard !candidateHomeKitChecking.contains(id) else { return }
+        guard let accessory = homeKitAccessory(with: id) else {
+            candidateHomeKitChecks[id] = "Absent de la maison Apple chargée sur cet iPhone."
+            return
+        }
+        candidateHomeKitChecking.insert(id)
+        defer { candidateHomeKitChecking.remove(id) }
+        candidateHomeKitChecks[id] = "Identification demandée…"
+        let errorText: String? = await withCheckedContinuation { continuation in
+            accessory.identify { error in
+                continuation.resume(returning: error?.localizedDescription)
+            }
+        }
+        if let errorText {
+            candidateHomeKitChecks[id] = "Identification impossible : " + errorText
+        } else {
+            candidateHomeKitChecks[id] =
+                "Commande d’identification acceptée. Vérifie si l’appareil a réagi."
+        }
+    }
+
+    func readHomeKitCandidate(_ id: String) async {
+        guard !candidateHomeKitChecking.contains(id) else { return }
+        guard let accessory = homeKitAccessory(with: id) else {
+            candidateHomeKitChecks[id] = "Absent de la maison Apple chargée sur cet iPhone."
+            return
+        }
+        candidateHomeKitChecking.insert(id)
+        defer { candidateHomeKitChecking.remove(id) }
+        let reachable = accessory.isReachable ? "oui" : "non"
+        let readable = accessory.services
+            .flatMap(\.characteristics)
+            .filter { $0.properties.contains(HMCharacteristicPropertyReadable) }
+        let characteristic = readable.first {
+            $0.characteristicType == HMCharacteristicTypePowerState
+        } ?? readable.first
+        guard let characteristic else {
+            candidateHomeKitChecks[id] =
+                "Aucune caractéristique HomeKit lisible (isReachable : \(reachable))."
+            return
+        }
+        candidateHomeKitChecks[id] = "Lecture HomeKit en cours…"
+        let errorText: String? = await withCheckedContinuation { continuation in
+            characteristic.readValue { error in
+                continuation.resume(returning: error?.localizedDescription)
+            }
+        }
+        if let errorText {
+            candidateHomeKitChecks[id] =
+                "Lecture échouée (isReachable : \(reachable)) : " + errorText
+        } else {
+            candidateHomeKitChecks[id] =
+                "Lecture HomeKit réussie (isReachable : \(reachable))."
         }
     }
 
