@@ -545,7 +545,7 @@ def diagnose_bridge(
             "disconnected_devices": disconnected_devices,
         },
         "network_map": build_zigbee_network_map(
-            resources, zigbee_devices, config.get("name") or client.bridge_name
+            resources, zigbee_devices, config.get("name") or getattr(client, "bridge_name", None)
         ),
         "reachability": {
             "unreachable_count": len(unreachable),

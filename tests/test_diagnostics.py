@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from huemanager.diagnostics import (
     build_zigbee_network_map,
-    collect_zigbee_devices,
     coexistence_report,
+    collect_zigbee_devices,
     diagnose_bridge,
     wifi_center_mhz,
     zigbee_center_mhz,
