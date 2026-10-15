@@ -76,6 +76,30 @@
     summary { cursor: pointer; padding: 8px 12px; color: var(--muted); }
     .details-body { padding: 0 12px 10px 28px; }
     .item { margin: 5px 0; }
+
+    .zigbee-map-section { margin: 18px 0; padding: 14px; background: var(--panel-2);
+      border: 1px solid var(--border); border-radius: 10px; }
+    .zigbee-map-section h3 { margin-bottom: 6px; }
+    .zigbee-map-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 10px 0; }
+    .zigbee-map-toolbar > div { flex: 1 1 210px; min-width: 0; }
+    .zigbee-map-hub { margin: 16px auto 8px; padding: 12px 18px; width: fit-content; max-width: 100%;
+      border: 2px solid var(--accent); border-radius: 12px; text-align: center; background: var(--panel); }
+    .zigbee-map-hub strong { display: block; }
+    .zigbee-map-rooms { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 12px; margin: 16px 0; padding-top: 17px; border-top: 2px dashed var(--border); }
+    .zigbee-map-room { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; min-width: 0; }
+    .zigbee-map-room > summary { padding: 12px; display: list-item; font-weight: 650; color: var(--text); }
+    .zigbee-map-room .zigbee-map-count { color: var(--muted); font-size: 12px; }
+    .zigbee-map-device-list { display: grid; gap: 7px; padding: 6px 10px 12px; max-height: 400px; overflow-y: auto; }
+    .zigbee-map-device { border: 1px solid var(--border); border-left: 4px solid var(--muted);
+      padding: 9px; border-radius: 7px; min-width: 0; overflow-wrap: anywhere; }
+    .zigbee-map-device.connected { border-left-color: var(--good); }
+    .zigbee-map-device.problem { border-left-color: var(--bad); }
+    .zigbee-map-device.unknown { border-left-color: var(--warn); }
+    .zigbee-map-device strong { display: block; }
+    .zigbee-map-device .muted { font-size: 12px; }
+    .zigbee-map-device .pill { margin: 5px 5px 0 0; }
+    .zigbee-map-legend { margin-top: 8px; font-size: 12px; color: var(--muted); }
     .diagnostic-device-option {
       display: flex;
       align-items: flex-start;
@@ -512,6 +536,33 @@
         </div>
         <div id="diagnosticSummary" class="audit-summary"></div>
         <div id="diagnosticFindings"></div>
+
+        <div class="zigbee-map-section">
+          <h3 data-i18n="zigbeeMap.title">Carte logique Zigbee</h3>
+          <p class="muted" data-i18n="zigbeeMap.description">
+            Organisation des appareils par pièce, et non carte des liaisons radio réelles.
+            Le pont Hue ne fournit ni puissance RSSI ni qualité LQI.
+          </p>
+          <div class="zigbee-map-toolbar">
+            <div>
+              <label for="zigbeeMapSearch" data-i18n="zigbeeMap.search">Rechercher un appareil ou une pièce</label>
+              <input id="zigbeeMapSearch" type="search" autocomplete="off" data-i18n-placeholder="zigbeeMap.searchPlaceholder" placeholder="Nom, modèle, adresse MAC…">
+            </div>
+            <div>
+              <label for="zigbeeMapFilter" data-i18n="zigbeeMap.filter">Afficher</label>
+              <select id="zigbeeMapFilter">
+                <option value="all" data-i18n="zigbeeMap.filterAll">Tous les appareils</option>
+                <option value="problems" data-i18n="zigbeeMap.filterProblems">Anomalies et états inconnus</option>
+                <option value="connected" data-i18n="zigbeeMap.filterConnected">Connectés uniquement</option>
+              </select>
+            </div>
+          </div>
+          <div id="zigbeeMapOverview" class="audit-summary"></div>
+          <div id="zigbeeNetworkMap" class="muted" data-i18n="zigbeeMap.empty">Lancer un diagnostic pour afficher la carte.</div>
+          <p class="zigbee-map-legend" data-i18n="zigbeeMap.legend">
+            Les regroupements et pointillés indiquent une appartenance logique à une pièce, jamais une connexion ou un trajet Zigbee observé.
+          </p>
+        </div>
         <details id="diagnosticIgnoredDetails">
           <summary data-i18n="diagnostics.ignoredTitle">Appareils déconnectés et exclusions</summary>
           <p class="muted" data-i18n="diagnostics.ignoredHelp">
@@ -782,6 +833,34 @@
       "diagnostics.samples": "Mesures API",
       "diagnostics.run": "Diagnostiquer",
       "diagnostics.copy": "Copier le JSON",
+      "zigbeeMap.title": "Carte logique Zigbee",
+      "zigbeeMap.description": "Appareils regroupés par pièce, avec leur état de connexion réel. Il ne s’agit pas d’une carte des liaisons radio : le pont Hue ne fournit ni RSSI ni LQI.",
+      "zigbeeMap.search": "Rechercher un appareil ou une pièce",
+      "zigbeeMap.searchPlaceholder": "Nom, modèle, adresse MAC…",
+      "zigbeeMap.filter": "Afficher",
+      "zigbeeMap.filterAll": "Tous les appareils",
+      "zigbeeMap.filterProblems": "Anomalies et états inconnus",
+      "zigbeeMap.filterConnected": "Connectés uniquement",
+      "zigbeeMap.empty": "Lancer un diagnostic pour afficher la carte.",
+      "zigbeeMap.legend": "Les regroupements et pointillés indiquent une organisation logique, pas une liaison radio ou un relais Zigbee.",
+      "zigbeeMap.bridge": "Pont Hue",
+      "zigbeeMap.logical": "Organisation par pièces, routage réel inconnu",
+      "zigbeeMap.unassigned": "Sans pièce",
+      "zigbeeMap.devices": "appareils",
+      "zigbeeMap.visible": "visibles",
+      "zigbeeMap.issues": "à vérifier",
+      "zigbeeMap.status": "État",
+      "zigbeeMap.connected": "Connecté",
+      "zigbeeMap.disconnected": "Déconnecté",
+      "zigbeeMap.connectivity_issue": "Problème de connexion",
+      "zigbeeMap.unidirectional_incoming": "Communication entrante uniquement",
+      "zigbeeMap.unknown": "Inconnu",
+      "zigbeeMap.rssi": "Puissance RSSI",
+      "zigbeeMap.lqi": "Qualité LQI",
+      "zigbeeMap.na": "Non disponible via Hue",
+      "zigbeeMap.battery": "Batterie",
+      "zigbeeMap.noMatch": "Aucun appareil ne correspond aux filtres.",
+      "zigbeeMap.noDevice": "Aucun appareil Zigbee exposé par ce pont.",
       "diagnostics.ignoredTitle": "Appareils déconnectés et exclusions",
       "diagnostics.ignoredHelp": "Coche les appareils volontairement coupés électriquement pour les exclure des surveillances futures. Les appareils déjà déconnectés au démarrage d’une surveillance sont aussi exclus automatiquement de l’analyse de flapping.",
       "diagnostics.saveIgnored": "Enregistrer les exclusions",
@@ -1045,6 +1124,34 @@
       "diagnostics.samples": "API samples",
       "diagnostics.run": "Run diagnostics",
       "diagnostics.copy": "Copy JSON",
+      "zigbeeMap.title": "Logical Zigbee map",
+      "zigbeeMap.description": "Devices grouped by room, with their actual connectivity status. This is not a radio routing map: the Hue Bridge exposes neither RSSI nor LQI.",
+      "zigbeeMap.search": "Search for a device or room",
+      "zigbeeMap.searchPlaceholder": "Name, model, MAC address…",
+      "zigbeeMap.filter": "Show",
+      "zigbeeMap.filterAll": "All devices",
+      "zigbeeMap.filterProblems": "Issues and unknown states",
+      "zigbeeMap.filterConnected": "Connected only",
+      "zigbeeMap.empty": "Run diagnostics to display the map.",
+      "zigbeeMap.legend": "Groups and dashed lines denote logical organization, not observed radio links or Zigbee repeaters.",
+      "zigbeeMap.bridge": "Hue Bridge",
+      "zigbeeMap.logical": "Grouped by room; actual routing unknown",
+      "zigbeeMap.unassigned": "No room",
+      "zigbeeMap.devices": "devices",
+      "zigbeeMap.visible": "visible",
+      "zigbeeMap.issues": "to check",
+      "zigbeeMap.status": "Status",
+      "zigbeeMap.connected": "Connected",
+      "zigbeeMap.disconnected": "Disconnected",
+      "zigbeeMap.connectivity_issue": "Connectivity issue",
+      "zigbeeMap.unidirectional_incoming": "Incoming only",
+      "zigbeeMap.unknown": "Unknown",
+      "zigbeeMap.rssi": "RSSI signal",
+      "zigbeeMap.lqi": "LQI link quality",
+      "zigbeeMap.na": "Not available via Hue",
+      "zigbeeMap.battery": "Battery",
+      "zigbeeMap.noMatch": "No devices match the filters.",
+      "zigbeeMap.noDevice": "No Zigbee devices exposed by this Bridge.",
       "diagnostics.ignoredTitle": "Disconnected devices and exclusions",
       "diagnostics.ignoredHelp": "Select devices that are intentionally power-cut to exclude them from future monitoring. Devices already disconnected when monitoring starts are also automatically excluded from flapping analysis.",
       "diagnostics.saveIgnored": "Save exclusions",
@@ -2032,6 +2139,134 @@
   }
 
 
+
+  function renderZigbeeNetworkMap(data) {
+    const map = data?.network_map;
+    const root = $("zigbeeNetworkMap");
+    const overview = $("zigbeeMapOverview");
+    root.replaceChildren();
+    overview.replaceChildren();
+    if (!map) {
+      root.textContent = t("zigbeeMap.empty");
+      return;
+    }
+
+    const devices = map.devices || [];
+    const groups = map.groups || [];
+    const byId = new Map(devices.map(device => [device.id, device]));
+    const search = $("zigbeeMapSearch").value.trim().toLocaleLowerCase();
+    const filter = $("zigbeeMapFilter").value;
+    const hasIssue = device => device.health !== "connected";
+    const eligible = device => {
+      if (filter === "problems" && !hasIssue(device)) return false;
+      if (filter === "connected" && hasIssue(device)) return false;
+      if (!search) return true;
+      const fields = [
+        device.name, device.model, device.manufacturer, device.device_kind,
+        ...(device.rooms || []), ...(device.connectivity || []).map(s => s.mac_address)
+      ];
+      return fields.some(value => String(value || "").toLocaleLowerCase().includes(search));
+    };
+    const visibleGroups = groups.map(group => ({
+      group,
+      devices: (group.device_ids || []).map(id => byId.get(id)).filter(d => d && eligible(d))
+    })).filter(entry => entry.devices.length);
+    const visibleCount = visibleGroups.reduce((sum, entry) => sum + entry.devices.length, 0);
+    const issueCount = devices.filter(hasIssue).length;
+
+    for (const [text, kind] of [
+      [devices.length + " " + t("zigbeeMap.devices"), ""],
+      [visibleCount + " " + t("zigbeeMap.visible"), ""],
+      [issueCount + " " + t("zigbeeMap.issues"), issueCount ? "warn" : "good"],
+      [t("zigbeeMap.rssi") + "/LQI : " + t("zigbeeMap.na"), ""]
+    ]) {
+      const chip = document.createElement("span");
+      chip.className = ("pill " + kind).trim();
+      chip.textContent = text;
+      overview.append(chip);
+    }
+
+    if (!devices.length) {
+      root.textContent = t("zigbeeMap.noDevice");
+      return;
+    }
+    const hub = document.createElement("div");
+    hub.className = "zigbee-map-hub";
+    const hubName = document.createElement("strong");
+    hubName.textContent = map.bridge?.name || t("zigbeeMap.bridge");
+    const hubNote = document.createElement("div");
+    hubNote.className = "muted";
+    hubNote.textContent = t("zigbeeMap.logical");
+    hub.append(hubName, hubNote);
+    root.append(hub);
+
+    if (!visibleGroups.length) {
+      const empty = document.createElement("p");
+      empty.textContent = t("zigbeeMap.noMatch");
+      root.append(empty);
+      return;
+    }
+
+    const roomGrid = document.createElement("div");
+    roomGrid.className = "zigbee-map-rooms";
+    for (const entry of visibleGroups) {
+      const details = document.createElement("details");
+      details.className = "zigbee-map-room";
+      details.open = filter !== "all" || !!search
+        || entry.devices.some(hasIssue) || visibleGroups.length <= 3;
+      const heading = document.createElement("summary");
+      const roomName = entry.group.name || t("zigbeeMap.unassigned");
+      heading.textContent = roomName + " — ";
+      const count = document.createElement("span");
+      count.className = "zigbee-map-count";
+      count.textContent = entry.devices.length + "/" + entry.group.device_ids.length
+        + " " + t("zigbeeMap.devices");
+      heading.append(count);
+      details.append(heading);
+
+      const deviceList = document.createElement("div");
+      deviceList.className = "zigbee-map-device-list";
+      for (const device of entry.devices) {
+        const card = document.createElement("div");
+        card.className = "zigbee-map-device "
+          + (device.health === "connected" ? "connected"
+            : device.status === "unknown" ? "unknown" : "problem");
+        const name = document.createElement("strong");
+        name.textContent = device.name || device.id;
+        const description = document.createElement("div");
+        description.className = "muted";
+        description.textContent = [device.manufacturer, device.model].filter(Boolean).join(" · ");
+        const reportedStatus = device.status || "unknown";
+        const statusChip = document.createElement("span");
+        statusChip.className = "pill " + (device.health === "connected" ? "good" : "warn");
+        statusChip.textContent = t("zigbeeMap.status") + ": " + t("zigbeeMap." + reportedStatus);
+        const signal = document.createElement("div");
+        signal.className = "muted";
+        signal.textContent = t("zigbeeMap.rssi") + ": " + t("zigbeeMap.na")
+          + " · " + t("zigbeeMap.lqi") + ": " + t("zigbeeMap.na");
+        card.append(name, description, statusChip);
+        if (device.battery_percent !== null && device.battery_percent !== undefined) {
+          const battery = document.createElement("span");
+          battery.className = "pill";
+          battery.textContent = t("zigbeeMap.battery") + ": " + device.battery_percent + " %";
+          card.append(battery);
+        }
+        card.append(signal);
+        const address = (device.connectivity || []).map(s => s.mac_address).filter(Boolean).join(", ");
+        if (address) {
+          const mac = document.createElement("div");
+          mac.className = "muted";
+          mac.textContent = "MAC: " + address;
+          card.append(mac);
+        }
+        deviceList.append(card);
+      }
+      details.append(deviceList);
+      roomGrid.append(details);
+    }
+    root.append(roomGrid);
+  }
+
   function renderDiagnostics(data) {
     state.diagnostics = data;
     const summary = $("diagnosticSummary");
@@ -2077,6 +2312,7 @@
       findingsRoot.append(box);
     }
 
+    renderZigbeeNetworkMap(data);
     renderDisconnectedDevices(data);
     const pre = $("diagnosticResult");
     pre.textContent = JSON.stringify(data, null, 2);
@@ -4589,6 +4825,11 @@
   $("auditBridge").addEventListener("click", () => {
     runAudit().catch(e => status(e.message, "bad"));
   });
+  for (const field of ["zigbeeMapSearch", "zigbeeMapFilter"]) {
+    $(field).addEventListener(field === "zigbeeMapSearch" ? "input" : "change", () => {
+      if (state.diagnostics) renderZigbeeNetworkMap(state.diagnostics);
+    });
+  }
   $("runDiagnostics").addEventListener("click", () => {
     runDiagnostics().catch(e => status(e.message, "bad"));
   });
@@ -5336,6 +5577,8 @@
     $("copyServiceMonitor").disabled = true;
     $("diagnosticSummary").replaceChildren();
     $("diagnosticFindings").replaceChildren();
+    $("zigbeeMapOverview").replaceChildren();
+    $("zigbeeNetworkMap").textContent = t("zigbeeMap.empty");
     $("diagnosticDisconnectedDevices").replaceChildren();
     $("diagnosticIgnoredCount").textContent = "0 ignoré";
     $("saveIgnoredDiagnostics").disabled = true;

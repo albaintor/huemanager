@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from huemanager.diagnostics import (
+    build_zigbee_network_map,
+    collect_zigbee_devices,
     coexistence_report,
     diagnose_bridge,
     wifi_center_mhz,
@@ -145,3 +147,49 @@ def test_diagnose_bridge_flags_channel_29() -> None:
         finding["code"] == "non_standard_zigbee_channel"
         for finding in result["findings"]
     )
+
+
+def test_network_map_uses_explicit_room_memberships_not_radio_routes() -> None:
+    resources = FakeClient().v2_resources()
+    devices = collect_zigbee_devices(resources)
+    topology = build_zigbee_network_map(resources, devices, "Hue Pro")
+
+    assert topology["type"] == "logical_room_membership"
+    assert topology["radio_topology_available"] is False
+    assert topology["signal_metrics_available"] is False
+    assert topology["bridge"]["name"] == "Hue Pro"
+    assert {(link["source"], link["target"], link["type"]) for link in topology["links"]} == {
+        ("room-1", "device-1", "room_membership"),
+        ("__unassigned__", "device-2", "room_membership"),
+    }
+    assert all(device["signal"] == {
+        "available": False, "rssi_dbm": None, "lqi": None
+    } for device in topology["devices"])
+    assert {device["name"]: device["status"] for device in topology["devices"]} == {
+        "Hue lamp": "connected",
+        "Offline lamp": "disconnected",
+    }
+
+
+def test_network_map_keeps_specific_connectivity_status_and_battery() -> None:
+    resources = FakeClient().v2_resources()
+    resources[1]["status"] = "unidirectional_incoming"
+    resources[0]["services"].append({"rid": "battery-1", "rtype": "device_power"})
+    resources.append({
+        "id": "battery-1",
+        "type": "device_power",
+        "power_state": {"battery_level": 67},
+    })
+    devices = collect_zigbee_devices(resources)
+    first = next(device for device in devices if device["id"] == "device-1")
+    assert first["status"] == "unidirectional_incoming"
+    assert first["battery_percent"] == 67
+    assert first["signal"]["rssi_dbm"] is None
+    assert first["device_kind"] == "other"
+
+
+def test_network_map_handles_no_room_and_no_devices() -> None:
+    topology = build_zigbee_network_map([], [], "Bridge")
+    assert topology["groups"] == []
+    assert topology["links"] == []
+    assert topology["devices"] == []

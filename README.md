@@ -85,6 +85,8 @@ Bridge/API d'un problème de maillage Zigbee visible par les API publiques. Le r
 - le canal Zigbee réellement renvoyé par le Bridge et sa fréquence IEEE 802.15.4 lorsqu'il est
   dans la plage standard 11–26 ;
 - le nombre d'appareils Zigbee connectés, déconnectés ou d'état inconnu ;
+- une **carte logique Zigbee** par pièce avec recherche, filtres d'état, adresse MAC et état
+  détaillé de chaque appareil (éventuellement niveau de batterie renvoyé par le Bridge) ;
 - les lampes/capteurs CLIP v1 explicitement `reachable: false` ;
 - les fabricants tiers présents dans les ressources v1 (signal informatif, pas une preuve de panne) ;
 - les temps de réponse des lectures locales CLIP v1 et CLIP v2 ;
@@ -100,7 +102,10 @@ huemanager diagnose pro --wifi-channel 3 --wifi-width 20 --samples 3
 
 L'estimation Wi-Fi/Zigbee est uniquement spectrale. L'API locale Hue publique n'expose pas la
 table des voisins Zigbee, le RSSI/LQI par lien, les retries, les pertes de paquets ou l'occupation
-du canal ; HueManager les signale donc explicitement comme non mesurables.
+du canal ; HueManager les signale donc explicitement comme non mesurables. La carte utilise uniquement
+l'**affectation des appareils aux pièces** et ne représente ni une puissance de réception ni les
+liens ou relais radio réels. Les valeurs RSSI et LQI restent « Non disponible via Hue » ; une
+connexion « connected » ne signifie pas que le signal radio est fort.
 
 ## iConnectHue / advanced switch configurations
 

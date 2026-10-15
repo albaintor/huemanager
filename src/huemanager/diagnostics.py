@@ -164,6 +164,40 @@ def collect_zigbee_devices(resources: list[dict[str, Any]]) -> list[dict[str, An
         else:
             health = "unknown"
 
+        status_priority = (
+            "disconnected",
+            "connectivity_issue",
+            "unidirectional_incoming",
+            "connected",
+        )
+        reported_status = next(
+            (candidate for candidate in status_priority if candidate in status_values),
+            "unknown",
+        )
+        service_types = {
+            service.get("rtype")
+            for service in device.get("services", [])
+            if service.get("rtype")
+        }
+        if "light" in service_types:
+            device_kind = "light"
+        elif service_types & {"motion", "contact", "temperature", "light_level"}:
+            device_kind = "sensor"
+        elif service_types & {"button", "relative_rotary"}:
+            device_kind = "control"
+        else:
+            device_kind = "other"
+
+        battery_percent = None
+        for service in device.get("services", []):
+            candidate = by_id.get(service.get("rid"), {})
+            if candidate.get("type") != "device_power":
+                continue
+            battery_level = candidate.get("power_state", {}).get("battery_level")
+            if isinstance(battery_level, (int, float)) and not isinstance(battery_level, bool):
+                battery_percent = battery_level
+                break
+
         zigbee_devices.append(
             {
                 "id": device.get("id"),
@@ -177,9 +211,92 @@ def collect_zigbee_devices(resources: list[dict[str, Any]]) -> list[dict[str, An
                 "rooms": sorted(room_names_by_device.get(device["id"], [])),
                 "health": health,
                 "connectivity": statuses,
+                "status": reported_status,
+                "device_kind": device_kind,
+                "battery_percent": battery_percent,
+                # Hue public APIs expose reachability, not the radio reception level.
+                "signal": {"available": False, "rssi_dbm": None, "lqi": None},
             }
         )
     return zigbee_devices
+
+
+
+def build_zigbee_network_map(
+    resources: list[dict[str, Any]],
+    devices: list[dict[str, Any]],
+    bridge_name: str | None,
+) -> dict[str, Any]:
+    """Describe room memberships, never a guessed Zigbee routing topology.
+
+    The public Hue API has neither neighbour tables nor RSSI/LQI, so only
+    explicit room-to-device relationships from CLIP v2 are drawn.
+    """
+    by_device = {device["id"]: device for device in devices}
+    groups: list[dict[str, Any]] = []
+    assigned_ids: set[str] = set()
+
+    for room in (resource for resource in resources if resource.get("type") == "room"):
+        room_id = room.get("id")
+        if not room_id:
+            continue
+        device_ids = sorted(
+            {
+                child.get("rid")
+                for child in room.get("children", [])
+                if child.get("rtype") == "device" and child.get("rid") in by_device
+            },
+            key=lambda item: (str(by_device[item].get("name") or "").casefold(), item),
+        )
+        if not device_ids:
+            continue
+        assigned_ids.update(device_ids)
+        statuses = Counter(by_device[item].get("status") or "unknown" for item in device_ids)
+        groups.append(
+            {
+                "id": room_id,
+                "name": room.get("metadata", {}).get("name") or room_id,
+                "device_ids": device_ids,
+                "statuses": dict(sorted(statuses.items())),
+            }
+        )
+
+    unassigned = sorted(
+        set(by_device) - assigned_ids,
+        key=lambda item: (str(by_device[item].get("name") or "").casefold(), item),
+    )
+    if unassigned:
+        groups.append(
+            {
+                "id": "__unassigned__",
+                "name": None,
+                "device_ids": unassigned,
+                "statuses": dict(sorted(Counter(
+                    by_device[item].get("status") or "unknown" for item in unassigned
+                ).items())),
+            }
+        )
+    groups.sort(key=lambda item: (item["name"] is None, (item["name"] or "").casefold(), item["id"]))
+
+    return {
+        "type": "logical_room_membership",
+        "bridge": {"name": bridge_name or "Hue Bridge"},
+        "radio_topology_available": False,
+        "signal_metrics_available": False,
+        "groups": groups,
+        "devices": sorted(devices, key=lambda item: (
+            str(item.get("name") or "").casefold(), item["id"]
+        )),
+        "links": [
+            {"source": group["id"], "target": device_id, "type": "room_membership"}
+            for group in groups for device_id in group["device_ids"]
+        ],
+        "limitations": [
+            "Room membership is not a Zigbee radio link or a routing path.",
+            "The public Hue API does not expose radio neighbours, RSSI or LQI.",
+            "Connectivity is a Bridge-reported state, not a reception power measurement.",
+        ],
+    }
 
 
 def _unreachable_resources(v1: dict[str, Any]) -> list[dict[str, Any]]:
@@ -427,6 +544,9 @@ def diagnose_bridge(
             "unknown": zigbee_health_counts.get("unknown", 0),
             "disconnected_devices": disconnected_devices,
         },
+        "network_map": build_zigbee_network_map(
+            resources, zigbee_devices, config.get("name") or client.bridge_name
+        ),
         "reachability": {
             "unreachable_count": len(unreachable),
             "unreachable": unreachable,
